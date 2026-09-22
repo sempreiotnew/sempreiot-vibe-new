@@ -16,8 +16,16 @@ IDF_ACTIVATE="${IDF_ACTIVATE:-$HOME/.espressif/tools/activate_idf_v5.5.2.sh}"
 NODE_MAX_BYTES=$((1792 * 1024))   # 1.75 MB = 1835008 bytes
 
 if [[ -z "${IDF_PATH:-}" ]]; then
-    # shellcheck disable=SC1090
-    source "$IDF_ACTIVATE" >/dev/null
+    # The activate script refuses to be sourced from a script ($0 check) and
+    # is not `set -u` clean; its -e mode prints KEY=VALUE lines instead.
+    [[ -f "$IDF_ACTIVATE" ]] || { echo "no ESP-IDF activate script at $IDF_ACTIVATE" >&2; exit 1; }
+    while IFS= read -r line; do
+        case "$line" in
+            SYSTEM_PATH=*|"") ;;
+            PATH=*) export PATH="${line#PATH=}:$PATH" ;;   # tool dirs only: prepend
+            *) export "${line?}" ;;
+        esac
+    done < <(bash "$IDF_ACTIVATE" -e)
 fi
 IDF_PY=(python3 "$IDF_PATH/tools/idf.py")
 
