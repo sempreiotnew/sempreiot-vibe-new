@@ -67,11 +67,16 @@ Status (brief §15):
 - Step 1 done — skeleton, `siot_version`, `siot_util`, `siot_evbus`, `siot_safr`, host tests, `ci/check.sh`.
 - Step 2 done — `siot_board_def` (from `tools/pinmap/pinmap.yaml`), `siot_hal_gpio`, `siot_hal_pwm`,
   `siot_identity` (`nvs_factory`), `siot_config` (persisted `boot_ctr`/`dev_seq`), `siot_ui_led`,
-  `siot_ui_button`, `siot_provisioning`; `app_main` runs the boot sequence up to "provisioned, reboot".
-  `siot_hal_serial` comes with `link_serial` in step 3 (it is the tablet link's peripheral).
-- Next: step 3 (data path — `siot_link`, `siot_netcore`, `siot_coordinator`).
+  `siot_ui_button`, `siot_provisioning`.
+- Step 3 done — `siot_hal_serial` (UART0 / native USB, Kconfig), `siot_link` (`link_mesh_node`:
+  Mesh-Lite + root TCP client; `link_mesh_board`: installation AP + TCP server; `link_serial`),
+  `siot_netcore` (emitter, fast retry, re-announce, downlink, states), `siot_coordinator` (root
+  duties, journal, INSTALLATION, HEARTBEAT/TOPOLOGY shim, **forwards central ACKs downlink**).
+  Bench: tap on a node → `MANUAL_TEST` on the tablet → ACK back at the node; `IDENTIFY` blinks blue.
+- Next: step 4 (supervision + persistence: device_table, flash journal, TIME_SYNC clock on the
+  board, ALARM-first queue, `siot_console`).
 
-Bench flow for step 2 (no mesh yet): `tools/flash.sh <app> <port> --erase` (identity = chip MAC, sticker
-files created in `tools/stickers/<MAC>/` on first use)
+Bench flow: `tools/flash.sh <app> <port> --erase` (identity = chip MAC, sticker files created in
+`tools/stickers/<MAC>/` on first use)
 → unit white-blinks (`SIOT-SETUP-<id>`) → provision from the installer app → unit reboots with the code
 stored (board: magenta, node: white solid) → hold the button 5 s → back to white blink.

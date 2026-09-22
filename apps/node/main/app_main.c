@@ -1,8 +1,8 @@
 /* sempreiot-node — app_main: the boot sequence of brief §3, wired step by step.
  *
- * Step 2 of brief §15 stops at "provisioned, reboot": a node with no code
- * runs setup mode; a node with a code initialises SAFR and waits for
- * link_mesh + netcore (step 3). Nothing but wiring lives in this file.
+ * A node with no code runs setup mode; a node with a code initialises
+ * SAFR, Mesh-Lite (link_mesh) and netcore (step 3). Nothing but wiring
+ * lives in this file.
  */
 #include <string.h>
 
@@ -15,6 +15,8 @@
 #include "siot_config.h"
 #include "siot_evbus.h"
 #include "siot_identity.h"
+#include "siot_link.h"
+#include "siot_netcore.h"
 #include "siot_provisioning.h"
 #include "siot_safr.h"
 #include "siot_ui_button.h"
@@ -83,10 +85,9 @@ void app_main(void)
     ESP_ERROR_CHECK(siot_safr_init(&safr));
     siot_safr_set_level(0);
 
-    /* 10: node → link_mesh_start + netcore_start arrive with step 3. Until
-     * then the node stays JOINING (white solid): the code is stored, nothing
-     * looks for the network yet. */
-    set_state(SIOT_STATE_SETUP, SIOT_STATE_JOINING);
-    ESP_LOGI(TAG, "normal mode: system_id=0x%04X ssid=%s name=%s (mesh: step 3)",
+    /* 10: node → Mesh-Lite link + netcore (JOINING until Mesh-Lite gives a level). */
+    ESP_ERROR_CHECK(siot_link_mesh_node_init(code));
+    ESP_ERROR_CHECK(siot_netcore_start());
+    ESP_LOGI(TAG, "normal mode: system_id=0x%04X ssid=%s name=%s",
              code->system_id, code->net_ssid, code->name);
 }

@@ -1,8 +1,8 @@
 /* sempreiot-board — app_main: the boot sequence of brief §3, wired step by step.
  *
- * Step 2 of brief §15 stops at "provisioned, reboot": a board with no code
- * runs setup mode; a board with a code initialises SAFR and waits for the
- * coordinator (step 3). Nothing but wiring lives in this file.
+ * A board with no code runs setup mode; a board with a code initialises
+ * SAFR, the serial link to the tablet, the installation AP + TCP server for
+ * the root, and the coordinator (step 3). Nothing but wiring lives here.
  */
 #include <string.h>
 
@@ -13,8 +13,10 @@
 
 #include "siot_board_def.h"
 #include "siot_config.h"
+#include "siot_coordinator.h"
 #include "siot_evbus.h"
 #include "siot_identity.h"
+#include "siot_link.h"
 #include "siot_provisioning.h"
 #include "siot_safr.h"
 #include "siot_ui_button.h"
@@ -83,9 +85,10 @@ void app_main(void)
     ESP_ERROR_CHECK(siot_safr_init(&safr));
     siot_safr_set_level(0);
 
-    /* 10: board → coordinator_start() arrives with step 3. Until then the
-     * board reports itself ONLINE (magenta) so the bench shows it booted. */
-    set_state(SIOT_STATE_SETUP, SIOT_STATE_ONLINE);
-    ESP_LOGI(TAG, "normal mode: system_id=0x%04X ssid=%s name=%s (coordinator: step 3)",
+    /* 10: board → serial link + installation AP/TCP + coordinator (root duties). */
+    ESP_ERROR_CHECK(siot_link_serial_init());
+    ESP_ERROR_CHECK(siot_link_mesh_board_init(code));
+    ESP_ERROR_CHECK(siot_coordinator_start());
+    ESP_LOGI(TAG, "normal mode: system_id=0x%04X ssid=%s name=%s",
              code->system_id, code->net_ssid, code->name);
 }
