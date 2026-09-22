@@ -1,3 +1,5 @@
 # Host tests run on the ESP-IDF linux target (FreeRTOS POSIX simulator).
 CONFIG_IDF_TARGET="linux"
 CONFIG_ESP_TASK_WDT_EN=n
+# siot_provisioning's HKDF (same switch as the apps' sdkconfig.defaults).
+CONFIG_MBEDTLS_HKDF_C=y

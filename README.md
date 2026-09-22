@@ -47,6 +47,14 @@ Notes:
 - `test/host` on macOS: the tests link with `-force_load` (Unity `TEST_CASE` registers through
   constructors) and one clang-only diagnostic inside IDF's own mbedtls is kept as a warning.
 
-Status: step 1 of brief §15 done — skeleton, `siot_version`, `siot_util`, `siot_evbus`, `siot_safr`,
-host tests (Appendix A vectors, CRC, replay, dedupe, dispatcher), `ci/check.sh`. Next: step 2
-(platform + identity + provisioning).
+Status (brief §15):
+- Step 1 done — skeleton, `siot_version`, `siot_util`, `siot_evbus`, `siot_safr`, host tests, `ci/check.sh`.
+- Step 2 done — `siot_board_def` (from `tools/pinmap/pinmap.yaml`), `siot_hal_gpio`, `siot_hal_pwm`,
+  `siot_identity` (`nvs_factory`), `siot_config` (persisted `boot_ctr`/`dev_seq`), `siot_ui_led`,
+  `siot_ui_button`, `siot_provisioning`; `app_main` runs the boot sequence up to "provisioned, reboot".
+  `siot_hal_serial` comes with `link_serial` in step 3 (it is the tablet link's peripheral).
+- Next: step 3 (data path — `siot_link`, `siot_netcore`, `siot_coordinator`).
+
+Bench flow for step 2 (no mesh yet): `tools/make_sticker.py` → `tools/flash.sh <app> <port> <id> --erase`
+→ unit white-blinks (`SIOT-SETUP-<id>`) → provision from the installer app → unit reboots with the code
+stored (board: magenta, node: white solid) → hold the button 5 s → back to white blink.
