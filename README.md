@@ -49,7 +49,7 @@ firmware/build.sh board --flash 4mb           # 4 MB bench devkits          → 
 firmware/build.sh board --flash 4mb --bench   # 4 MB + console on UART0     → apps/board/build-4mb-bench
 firmware/build.sh node                        # node is always 4 MB         → apps/node/build
 firmware/build.sh host                        # linux host tests
-tools/flash.sh board /dev/cu.usbserial-XXXX <sticker-id> --flash 4mb --bench --erase
+tools/flash.sh board /dev/cu.usbserial-XXXX --flash 4mb --bench --erase   # id = chip MAC, sticker auto
 ```
 
 Round-1 bench units are all 4 MB; the product board is 8 MB (OTA blueprint §1.2: `fw_store`).
@@ -71,7 +71,7 @@ Status (brief §15):
   `siot_hal_serial` comes with `link_serial` in step 3 (it is the tablet link's peripheral).
 - Next: step 3 (data path — `siot_link`, `siot_netcore`, `siot_coordinator`).
 
-Bench flow for step 2 (no mesh yet): `tools/make_sticker.py` (new unit) or `tools/recover_sticker.py <port>`
-(unit that already has an identity from the POC) → `tools/flash.sh <app> <port> <id> --erase`
+Bench flow for step 2 (no mesh yet): `tools/flash.sh <app> <port> --erase` (identity = chip MAC, sticker
+files created in `tools/stickers/<MAC>/` on first use)
 → unit white-blinks (`SIOT-SETUP-<id>`) → provision from the installer app → unit reboots with the code
 stored (board: magenta, node: white solid) → hold the button 5 s → back to white blink.
