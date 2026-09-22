@@ -1,0 +1,24 @@
+# sempreiot-node — from pocs/node/sdkconfig.defaults + OTA blueprint §1.1/§1.3.
+CONFIG_IDF_TARGET="esp32s3"
+
+# 4 MB flash, custom partition table (OTA blueprint §1.1). The image must stay
+# <= 1.75 MB (ci/check.sh fails above that), so optimise for size.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_node.csv"
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# mbedtls_hkdf() (RFC 5869) is not compiled in by default; the provisioning
+# envelope key derivation needs it (brief §7, POC-BRIEF §5).
+CONFIG_MBEDTLS_HKDF_C=y
+
+# Mesh-Lite is OFF by default in espressif/mesh_lite's Kconfig; without this
+# the prebuilt lib links but its src/ objects do not -> undefined references.
+CONFIG_MESH_LITE_ENABLE=y
+
+# Mesh-Lite runs its connect/retry/report timers on the FreeRTOS timer service
+# task; IDF's 2048-byte default overflows there. esp_timer bumped for the same
+# reason (brief §2 "sdkconfig facts that are not optional").
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
+CONFIG_ESP_TIMER_TASK_STACK_SIZE=4096

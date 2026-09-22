@@ -1,0 +1,4 @@
+## IDF Component Manager Manifest File — sempreiot-board (no managed deps)
+dependencies:
+  idf:
+    version: '>=5.5.2'
