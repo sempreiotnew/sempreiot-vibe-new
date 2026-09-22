@@ -45,6 +45,11 @@ build_app() {
 build_app board
 build_app node
 
+log "build apps/board --flash 4mb (bench table)"
+"$FW_DIR/build.sh" board --flash 4mb > "$FW_DIR/apps/board/build_ci.log" 2>&1 \
+    || { tail -n 60 "$FW_DIR/apps/board/build_ci.log"; fail "apps/board 4mb build"; }
+rm -f "$FW_DIR/apps/board/build_ci.log"
+
 NODE_BIN="$FW_DIR/apps/node/build/sempreiot-node.bin"
 NODE_BYTES=$(wc -c < "$NODE_BIN" | tr -d ' ')
 log "sempreiot-node.bin = $NODE_BYTES bytes (limit $NODE_MAX_BYTES)"

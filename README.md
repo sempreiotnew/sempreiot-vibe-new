@@ -40,18 +40,21 @@ cd firmware/test/host  && idf.py --preview set-target linux && idf.py build && .
 ci/check.sh                                                             # all of the above, in order
 ```
 
-Bench hardware (round 1) is **4 MB** on every unit while the product board is 8 MB (OTA blueprint
-§1.2). Build the board for the bench with the overlays, then flash from that build dir:
+Variants (flash size, console) are named build directories, built by `build.sh` and flashed by
+`tools/flash.sh` with the same flags:
 
 ```bash
-cd firmware/apps/board
-idf.py -B build_bench -DSDKCONFIG=build_bench/sdkconfig \
-       -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.4mb;sdkconfig.bench" build
-BUILD_DIR=build_bench ../../../tools/flash.sh board /dev/cu.usbserial-XXXX <sticker-id> --erase
+firmware/build.sh board                       # 8 MB product table          → apps/board/build
+firmware/build.sh board --flash 4mb           # 4 MB bench devkits          → apps/board/build-4mb
+firmware/build.sh board --flash 4mb --bench   # 4 MB + console on UART0     → apps/board/build-4mb-bench
+firmware/build.sh node                        # node is always 4 MB         → apps/node/build
+firmware/build.sh host                        # linux host tests
+tools/flash.sh board /dev/cu.usbserial-XXXX <sticker-id> --flash 4mb --bench --erase
 ```
 
-`sdkconfig.4mb` = 4 MB table without `fw_store`; `sdkconfig.bench` = text console on UART0 (never on
-a unit wired to the tablet). `tools/flash.sh` reads offsets and flash size from the build directory.
+Round-1 bench units are all 4 MB; the product board is 8 MB (OTA blueprint §1.2: `fw_store`).
+Switching is only a flag: `sdkconfig.4mb` selects `partitions_board_4mb.csv`, `sdkconfig.bench`
+turns the text console on (never on a unit wired to the tablet).
 
 Notes:
 - `apps/node` prints `error: ... patch does not apply` for the four lwip patches of `iot_bridge` when
@@ -68,6 +71,7 @@ Status (brief §15):
   `siot_hal_serial` comes with `link_serial` in step 3 (it is the tablet link's peripheral).
 - Next: step 3 (data path — `siot_link`, `siot_netcore`, `siot_coordinator`).
 
-Bench flow for step 2 (no mesh yet): `tools/make_sticker.py` → `tools/flash.sh <app> <port> <id> --erase`
+Bench flow for step 2 (no mesh yet): `tools/make_sticker.py` (new unit) or `tools/recover_sticker.py <port>`
+(unit that already has an identity from the POC) → `tools/flash.sh <app> <port> <id> --erase`
 → unit white-blinks (`SIOT-SETUP-<id>`) → provision from the installer app → unit reboots with the code
 stored (board: magenta, node: white solid) → hold the button 5 s → back to white blink.
