@@ -17,7 +17,7 @@ components/      ALL the code, shared by every app; dependencies point DOWN only
 test/
   host/          one linux-target IDF project, Unity; runs in CI on every commit (Appendix A vectors etc.)
   hil/           hardware-in-the-loop scripts for the exit checklist (3–4 boards on UART + tablet log)
-ci/              build + host-test pipeline
+ci/              check.sh — builds both apps, checks node.bin <= 1.75 MB, builds + runs test/host
 VERSION          the only place the firmware version string is written
 ```
 
@@ -35,6 +35,18 @@ Build (ESP-IDF v5.5.2 only — see `/CLAUDE.md`):
 ```bash
 source ~/.espressif/tools/activate_idf_v5.5.2.sh
 cd firmware/apps/board && idf.py set-target esp32s3 && idf.py build     # once per app
-cd firmware/apps/node  && idf.py set-target esp32s3 && idf.py build
+cd firmware/apps/node  && idf.py set-target esp32s3 && idf.py build     # pulls espressif/mesh_lite 1.0.2
 cd firmware/test/host  && idf.py --preview set-target linux && idf.py build && ./build/host_tests.elf
+ci/check.sh                                                             # all of the above, in order
 ```
+
+Notes:
+- `apps/node` prints `error: ... patch does not apply` for the four lwip patches of `iot_bridge` when
+  the IDF tree already carries them (the POC build applied them). Same as `pocs/node`; the build is green.
+- Adding a new component directory needs `idf.py reconfigure` in an already-configured build dir.
+- `test/host` on macOS: the tests link with `-force_load` (Unity `TEST_CASE` registers through
+  constructors) and one clang-only diagnostic inside IDF's own mbedtls is kept as a warning.
+
+Status: step 1 of brief §15 done — skeleton, `siot_version`, `siot_util`, `siot_evbus`, `siot_safr`,
+host tests (Appendix A vectors, CRC, replay, dedupe, dispatcher), `ci/check.sh`. Next: step 2
+(platform + identity + provisioning).
