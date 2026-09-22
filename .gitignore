@@ -7,3 +7,4 @@ dependencies.lock.bak
 # host test binaries
 *.elf
 __pycache__/
+build_*/
