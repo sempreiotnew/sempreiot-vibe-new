@@ -16,3 +16,8 @@ CONFIG_MBEDTLS_HKDF_C=y
 CONFIG_ESP_CONSOLE_NONE=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 CONFIG_BOOTLOADER_LOG_LEVEL_NONE=y
+
+# Identity: model string reported in /info and used to pick the pin map
+# (tools/pinmap/pinmap.yaml). "SIOT-BOARD" prefix = the app's wizard treats
+# the unit as the board (pocs/APP-BRIEF.md §5).
+CONFIG_SIOT_DEV_MODEL="SIOT-BOARD-01"

@@ -22,3 +22,7 @@ CONFIG_MESH_LITE_ENABLE=y
 # reason (brief §2 "sdkconfig facts that are not optional").
 CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
 CONFIG_ESP_TIMER_TASK_STACK_SIZE=4096
+
+# Identity: model string reported in /info and used to pick the pin map
+# (tools/pinmap/pinmap.yaml).
+CONFIG_SIOT_DEV_MODEL="SIOT-NODE-01"
