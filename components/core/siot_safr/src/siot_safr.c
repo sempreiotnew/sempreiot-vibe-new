@@ -313,7 +313,7 @@ siot_safr_rx_result_t siot_safr_rx(const uint8_t *buf, size_t len)
     safr_unlock(&s_lock);
 
     /* Step 10 is the handler's: ACK if F_ACK_REQ, even when duplicate. */
-    handler(&f, duplicate, ctx);
+    handler(&f, buf, len, duplicate, ctx);
     return duplicate ? SIOT_SAFR_RX_DUPLICATE : SIOT_SAFR_RX_OK;
 }
 

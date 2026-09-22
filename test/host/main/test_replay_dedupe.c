@@ -9,9 +9,10 @@
 #include "test_support.h"
 
 static int  s_calls, s_dups;
-static void count(const siot_safr_frame_t *f, bool duplicate, void *ctx)
+static void count(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len,
+                  bool duplicate, void *ctx)
 {
-    (void)f; (void)ctx;
+    (void)f; (void)raw; (void)raw_len; (void)ctx;
     s_calls++;
     if (duplicate) s_dups++;
 }

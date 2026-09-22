@@ -233,11 +233,15 @@ esp_err_t siot_safr_send(const uint8_t dst_mac[6], uint8_t msg_type, uint16_t ms
  * RX pipeline + dispatcher (spec §10 steps 3–10)
  * ========================================================================= */
 
-/* `duplicate` = the frame passed every check but its (SRC_MAC, MSG_ID) was
- * seen within the dedupe window: do not process again, but ACK if F_ACK_REQ
- * ("process once, ACK every time", spec §9.1). Runs in the caller's task
- * (net task); must not block. */
-typedef void (*siot_safr_handler_t)(const siot_safr_frame_t *frame, bool duplicate, void *ctx);
+/* `frame` is the parsed view; `raw`/`raw_len` are the exact wire bytes, for
+ * relays that forward frames unchanged (the board to the tablet, a node to
+ * its children — spec §4: never re-encoded).
+ * `duplicate` = the frame passed every check but its (SRC_MAC, MSG_ID) was
+ * seen within the dedupe window: do not process again, but ACK / forward if
+ * the protocol says so ("process once, ACK every time", spec §9.1). Runs in
+ * the caller's task (net task); must not block. */
+typedef void (*siot_safr_handler_t)(const siot_safr_frame_t *frame, const uint8_t *raw,
+                                    size_t raw_len, bool duplicate, void *ctx);
 
 /* One handler per MSG_TYPE; registering the same type again replaces it.
  * ESP_ERR_NO_MEM when CONFIG_SIOT_SAFR_HANDLERS_MAX distinct types exist. */

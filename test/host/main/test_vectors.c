@@ -69,9 +69,12 @@ static size_t  s_got_len;
 static int     s_got_calls;
 static bool    s_got_dup;
 
-static void capture(const siot_safr_frame_t *f, bool duplicate, void *ctx)
+static void capture(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len,
+                    bool duplicate, void *ctx)
 {
     (void)ctx;
+    TEST_ASSERT_EQUAL_HEX8(SAFR_SOF, raw[0]);
+    TEST_ASSERT_EQUAL(raw_len, ((size_t)raw[2] << 8) | raw[3]);
     memcpy(s_got_payload, f->payload, f->payload_len);
     s_got_len = f->payload_len;
     s_got_dup = duplicate;

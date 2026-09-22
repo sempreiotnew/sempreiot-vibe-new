@@ -8,9 +8,10 @@
 
 static int s_hits[256];
 static void *s_last_ctx;
-static void hit(const siot_safr_frame_t *f, bool duplicate, void *ctx)
+static void hit(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len,
+                bool duplicate, void *ctx)
 {
-    (void)duplicate;
+    (void)raw; (void)raw_len; (void)duplicate;
     s_hits[f->msg_type]++;
     s_last_ctx = ctx;
 }
@@ -74,9 +75,10 @@ TEST_CASE("dispatch: handler table is bounded and a handler may send from inside
     for (int t = 0; t < CONFIG_SIOT_SAFR_HANDLERS_MAX; t++) siot_safr_unregister((uint8_t)(0x40 + t));
 }
 
-static void ack_back(const siot_safr_frame_t *f, bool duplicate, void *ctx)
+static void ack_back(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len,
+                     bool duplicate, void *ctx)
 {
-    (void)duplicate; (void)ctx;
+    (void)raw; (void)raw_len; (void)duplicate; (void)ctx;
     /* Spec §7.5: ACK {ACKED_MSG_ID, STATUS, 0} — sending from a handler must not deadlock. */
     uint8_t p[4] = {(uint8_t)(f->msg_id >> 8), (uint8_t)f->msg_id, SAFR_ACK_OK, 0};
     TEST_ASSERT_EQUAL(ESP_OK, siot_safr_send(f->src_mac, SAFR_MSG_ACK, siot_safr_next_msg_id(), 0, p, 4));
