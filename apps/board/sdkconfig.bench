@@ -2,8 +2,9 @@
 # panic, an ESP_ERROR_CHECK or any ESP_LOG is visible on the USB-TTL adapter.
 # NEVER for a unit that talks to the tablet (brief §6.5: no text on the link).
 #   idf.py -B build_bench -DSDKCONFIG=build_bench/sdkconfig \
-#          -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.bench" build
+#          -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.4mb;sdkconfig.bench" build
 #   BUILD_DIR=build_bench tools/flash.sh board <port> <sticker-id>
+# (drop sdkconfig.4mb on an 8 MB module)
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 CONFIG_BOOTLOADER_LOG_LEVEL_INFO=y

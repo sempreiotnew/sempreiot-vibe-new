@@ -1,0 +1,7 @@
+# Overlay for a board built on a 4 MB module (round-1 bench devkits). The
+# product board is 8 MB (OTA blueprint §1.2); this drops fw_store so the
+# image fits. Combine with sdkconfig.bench for a console:
+#   idf.py -B build_bench -DSDKCONFIG=build_bench/sdkconfig \
+#          -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.4mb;sdkconfig.bench" build
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_board_4mb.csv"

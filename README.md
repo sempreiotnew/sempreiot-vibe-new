@@ -40,6 +40,19 @@ cd firmware/test/host  && idf.py --preview set-target linux && idf.py build && .
 ci/check.sh                                                             # all of the above, in order
 ```
 
+Bench hardware (round 1) is **4 MB** on every unit while the product board is 8 MB (OTA blueprint
+§1.2). Build the board for the bench with the overlays, then flash from that build dir:
+
+```bash
+cd firmware/apps/board
+idf.py -B build_bench -DSDKCONFIG=build_bench/sdkconfig \
+       -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.4mb;sdkconfig.bench" build
+BUILD_DIR=build_bench ../../../tools/flash.sh board /dev/cu.usbserial-XXXX <sticker-id> --erase
+```
+
+`sdkconfig.4mb` = 4 MB table without `fw_store`; `sdkconfig.bench` = text console on UART0 (never on
+a unit wired to the tablet). `tools/flash.sh` reads offsets and flash size from the build directory.
+
 Notes:
 - `apps/node` prints `error: ... patch does not apply` for the four lwip patches of `iot_bridge` when
   the IDF tree already carries them (the POC build applied them). Same as `pocs/node`; the build is green.
