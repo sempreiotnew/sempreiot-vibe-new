@@ -77,6 +77,10 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
   void _resetZoom() => _transform.value = Matrix4.identity();
 
   void _onTraffic(SafrTrafficTick tick) {
+    // Only animate real events (alert/alarm/trouble). Routine traffic —
+    // heartbeats, topology, ACKs — used to spawn a dot every time (the
+    // constant blue balls); those are dropped so the walk-test dot stands out.
+    if (tick.severity < 1) return;
     final nodes = {for (final n in ref.read(topologyProvider)) n.mac: n};
     if (!nodes.containsKey(tick.mac)) return;
 
