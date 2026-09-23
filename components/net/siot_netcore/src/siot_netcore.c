@@ -335,10 +335,14 @@ static void on_button(siot_evt_id_t id, const void *data, void *ctx)
 
 /* ---- state machine (brief §3) ------------------------------------------- */
 
-static void update_state(void)
+/* Returns true when the Mesh-Lite level (and thus our role) just changed, so
+ * the caller announces the new role at once instead of waiting for the 60 s
+ * TOPOLOGY tick (brief §9: "TOPOLOGY 60 s + on child change"). */
+static bool update_state(void)
 {
     const uint8_t level = siot_link_mesh_level();
-    if (level != s_level_seen) {
+    const bool level_changed = level != s_level_seen;
+    if (level_changed) {
         s_level_seen = level;
         const siot_evt_level_t ev = {.level = level};
         siot_evbus_post(SIOT_EVT_MESH_LEVEL, &ev, sizeof(ev));
@@ -355,6 +359,7 @@ static void update_state(void)
         next = SIOT_STATE_ONLINE;
     }
     post_state(next);
+    return level_changed;
 }
 
 /* ---- scheduler ---------------------------------------------------------- */
@@ -367,8 +372,12 @@ static void netcore_task(void *arg)
 
     for (;;) {
         const int64_t t = now_ms();
-        update_state();
+        const bool level_changed = update_state();
         xSemaphoreTake(s_lock, portMAX_DELAY);
+
+        /* Role/layer just changed: announce it now (HEARTBEAT carries LAYER,
+         * TOPOLOGY carries ROLE) so the tablet reorganises in ~1 s, not 60 s. */
+        if (level_changed) { next_hb_ms = t; next_topo_ms = t; }
 
         /* NAME_ANNOUNCE once after boot — keep trying until a live transport takes it. */
         if (!s_name_announced && siot_link_mesh_level() > 0 && siot_link_is_up(SIOT_LINK_MESH)) {
