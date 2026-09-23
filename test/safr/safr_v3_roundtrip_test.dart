@@ -231,6 +231,83 @@ void main() {
       expect(p.event, isNull);
     });
 
+    test('INSTALLATION build -> parse (spec §7.10, v3.1)', () {
+      final frame = SafrEncoder().encode(
+        msgType: SafrMsgType.installation,
+        payload: SafrInstallationPayload.build(
+          systemId: 0x1234,
+          channel: 6,
+          netSsid: 'SIOT-ABCD',
+          name: 'Instalação Teste',
+          enrolled: const [
+            SafrEnrolledDevice(
+              mac: '5A:46:52:00:00:02',
+              name: 'Sirene 1',
+              zone: 'Térreo',
+            ),
+            SafrEnrolledDevice(
+              mac: '5A:46:52:00:00:03',
+              name: 'Sirene 2',
+              zone: '1º andar',
+            ),
+          ],
+        ),
+      );
+      final parsed = parseSafrWireFrame(frame);
+      expect(parsed.isValid, isTrue, reason: '${parsed.error}');
+      final p = parsed.payload as SafrInstallationPayload;
+      expect(p.systemId, 0x1234);
+      expect(p.channel, 6);
+      expect(p.netSsid, 'SIOT-ABCD');
+      expect(p.name, 'Instalação Teste');
+      expect(p.enrolled, hasLength(2));
+      expect(p.enrolled[0].mac, '5A:46:52:00:00:02');
+      expect(p.enrolled[0].name, 'Sirene 1');
+      expect(p.enrolled[0].zone, 'Térreo');
+      expect(p.enrolled[1].zone, '1º andar');
+    });
+
+    test('INSTALLATION build -> parse with no enrolled devices', () {
+      final frame = SafrEncoder().encode(
+        msgType: SafrMsgType.installation,
+        payload: SafrInstallationPayload.build(
+          systemId: 1,
+          channel: 1,
+          netSsid: 'SIOT-0001',
+          name: 'Board A',
+        ),
+      );
+      final p =
+          parseSafrWireFrame(frame).payload as SafrInstallationPayload;
+      expect(p.enrolled, isEmpty);
+    });
+
+    test('NAME_ANNOUNCE build -> parse (spec §7.11, v3.1)', () {
+      final frame = _nodeEncoder().encode(
+        msgType: SafrMsgType.nameAnnounce,
+        payload: SafrNameAnnouncePayload.build(
+          name: 'Sirene 1',
+          zone: 'Térreo',
+        ),
+      );
+      final parsed = parseSafrWireFrame(frame);
+      expect(parsed.isValid, isTrue, reason: '${parsed.error}');
+      final p = parsed.payload as SafrNameAnnouncePayload;
+      expect(p.name, 'Sirene 1');
+      expect(p.zone, 'Térreo');
+    });
+
+    test('GET_INSTALLATION command build -> parse (spec §7.6, v3.1)', () {
+      final frame = SafrEncoder().encode(
+        msgType: SafrMsgType.command,
+        payload: SafrCommandPayload.build(cmd: SafrCommand.getInstallation),
+        ackRequired: true,
+      );
+      final p = parseSafrWireFrame(frame).payload as SafrCommandPayload;
+      expect(p.cmdRaw, SafrCommand.getInstallation.wire);
+      expect(p.cmdRaw, 0x10);
+    });
+
     test('plaintext debug mode (F_ENC = 0) still parses and CRC-protects', () {
       final frame = _nodeEncoder().encode(
         msgType: SafrMsgType.event,

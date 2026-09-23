@@ -4,7 +4,7 @@ import 'package:pointycastle/export.dart';
 
 import 'safr_v2_frame.dart' show safrVer3;
 
-/// AES-128-CCM per docs/protocol-safr-v3.md §4.
+/// AES-128-CCM per docs/safr/protocol-safr-v3.md §4.
 /// Nonce (12 B) = SRC_MAC(6) ‖ BOOT_CTR(2) ‖ MSG_CTR(4) — all header fields.
 /// AAD = the full header (30 bytes on v3, 28 on decode-only v2).
 /// Tag = 16 bytes.

@@ -4,7 +4,7 @@ import 'crc16.dart';
 import 'safr_crypto.dart';
 import 'safr_v2_payloads.dart';
 
-/// SAFR wire frame — docs/protocol-safr-v3.md §3.
+/// SAFR wire frame — docs/safr/protocol-safr-v3.md §3.
 /// v3 (0x03) is the current protocol: 30-byte header with SYSTEM_ID.
 /// v2 (0x02) is decode-only for packets stored before the upgrade: 28-byte
 /// header, no SYSTEM_ID. All multi-byte fields are big-endian.
@@ -44,6 +44,8 @@ enum SafrMsgType {
   timeSync(0x06),
   eventLogReq(0x07),
   eventLogData(0x08),
+  installation(0x09),
+  nameAnnounce(0x0A),
   unknown(0x00);
 
   const SafrMsgType(this.wire);
@@ -256,6 +258,8 @@ SafrWireFrame parseSafrWireFrame(
     SafrMsgType.timeSync => SafrTimeSyncPayload.parse(plaintext),
     SafrMsgType.eventLogReq => SafrEventLogReqPayload.parse(plaintext),
     SafrMsgType.eventLogData => SafrEventLogDataPayload.parse(plaintext),
+    SafrMsgType.installation => SafrInstallationPayload.parse(plaintext),
+    SafrMsgType.nameAnnounce => SafrNameAnnouncePayload.parse(plaintext),
     SafrMsgType.unknown => SafrUnknownPayload(plaintext),
   };
 

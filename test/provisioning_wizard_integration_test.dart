@@ -1,153 +1,30 @@
-// Integration test for the provisioning wizard state machine against the
-// mocked device server (mocked-device-autoconnect).
+// This used to also integration-test the wizard state machine against
+// `mocked-device-autoconnect/server.js`'s old `/reset`-driven mock (old
+// deviceId/signature/centralId contract). That contract no longer exists:
+// POC-BRIEF.md §5 replaced it with the id/pop/HMAC/HKDF/CCM contract
+// implemented in `device_ap_service.dart` and `provisioning_crypto.dart`
+// (see `test/provisioning/provisioning_crypto_vectors_test.dart` for that
+// crypto verified against an independent implementation).
 //
-// Run with the mock up:
-//   node ../../mocked-device-autoconnect/server.js   (any JOIN_* env is fine —
-//   the test overrides joinResult/joinDelayMs via POST /reset)
-//   flutter test test/provisioning_wizard_integration_test.dart \
-//     --dart-define=DEVICE_AP_URL=http://localhost:8080
-//
-// Skipped automatically when the mock isn't reachable.
-import 'dart:convert';
-import 'dart:io';
-
+// Restoring a live-mock integration test needs `mocked-device-autoconnect
+// /server.js` updated to the §5 contract first (POC-BRIEF.md says to keep
+// it in sync — that update is out of scope for this pass, which only
+// touched `mobile/sempreiot_central_app/`). Until then this file only keeps
+// the static QR-payload parsing check, which needs no server.
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sempreiot_central_app/features/provisioning/application/provisioning_wizard_provider.dart';
 import 'package:sempreiot_central_app/features/provisioning/domain/entities/device_qr_payload.dart';
-import 'package:sempreiot_central_app/features/provisioning/domain/entities/provisioning_step.dart';
 
-const _mockBase = String.fromEnvironment(
-  'DEVICE_AP_URL',
-  defaultValue: 'http://192.168.4.1',
-);
-
-Future<bool> _mockReachable() async {
-  try {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
-    final req = await client.postUrl(Uri.parse('$_mockBase/reset'));
-    req.headers.contentType = ContentType.json;
-    req.write(jsonEncode({'joinResult': 'success', 'joinDelayMs': 1000}));
-    final res = await req.close();
-    await res.drain<void>();
-    client.close();
-    return res.statusCode == 200;
-  } catch (_) {
-    return false;
-  }
-}
-
-Future<void> _reset({required String joinResult, int joinDelayMs = 1000}) async {
-  final client = HttpClient();
-  final req = await client.postUrl(Uri.parse('$_mockBase/reset'));
-  req.headers.contentType = ContentType.json;
-  req.write(jsonEncode({'joinResult': joinResult, 'joinDelayMs': joinDelayMs}));
-  final res = await req.close();
-  await res.drain<void>();
-  client.close();
-}
-
-/// Waits until the notifier reaches [target] (or any result step if
-/// [anyResult]), failing after [timeout].
-Future<ProvisioningStep> _waitFor(
-  ProvisioningWizardNotifier notifier, {
-  ProvisioningStep? target,
-  bool anyResult = false,
-  Duration timeout = const Duration(seconds: 20),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  while (DateTime.now().isBefore(deadline)) {
-    final step = notifier.state.step;
-    if (target != null && step == target) return step;
-    if (anyResult && step.isResult) return step;
-    await Future<void>.delayed(const Duration(milliseconds: 200));
-  }
-  fail('Timed out waiting for ${target ?? 'a result'} — '
-      'stuck at ${notifier.state.step}');
-}
-
-const _goodCreds = DeviceQrPayload(deviceId: 'dev-001', signature: 'abc123');
-
-Future<ProvisioningWizardNotifier> _identifiedNotifier() async {
-  final notifier = ProvisioningWizardNotifier();
-  notifier.setCredentials(_goodCreds);
-  await _waitFor(notifier, target: ProvisioningStep.selectCentral);
-  return notifier;
-}
-
-void main() async {
-  final reachable = await _mockReachable();
-
-  group('provisioning wizard against mock device', () {
-    test('happy path: identify → provision → connected', () async {
-      await _reset(joinResult: 'success');
-      final notifier = await _identifiedNotifier();
-
-      notifier.selectCentral(centralId: 'central-xyz', centralName: 'Casa');
-      expect(notifier.state.step, ProvisioningStep.confirm);
-
-      notifier.setNetworkReady(true);
-      await notifier.submitProvision();
-      final result = await _waitFor(notifier, anyResult: true);
-      expect(result, ProvisioningStep.resultSuccess);
-      notifier.dispose();
-    });
-
-    test('wrong signature → identifyFailed', () async {
-      await _reset(joinResult: 'success');
-      final notifier = ProvisioningWizardNotifier();
-      notifier.setCredentials(
-        const DeviceQrPayload(deviceId: 'dev-001', signature: 'WRONG'),
-      );
-      await _waitFor(notifier, target: ProvisioningStep.identifyFailed);
-      expect(notifier.state.error, isNotNull);
-      notifier.dispose();
-    });
-
-    test('mesh join fails → resultFailed', () async {
-      await _reset(joinResult: 'fail');
-      final notifier = await _identifiedNotifier();
-      notifier.selectCentral(centralId: 'central-xyz');
-      await notifier.submitProvision();
-      final result = await _waitFor(notifier, anyResult: true);
-      expect(result, ProvisioningStep.resultFailed);
-      notifier.dispose();
-    });
-
-    test('AP drops after ACK → resultAssumed', () async {
-      await _reset(joinResult: 'drop');
-      final notifier = await _identifiedNotifier();
-      notifier.selectCentral(centralId: 'central-xyz');
-      await notifier.submitProvision();
-      final result = await _waitFor(
-        notifier,
-        anyResult: true,
-        timeout: const Duration(seconds: 45),
-      );
-      expect(result, ProvisioningStep.resultAssumed);
-      notifier.dispose();
-    });
-
-    test('networkReady=false → resultStored', () async {
-      await _reset(joinResult: 'success');
-      final notifier = await _identifiedNotifier();
-      notifier.selectCentral(centralId: 'central-xyz');
-      notifier.setNetworkReady(false);
-      await notifier.submitProvision();
-      final result = await _waitFor(notifier, anyResult: true);
-      expect(result, ProvisioningStep.resultStored);
-      notifier.dispose();
-    });
-  }, skip: reachable ? false : 'mock device server not reachable at $_mockBase');
-
-  test('DeviceQrPayload parses valid QR and rejects garbage', () {
+void main() {
+  test('DeviceQrPayload parses a valid sticker QR and rejects garbage', () {
     final ok = DeviceQrPayload.tryParse(
-      '{"deviceId":"dev-001","signature":"abc123"}',
+      '{"id":"dev-001","mac":"AA:BB:CC:DD:EE:FF","pop":"abc123POP0000"}',
     );
-    expect(ok?.deviceId, 'dev-001');
-    expect(ok?.signature, 'abc123');
+    expect(ok?.id, 'dev-001');
+    expect(ok?.mac, 'AA:BB:CC:DD:EE:FF');
+    expect(ok?.pop, 'abc123POP0000');
 
     expect(DeviceQrPayload.tryParse('just-a-subid'), isNull);
-    expect(DeviceQrPayload.tryParse('{"deviceId":"x"}'), isNull);
+    expect(DeviceQrPayload.tryParse('{"id":"x"}'), isNull);
     expect(DeviceQrPayload.tryParse(''), isNull);
   });
 }

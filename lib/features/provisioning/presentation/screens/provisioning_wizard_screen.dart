@@ -8,29 +8,30 @@ import '../../domain/entities/provisioning_step.dart';
 import '../widgets/confirm_step.dart';
 import '../widgets/connect_wifi_step.dart';
 import '../widgets/identify_steps.dart';
+import '../widgets/name_zone_step.dart';
 import '../widgets/provisioning_progress_step.dart';
 import '../widgets/result_step.dart';
 import '../widgets/scan_step.dart';
-import '../widgets/select_central_step.dart';
 
-/// Step-by-step wizard that provisions a new device onto a central's
-/// esp-mesh-lite network. USER mode only; pushed from the drawer.
+/// Step-by-step wizard that provisions a new device into [installationId]
+/// (POC-BRIEF.md §6.2). USER mode only; pushed from an installation screen.
 class ProvisioningWizardScreen extends ConsumerWidget {
-  const ProvisioningWizardScreen({super.key});
+  const ProvisioningWizardScreen({super.key, required this.installationId});
+
+  final String installationId;
 
   static const _phases = [
     'Identificação',
+    'Dados',
     'Conexão',
-    'Central',
     'Configuração',
     'Conclusão',
   ];
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final step = ref.watch(
-      provisioningWizardProvider.select((s) => s.step),
-    );
+    final provider = provisioningWizardProvider(installationId);
+    final step = ref.watch(provider.select((s) => s.step));
 
     return Scaffold(
       backgroundColor: context.bgColor,
@@ -88,14 +89,19 @@ class ProvisioningWizardScreen extends ConsumerWidget {
   }
 
   Widget _stepWidget(ProvisioningStep step) => switch (step) {
-        ProvisioningStep.scan => const ScanStep(),
-        ProvisioningStep.connectWifi => const ConnectWifiStep(),
-        ProvisioningStep.identifying => const IdentifyingStep(),
-        ProvisioningStep.identifyFailed => const IdentifyFailedStep(),
-        ProvisioningStep.selectCentral => const SelectCentralStep(),
-        ProvisioningStep.confirm => const ConfirmStep(),
-        ProvisioningStep.provisioning => const ProvisioningProgressStep(),
-        _ => ResultStep(step: step),
+        ProvisioningStep.scan => ScanStep(installationId: installationId),
+        ProvisioningStep.nameZone =>
+          NameZoneStep(installationId: installationId),
+        ProvisioningStep.connecting =>
+          ConnectingStep(installationId: installationId),
+        ProvisioningStep.identifying =>
+          IdentifyingStep(installationId: installationId),
+        ProvisioningStep.identifyFailed =>
+          IdentifyFailedStep(installationId: installationId),
+        ProvisioningStep.confirm => ConfirmStep(installationId: installationId),
+        ProvisioningStep.provisioning =>
+          ProvisioningProgressStep(installationId: installationId),
+        _ => ResultStep(installationId: installationId, step: step),
       };
 }
 

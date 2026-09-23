@@ -6,13 +6,16 @@ import '../../../../core/theme/theme_ext.dart';
 import '../../application/provisioning_wizard_provider.dart';
 import 'wizard_buttons.dart';
 
-/// Step 3a — device reached, verifying deviceId + signature (brief).
+/// Step 4a — device reached, verifying the sticker's pop via HMAC proof
+/// (POC-BRIEF.md §5).
 class IdentifyingStep extends ConsumerWidget {
-  const IdentifyingStep({super.key});
+  const IdentifyingStep({super.key, required this.installationId});
+  final String installationId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final info = ref.watch(provisioningWizardProvider).deviceInfo;
+    final info = ref
+        .watch(provisioningWizardProvider(installationId).select((s) => s.deviceInfo));
 
     return Center(
       child: Column(
@@ -43,7 +46,7 @@ class IdentifyingStep extends ConsumerWidget {
           if (info != null) ...[
             const SizedBox(height: 24),
             Text(
-              '${info.model} · ${info.deviceId}',
+              '${info.model} · ${info.id}',
               style: TextStyle(
                 color: context.textSecondary,
                 fontSize: 12,
@@ -57,14 +60,16 @@ class IdentifyingStep extends ConsumerWidget {
   }
 }
 
-/// Step 3b — device rejected the credentials.
+/// Step 4b — device rejected the sticker's pop (proof mismatch).
 class IdentifyFailedStep extends ConsumerWidget {
-  const IdentifyFailedStep({super.key});
+  const IdentifyFailedStep({super.key, required this.installationId});
+  final String installationId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final error = ref.watch(provisioningWizardProvider).error;
-    final notifier = ref.read(provisioningWizardProvider.notifier);
+    final provider = provisioningWizardProvider(installationId);
+    final error = ref.watch(provider.select((s) => s.error));
+    final notifier = ref.read(provider.notifier);
 
     return Center(
       child: SingleChildScrollView(
@@ -95,8 +100,7 @@ class IdentifyFailedStep extends ConsumerWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              error ??
-                  'O dispositivo não reconheceu o ID e a assinatura informados.',
+              error ?? 'O dispositivo não reconheceu o POP informado.',
               textAlign: TextAlign.center,
               style: TextStyle(color: context.textSecondary, fontSize: 13),
             ),

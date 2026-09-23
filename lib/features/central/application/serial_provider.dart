@@ -15,7 +15,7 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
 
   static const _baudRate = 115200;
 
-  // SAFR framing constants (docs/protocol-safr-v2.md §9)
+  // SAFR framing constants (docs/safr/protocol-safr-v3.md §9)
   static const _safrSof = 0xA5;
   static const _safrMinFrame = 32;
   static const _safrMaxFrame = 256;
@@ -164,7 +164,7 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
   // Frame boundary: SOF(0xA5) at offset 0, total length at bytes [2..3].
   // v2 frames are additionally CRC-checked here so a false SOF inside noise
   // (e.g. ESP32 boot-ROM chatter) costs exactly one discarded byte, never a
-  // whole misframed window (docs/protocol-safr-v2.md §9).
+  // whole misframed window (docs/safr/protocol-safr-v3.md §9).
   void _drainFrames() {
     while (true) {
       // 1. Find next SOF byte.

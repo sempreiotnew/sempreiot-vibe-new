@@ -1,4 +1,4 @@
-// Prints the SAFR v3 Appendix-A golden frames (docs/protocol-safr-v3.md).
+// Prints the SAFR v3 Appendix-A golden frames (docs/safr/protocol-safr-v3.md).
 // Run: dart run tool/print_safr_v3_vectors.dart
 import 'dart:typed_data';
 

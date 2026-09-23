@@ -9,9 +9,11 @@ import '../../application/provisioning_wizard_provider.dart';
 import '../../domain/entities/device_qr_payload.dart';
 import 'wizard_buttons.dart';
 
-/// Step 1 — scan the device QR or type deviceId + signature manually.
+/// Step 1 — scan the device's factory sticker QR ({id, mac, pop}) or type
+/// it manually (POC-BRIEF.md §6.2).
 class ScanStep extends ConsumerStatefulWidget {
-  const ScanStep({super.key});
+  const ScanStep({super.key, required this.installationId});
+  final String installationId;
 
   @override
   ConsumerState<ScanStep> createState() => _ScanStepState();
@@ -19,18 +21,22 @@ class ScanStep extends ConsumerStatefulWidget {
 
 class _ScanStepState extends ConsumerState<ScanStep> {
   final _idCtrl = TextEditingController();
-  final _sigCtrl = TextEditingController();
+  final _macCtrl = TextEditingController();
+  final _popCtrl = TextEditingController();
   String? _error;
 
   @override
   void dispose() {
     _idCtrl.dispose();
-    _sigCtrl.dispose();
+    _macCtrl.dispose();
+    _popCtrl.dispose();
     super.dispose();
   }
 
   bool get _canContinue =>
-      _idCtrl.text.trim().isNotEmpty && _sigCtrl.text.trim().isNotEmpty;
+      _idCtrl.text.trim().isNotEmpty &&
+      _macCtrl.text.trim().isNotEmpty &&
+      _popCtrl.text.trim().isNotEmpty;
 
   Future<void> _scanQr() async {
     if (kIsWeb) return;
@@ -46,23 +52,25 @@ class _ScanStepState extends ConsumerState<ScanStep> {
     final payload = DeviceQrPayload.tryParse(scanned);
     if (payload == null) {
       setState(() => _error =
-          'QR Code inválido. Use o QR Code impresso no dispositivo.');
+          'QR Code inválido. Use a etiqueta impressa no dispositivo.');
       return;
     }
-    _idCtrl.text = payload.deviceId;
-    _sigCtrl.text = payload.signature;
+    _idCtrl.text = payload.id;
+    _macCtrl.text = payload.mac;
+    _popCtrl.text = payload.pop;
     setState(() => _error = null);
     _continue();
   }
 
   void _continue() {
     if (!_canContinue) return;
-    ref.read(provisioningWizardProvider.notifier).setCredentials(
-          DeviceQrPayload(
-            deviceId: _idCtrl.text.trim(),
-            signature: _sigCtrl.text.trim(),
-          ),
-        );
+    ref
+        .read(provisioningWizardProvider(widget.installationId).notifier)
+        .setSticker(DeviceQrPayload(
+          id: _idCtrl.text.trim(),
+          mac: _macCtrl.text.trim(),
+          pop: _popCtrl.text.trim(),
+        ));
   }
 
   @override
@@ -85,7 +93,7 @@ class _ScanStepState extends ConsumerState<ScanStep> {
           const SizedBox(height: 6),
           Text(
             kIsWeb
-                ? 'Digite o ID e a assinatura impressos na etiqueta do dispositivo.'
+                ? 'Digite o ID, MAC e POP impressos na etiqueta do dispositivo.'
                 : 'Escaneie o QR Code impresso no dispositivo ou digite os dados da etiqueta.',
             style: TextStyle(color: context.textSecondary, fontSize: 13),
           ),
@@ -123,11 +131,19 @@ class _ScanStepState extends ConsumerState<ScanStep> {
             onChanged: (_) => setState(() => _error = null),
           ),
           const SizedBox(height: 16),
-          const _FieldLabel('ASSINATURA'),
+          const _FieldLabel('MAC'),
           const SizedBox(height: 8),
           _MonoField(
-            controller: _sigCtrl,
-            hint: 'assinatura do dispositivo',
+            controller: _macCtrl,
+            hint: 'AA:BB:CC:DD:EE:FF',
+            onChanged: (_) => setState(() => _error = null),
+          ),
+          const SizedBox(height: 16),
+          const _FieldLabel('POP'),
+          const SizedBox(height: 8),
+          _MonoField(
+            controller: _popCtrl,
+            hint: 'senha de fábrica do dispositivo',
             onChanged: (_) => setState(() => _error = null),
             onSubmitted: (_) => _continue(),
           ),

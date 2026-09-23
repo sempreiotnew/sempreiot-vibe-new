@@ -3,17 +3,28 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
+import '../../../installation/application/installation_provider.dart';
 import '../../application/provisioning_wizard_provider.dart';
 import 'wizard_buttons.dart';
 
-/// Step 5 — summary + "the central's network is already up" checkbox.
+/// Step 5 — summary before POST /provision (POC-BRIEF.md §5/§6.2).
 class ConfirmStep extends ConsumerWidget {
-  const ConfirmStep({super.key});
+  const ConfirmStep({super.key, required this.installationId});
+  final String installationId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(provisioningWizardProvider);
-    final notifier = ref.read(provisioningWizardProvider.notifier);
+    final provider = provisioningWizardProvider(installationId);
+    final state = ref.watch(provider);
+    final notifier = ref.read(provider.notifier);
+    final installation = ref
+        .watch(installationListProvider)
+        .valueOrNull
+        ?.where((i) => i.localId == installationId);
+    final installationName =
+        installation != null && installation.isNotEmpty
+            ? installation.first.displayName
+            : '—';
 
     return SingleChildScrollView(
       child: Column(
@@ -31,47 +42,13 @@ class ConfirmStep extends ConsumerWidget {
           const SizedBox(height: 20),
           _SummaryCard(
             rows: [
-              (
-                Icons.memory_rounded,
-                'Dispositivo',
-                state.deviceInfo?.deviceId ??
-                    state.credentials?.deviceId ??
-                    '—',
-              ),
+              (Icons.memory_rounded, 'Dispositivo', state.sticker?.id ?? '—'),
               if (state.deviceInfo != null)
                 (Icons.tag_rounded, 'Modelo', state.deviceInfo!.model),
-              (
-                Icons.sensors_rounded,
-                'Central',
-                state.centralName?.isNotEmpty == true
-                    ? '${state.centralName} (${state.centralId})'
-                    : state.centralId ?? '—',
-              ),
+              (Icons.badge_rounded, 'Nome', state.deviceName ?? '—'),
+              (Icons.place_rounded, 'Zona', state.deviceZone ?? '—'),
+              (Icons.hub_rounded, 'Instalação', installationName),
             ],
-          ),
-          const SizedBox(height: 20),
-          _NetworkReadyToggle(
-            value: state.networkReady,
-            onChanged: notifier.setNetworkReady,
-          ),
-          const SizedBox(height: 10),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 200),
-            child: state.networkReady
-                ? Text(
-                    'O dispositivo tentará se conectar à rede mesh agora.',
-                    key: const ValueKey('now'),
-                    style:
-                        TextStyle(color: context.textSecondary, fontSize: 12),
-                  )
-                : Text(
-                    'A configuração será salva no dispositivo e ele se '
-                    'conectará automaticamente quando a rede da central '
-                    'estiver disponível.',
-                    key: const ValueKey('later'),
-                    style:
-                        TextStyle(color: context.textSecondary, fontSize: 12),
-                  ),
           ),
           if (state.error != null) ...[
             const SizedBox(height: 14),
@@ -100,7 +77,7 @@ class ConfirmStep extends ConsumerWidget {
           const SizedBox(height: 12),
           WizardSecondaryButton(
             label: 'Voltar',
-            onTap: notifier.backToSelectCentral,
+            onTap: notifier.backToNameZone,
           ),
           const SizedBox(height: 16),
         ],
@@ -161,68 +138,6 @@ class _SummaryCard extends StatelessWidget {
             ),
           ],
         ],
-      ),
-    );
-  }
-}
-
-class _NetworkReadyToggle extends StatelessWidget {
-  const _NetworkReadyToggle({required this.value, required this.onChanged});
-
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: value
-            ? AppColors.secondary.withValues(alpha: 0.06)
-            : context.surfaceColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: value
-              ? AppColors.secondary.withValues(alpha: 0.4)
-              : context.borderColor,
-        ),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: () => onChanged(!value),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: Checkbox(
-                    value: value,
-                    onChanged: (v) => onChanged(v ?? false),
-                    activeColor: AppColors.secondary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'A central já está ligada com a rede mesh ativa',
-                    style: TextStyle(
-                      color: context.textPrimary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }

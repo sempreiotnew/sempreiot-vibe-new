@@ -1,19 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
-import '../../application/provisioning_wizard_provider.dart';
 
-/// Step 6 (in flight) — provision sent, waiting for the mesh-join verdict.
-class ProvisioningProgressStep extends ConsumerWidget {
-  const ProvisioningProgressStep({super.key});
+/// Step 6 (in flight) — POST /provision sent, polling /status for the
+/// outcome (POC-BRIEF.md §5/§6.2).
+class ProvisioningProgressStep extends StatelessWidget {
+  const ProvisioningProgressStep({super.key, required this.installationId});
+  final String installationId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final networkReady =
-        ref.watch(provisioningWizardProvider).networkReady;
-
+  Widget build(BuildContext context) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -21,9 +18,7 @@ class ProvisioningProgressStep extends ConsumerWidget {
           const _PulsingMeshIcon(),
           const SizedBox(height: 28),
           Text(
-            networkReady
-                ? 'Conectando à rede mesh...'
-                : 'Salvando configuração...',
+            'Enviando configuração...',
             style: TextStyle(
               color: context.textPrimary,
               fontSize: 18,
@@ -34,10 +29,8 @@ class ProvisioningProgressStep extends ConsumerWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Text(
-              networkReady
-                  ? 'Isso pode levar até um minuto. Se o seu aparelho '
-                      'desconectar da rede do dispositivo, é normal.'
-                  : 'Enviando os dados para o dispositivo.',
+              'Isso pode levar até um minuto. Se o seu aparelho '
+              'desconectar da rede do dispositivo, é normal.',
               textAlign: TextAlign.center,
               style: TextStyle(color: context.textSecondary, fontSize: 13),
             ),

@@ -924,6 +924,17 @@ class $MeshDevicesTable extends MeshDevices
   late final GeneratedColumn<String> name = GeneratedColumn<String>(
       'name', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _zoneMeta = const VerificationMeta('zone');
+  @override
+  late final GeneratedColumn<String> zone = GeneratedColumn<String>(
+      'zone', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _registryStateMeta =
+      const VerificationMeta('registryState');
+  @override
+  late final GeneratedColumn<String> registryState = GeneratedColumn<String>(
+      'registry_state', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _lastDevSeqMeta =
       const VerificationMeta('lastDevSeq');
   @override
@@ -961,6 +972,8 @@ class $MeshDevicesTable extends MeshDevices
         lastMsgCtr,
         supervisionState,
         name,
+        zone,
+        registryState,
         lastDevSeq,
         alarmLatched,
         alarmLatchedAt
@@ -1047,6 +1060,16 @@ class $MeshDevicesTable extends MeshDevices
       context.handle(
           _nameMeta, name.isAcceptableOrUnknown(data['name']!, _nameMeta));
     }
+    if (data.containsKey('zone')) {
+      context.handle(
+          _zoneMeta, zone.isAcceptableOrUnknown(data['zone']!, _zoneMeta));
+    }
+    if (data.containsKey('registry_state')) {
+      context.handle(
+          _registryStateMeta,
+          registryState.isAcceptableOrUnknown(
+              data['registry_state']!, _registryStateMeta));
+    }
     if (data.containsKey('last_dev_seq')) {
       context.handle(
           _lastDevSeqMeta,
@@ -1100,6 +1123,10 @@ class $MeshDevicesTable extends MeshDevices
           .read(DriftSqlType.int, data['${effectivePrefix}supervision_state'])!,
       name: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}name']),
+      zone: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}zone']),
+      registryState: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}registry_state']),
       lastDevSeq: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}last_dev_seq'])!,
       alarmLatched: attachedDatabase.typeMapping
@@ -1129,6 +1156,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
   final int lastMsgCtr;
   final int supervisionState;
   final String? name;
+  final String? zone;
+  final String? registryState;
   final int lastDevSeq;
   final int alarmLatched;
   final DateTime? alarmLatchedAt;
@@ -1146,6 +1175,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       required this.lastMsgCtr,
       required this.supervisionState,
       this.name,
+      this.zone,
+      this.registryState,
       required this.lastDevSeq,
       required this.alarmLatched,
       this.alarmLatchedAt});
@@ -1174,6 +1205,12 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
     map['supervision_state'] = Variable<int>(supervisionState);
     if (!nullToAbsent || name != null) {
       map['name'] = Variable<String>(name);
+    }
+    if (!nullToAbsent || zone != null) {
+      map['zone'] = Variable<String>(zone);
+    }
+    if (!nullToAbsent || registryState != null) {
+      map['registry_state'] = Variable<String>(registryState);
     }
     map['last_dev_seq'] = Variable<int>(lastDevSeq);
     map['alarm_latched'] = Variable<int>(alarmLatched);
@@ -1206,6 +1243,10 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       lastMsgCtr: Value(lastMsgCtr),
       supervisionState: Value(supervisionState),
       name: name == null && nullToAbsent ? const Value.absent() : Value(name),
+      zone: zone == null && nullToAbsent ? const Value.absent() : Value(zone),
+      registryState: registryState == null && nullToAbsent
+          ? const Value.absent()
+          : Value(registryState),
       lastDevSeq: Value(lastDevSeq),
       alarmLatched: Value(alarmLatched),
       alarmLatchedAt: alarmLatchedAt == null && nullToAbsent
@@ -1231,6 +1272,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       lastMsgCtr: serializer.fromJson<int>(json['lastMsgCtr']),
       supervisionState: serializer.fromJson<int>(json['supervisionState']),
       name: serializer.fromJson<String?>(json['name']),
+      zone: serializer.fromJson<String?>(json['zone']),
+      registryState: serializer.fromJson<String?>(json['registryState']),
       lastDevSeq: serializer.fromJson<int>(json['lastDevSeq']),
       alarmLatched: serializer.fromJson<int>(json['alarmLatched']),
       alarmLatchedAt: serializer.fromJson<DateTime?>(json['alarmLatchedAt']),
@@ -1253,6 +1296,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       'lastMsgCtr': serializer.toJson<int>(lastMsgCtr),
       'supervisionState': serializer.toJson<int>(supervisionState),
       'name': serializer.toJson<String?>(name),
+      'zone': serializer.toJson<String?>(zone),
+      'registryState': serializer.toJson<String?>(registryState),
       'lastDevSeq': serializer.toJson<int>(lastDevSeq),
       'alarmLatched': serializer.toJson<int>(alarmLatched),
       'alarmLatchedAt': serializer.toJson<DateTime?>(alarmLatchedAt),
@@ -1273,6 +1318,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           int? lastMsgCtr,
           int? supervisionState,
           Value<String?> name = const Value.absent(),
+          Value<String?> zone = const Value.absent(),
+          Value<String?> registryState = const Value.absent(),
           int? lastDevSeq,
           int? alarmLatched,
           Value<DateTime?> alarmLatchedAt = const Value.absent()}) =>
@@ -1292,6 +1339,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
         lastMsgCtr: lastMsgCtr ?? this.lastMsgCtr,
         supervisionState: supervisionState ?? this.supervisionState,
         name: name.present ? name.value : this.name,
+        zone: zone.present ? zone.value : this.zone,
+        registryState:
+            registryState.present ? registryState.value : this.registryState,
         lastDevSeq: lastDevSeq ?? this.lastDevSeq,
         alarmLatched: alarmLatched ?? this.alarmLatched,
         alarmLatchedAt:
@@ -1321,6 +1371,10 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           ? data.supervisionState.value
           : this.supervisionState,
       name: data.name.present ? data.name.value : this.name,
+      zone: data.zone.present ? data.zone.value : this.zone,
+      registryState: data.registryState.present
+          ? data.registryState.value
+          : this.registryState,
       lastDevSeq:
           data.lastDevSeq.present ? data.lastDevSeq.value : this.lastDevSeq,
       alarmLatched: data.alarmLatched.present
@@ -1348,6 +1402,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           ..write('lastMsgCtr: $lastMsgCtr, ')
           ..write('supervisionState: $supervisionState, ')
           ..write('name: $name, ')
+          ..write('zone: $zone, ')
+          ..write('registryState: $registryState, ')
           ..write('lastDevSeq: $lastDevSeq, ')
           ..write('alarmLatched: $alarmLatched, ')
           ..write('alarmLatchedAt: $alarmLatchedAt')
@@ -1370,6 +1426,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       lastMsgCtr,
       supervisionState,
       name,
+      zone,
+      registryState,
       lastDevSeq,
       alarmLatched,
       alarmLatchedAt);
@@ -1390,6 +1448,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           other.lastMsgCtr == this.lastMsgCtr &&
           other.supervisionState == this.supervisionState &&
           other.name == this.name &&
+          other.zone == this.zone &&
+          other.registryState == this.registryState &&
           other.lastDevSeq == this.lastDevSeq &&
           other.alarmLatched == this.alarmLatched &&
           other.alarmLatchedAt == this.alarmLatchedAt);
@@ -1409,6 +1469,8 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
   final Value<int> lastMsgCtr;
   final Value<int> supervisionState;
   final Value<String?> name;
+  final Value<String?> zone;
+  final Value<String?> registryState;
   final Value<int> lastDevSeq;
   final Value<int> alarmLatched;
   final Value<DateTime?> alarmLatchedAt;
@@ -1427,6 +1489,8 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     this.lastMsgCtr = const Value.absent(),
     this.supervisionState = const Value.absent(),
     this.name = const Value.absent(),
+    this.zone = const Value.absent(),
+    this.registryState = const Value.absent(),
     this.lastDevSeq = const Value.absent(),
     this.alarmLatched = const Value.absent(),
     this.alarmLatchedAt = const Value.absent(),
@@ -1446,6 +1510,8 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     this.lastMsgCtr = const Value.absent(),
     this.supervisionState = const Value.absent(),
     this.name = const Value.absent(),
+    this.zone = const Value.absent(),
+    this.registryState = const Value.absent(),
     this.lastDevSeq = const Value.absent(),
     this.alarmLatched = const Value.absent(),
     this.alarmLatchedAt = const Value.absent(),
@@ -1467,6 +1533,8 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     Expression<int>? lastMsgCtr,
     Expression<int>? supervisionState,
     Expression<String>? name,
+    Expression<String>? zone,
+    Expression<String>? registryState,
     Expression<int>? lastDevSeq,
     Expression<int>? alarmLatched,
     Expression<DateTime>? alarmLatchedAt,
@@ -1486,6 +1554,8 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
       if (lastMsgCtr != null) 'last_msg_ctr': lastMsgCtr,
       if (supervisionState != null) 'supervision_state': supervisionState,
       if (name != null) 'name': name,
+      if (zone != null) 'zone': zone,
+      if (registryState != null) 'registry_state': registryState,
       if (lastDevSeq != null) 'last_dev_seq': lastDevSeq,
       if (alarmLatched != null) 'alarm_latched': alarmLatched,
       if (alarmLatchedAt != null) 'alarm_latched_at': alarmLatchedAt,
@@ -1507,6 +1577,8 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
       Value<int>? lastMsgCtr,
       Value<int>? supervisionState,
       Value<String?>? name,
+      Value<String?>? zone,
+      Value<String?>? registryState,
       Value<int>? lastDevSeq,
       Value<int>? alarmLatched,
       Value<DateTime?>? alarmLatchedAt,
@@ -1525,6 +1597,8 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
       lastMsgCtr: lastMsgCtr ?? this.lastMsgCtr,
       supervisionState: supervisionState ?? this.supervisionState,
       name: name ?? this.name,
+      zone: zone ?? this.zone,
+      registryState: registryState ?? this.registryState,
       lastDevSeq: lastDevSeq ?? this.lastDevSeq,
       alarmLatched: alarmLatched ?? this.alarmLatched,
       alarmLatchedAt: alarmLatchedAt ?? this.alarmLatchedAt,
@@ -1574,6 +1648,12 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     if (name.present) {
       map['name'] = Variable<String>(name.value);
     }
+    if (zone.present) {
+      map['zone'] = Variable<String>(zone.value);
+    }
+    if (registryState.present) {
+      map['registry_state'] = Variable<String>(registryState.value);
+    }
     if (lastDevSeq.present) {
       map['last_dev_seq'] = Variable<int>(lastDevSeq.value);
     }
@@ -1605,6 +1685,8 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
           ..write('lastMsgCtr: $lastMsgCtr, ')
           ..write('supervisionState: $supervisionState, ')
           ..write('name: $name, ')
+          ..write('zone: $zone, ')
+          ..write('registryState: $registryState, ')
           ..write('lastDevSeq: $lastDevSeq, ')
           ..write('alarmLatched: $alarmLatched, ')
           ..write('alarmLatchedAt: $alarmLatchedAt, ')
@@ -2698,6 +2780,8 @@ typedef $$MeshDevicesTableCreateCompanionBuilder = MeshDevicesCompanion
   Value<int> lastMsgCtr,
   Value<int> supervisionState,
   Value<String?> name,
+  Value<String?> zone,
+  Value<String?> registryState,
   Value<int> lastDevSeq,
   Value<int> alarmLatched,
   Value<DateTime?> alarmLatchedAt,
@@ -2718,6 +2802,8 @@ typedef $$MeshDevicesTableUpdateCompanionBuilder = MeshDevicesCompanion
   Value<int> lastMsgCtr,
   Value<int> supervisionState,
   Value<String?> name,
+  Value<String?> zone,
+  Value<String?> registryState,
   Value<int> lastDevSeq,
   Value<int> alarmLatched,
   Value<DateTime?> alarmLatchedAt,
@@ -2773,6 +2859,12 @@ class $$MeshDevicesTableFilterComposer
 
   ColumnFilters<String> get name => $composableBuilder(
       column: $table.name, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get zone => $composableBuilder(
+      column: $table.zone, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get registryState => $composableBuilder(
+      column: $table.registryState, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<int> get lastDevSeq => $composableBuilder(
       column: $table.lastDevSeq, builder: (column) => ColumnFilters(column));
@@ -2835,6 +2927,13 @@ class $$MeshDevicesTableOrderingComposer
   ColumnOrderings<String> get name => $composableBuilder(
       column: $table.name, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get zone => $composableBuilder(
+      column: $table.zone, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get registryState => $composableBuilder(
+      column: $table.registryState,
+      builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<int> get lastDevSeq => $composableBuilder(
       column: $table.lastDevSeq, builder: (column) => ColumnOrderings(column));
 
@@ -2895,6 +2994,12 @@ class $$MeshDevicesTableAnnotationComposer
   GeneratedColumn<String> get name =>
       $composableBuilder(column: $table.name, builder: (column) => column);
 
+  GeneratedColumn<String> get zone =>
+      $composableBuilder(column: $table.zone, builder: (column) => column);
+
+  GeneratedColumn<String> get registryState => $composableBuilder(
+      column: $table.registryState, builder: (column) => column);
+
   GeneratedColumn<int> get lastDevSeq => $composableBuilder(
       column: $table.lastDevSeq, builder: (column) => column);
 
@@ -2941,6 +3046,8 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             Value<int> lastMsgCtr = const Value.absent(),
             Value<int> supervisionState = const Value.absent(),
             Value<String?> name = const Value.absent(),
+            Value<String?> zone = const Value.absent(),
+            Value<String?> registryState = const Value.absent(),
             Value<int> lastDevSeq = const Value.absent(),
             Value<int> alarmLatched = const Value.absent(),
             Value<DateTime?> alarmLatchedAt = const Value.absent(),
@@ -2960,6 +3067,8 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             lastMsgCtr: lastMsgCtr,
             supervisionState: supervisionState,
             name: name,
+            zone: zone,
+            registryState: registryState,
             lastDevSeq: lastDevSeq,
             alarmLatched: alarmLatched,
             alarmLatchedAt: alarmLatchedAt,
@@ -2979,6 +3088,8 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             Value<int> lastMsgCtr = const Value.absent(),
             Value<int> supervisionState = const Value.absent(),
             Value<String?> name = const Value.absent(),
+            Value<String?> zone = const Value.absent(),
+            Value<String?> registryState = const Value.absent(),
             Value<int> lastDevSeq = const Value.absent(),
             Value<int> alarmLatched = const Value.absent(),
             Value<DateTime?> alarmLatchedAt = const Value.absent(),
@@ -2998,6 +3109,8 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             lastMsgCtr: lastMsgCtr,
             supervisionState: supervisionState,
             name: name,
+            zone: zone,
+            registryState: registryState,
             lastDevSeq: lastDevSeq,
             alarmLatched: alarmLatched,
             alarmLatchedAt: alarmLatchedAt,

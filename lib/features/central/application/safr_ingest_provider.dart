@@ -7,12 +7,14 @@ import '../../../core/database/app_database.dart';
 import '../domain/safr/safr_parser.dart';
 import '../domain/safr/safr_v2_frame.dart';
 import '../domain/safr/safr_v2_payloads.dart';
+import '../domain/safr/safr_identity.dart';
+import 'central_installation_provider.dart';
 import 'safr_downlink_provider.dart';
 import 'safr_traffic_provider.dart';
 import 'serial_link_provider.dart';
 import 'serial_provider.dart';
 
-/// Compliance posture (docs/protocol-safr-v3.md §4.1 — UL 864 / EN 54-25):
+/// Compliance posture (docs/safr/protocol-safr-v3.md §4.1 — UL 864 / EN 54-25):
 /// plaintext frames never update device state. Flip only on a debug bench.
 const kSafrAllowPlaintext =
     bool.fromEnvironment('SAFR_ALLOW_PLAINTEXT', defaultValue: false);
@@ -21,7 +23,7 @@ const kSafrAllowPlaintext =
 /// provisioning assigns per-installation identities.
 const kSafrSystemId = safrDevSystemId;
 
-/// Parse-on-ingest pipeline (docs/protocol-safr-v3.md §10): every serial frame
+/// Parse-on-ingest pipeline (docs/safr/protocol-safr-v3.md §10): every serial frame
 /// is stored raw in SerialPackets (forensics), then decoded once into the
 /// trusted MeshDevices registry + the humanized DeviceEvents feed.
 /// Unauthenticated frames NEVER update device state — they only produce
@@ -29,6 +31,7 @@ const kSafrSystemId = safrDevSystemId;
 class SafrIngestService {
   SafrIngestService({
     required this.db,
+    this.identity,
     this.onValidFrame,
     this.onInvalidFrame,
     this.onAckRequired,
@@ -38,6 +41,11 @@ class SafrIngestService {
   });
 
   final AppDatabase db;
+
+  /// Resolves the (SYSTEM_ID, SAFR_PSK) to authenticate with, per frame, so
+  /// an installation imported while running takes effect immediately.
+  /// Null = the bench default [SafrIdentity.dev].
+  final SafrIdentity Function()? identity;
   final void Function()? onValidFrame;
   final void Function()? onInvalidFrame;
   final Future<void> Function(SafrWireFrame frame)? onAckRequired;
@@ -64,7 +72,9 @@ class SafrIngestService {
           ),
         );
 
-    final result = parseSafr(bytes, expectedSystemId: kSafrSystemId);
+    final id = identity?.call() ?? SafrIdentity.dev;
+    final result =
+        parseSafr(bytes, key: id.key, expectedSystemId: id.systemId);
     if (result is! SafrWireResult) return; // v1/invalid: raw log only
     final frame = result.frame;
     final now = DateTime.now().toUtc();
@@ -101,6 +111,11 @@ class SafrIngestService {
       await _handleJournalData(
           frame, frame.payload as SafrEventLogDataPayload, packetId, now);
       return;
+    }
+
+    if (frame.msgType == SafrMsgType.installation &&
+        frame.payload is SafrInstallationPayload) {
+      await _handleInstallation(frame.payload as SafrInstallationPayload, now);
     }
 
     final accepted = await _updateTrustedState(frame, packetId, now);
@@ -236,7 +251,11 @@ class SafrIngestService {
         rssi = p.rssiToParent ?? rssi;
         battery = p.batteryPct ?? battery;
         lastHb = now;
-        if (p.layer == 0) role = SafrNodeRole.root.wire;
+        // Role tracks layer from the 15 s heartbeat so a root change shows
+        // fast; TOPOLOGY (every 60 s) also carries role and refines it. Board
+        // (layer 0) and the mesh root (layer 1) are "root"; layer 2+ are
+        // relays/children. (Phase 1 has no sleeping leaves on this path.)
+        role = p.layer <= 1 ? SafrNodeRole.root.wire : SafrNodeRole.node.wire;
       case SafrTopologyPayload p:
         role = p.role.wire;
         layer = p.layer;
@@ -258,6 +277,19 @@ class SafrIngestService {
         break;
     }
 
+    // v3.1 (spec §7.11): the operator-chosen name/zone, announced once by
+    // the device itself — always wins over whatever INSTALLATION guessed.
+    var name = existing?.name;
+    var zone = existing?.zone;
+    var registryState = existing?.registryState;
+    if (payload case SafrNameAnnouncePayload p) {
+      name = p.name;
+      zone = p.zone;
+    }
+    // Hearing directly from a device (any frame) means it's live — supersedes
+    // the 'enrolled' marker INSTALLATION may have set before this ever arrived.
+    if (registryState == 'enrolled') registryState = null;
+
     await db.into(db.meshDevices).insertOnConflictUpdate(
           MeshDevicesCompanion(
             mac: Value(frame.srcMac),
@@ -274,7 +306,9 @@ class SafrIngestService {
             // Owned by the supervision provider: it flips this flag and
             // emits the missing/restored events on the state edges.
             supervisionState: Value(existing?.supervisionState ?? 0),
-            name: Value(existing?.name),
+            name: Value(name),
+            zone: Value(zone),
+            registryState: Value(registryState),
             lastDevSeq: Value(lastDevSeq),
             alarmLatched: Value(alarmLatched),
             alarmLatchedAt: Value(alarmLatchedAt),
@@ -315,11 +349,53 @@ class SafrIngestService {
             lastMsgCtr: Value(existing?.lastMsgCtr ?? 0),
             supervisionState: Value(existing?.supervisionState ?? 0),
             name: Value(existing?.name),
+            zone: Value(existing?.zone),
+            registryState: Value(existing?.registryState),
             lastDevSeq: Value(lastDevSeq),
             alarmLatched: Value(alarmLatched),
             alarmLatchedAt: Value(alarmLatchedAt),
           ),
         );
+  }
+
+  /// Reply to GET_INSTALLATION (spec §7.6/§7.10, v3.1): seeds a registry row
+  /// for every enrolled device not yet heard from directly, so the app can
+  /// show its name/zone before its first live frame arrives. Never touches a
+  /// device that has already reported itself (registryState == null there).
+  Future<void> _handleInstallation(
+    SafrInstallationPayload installation,
+    DateTime now,
+  ) async {
+    for (final device in installation.enrolled) {
+      final existing = await (db.select(db.meshDevices)
+            ..where((t) => t.mac.equals(device.mac)))
+          .getSingleOrNull();
+      if (existing != null && existing.registryState != 'enrolled') {
+        continue; // already known live — don't downgrade or overwrite it
+      }
+      await db.into(db.meshDevices).insertOnConflictUpdate(
+            MeshDevicesCompanion(
+              mac: Value(device.mac),
+              role: Value(existing?.role ?? SafrNodeRole.unknown.wire),
+              layer: Value(existing?.layer ?? 0),
+              parentMac: Value(existing?.parentMac),
+              lastRssi: Value(existing?.lastRssi),
+              batteryPct: Value(existing?.batteryPct),
+              firstSeenAt: Value(existing?.firstSeenAt ?? now),
+              lastSeenAt: Value(existing?.lastSeenAt ?? now),
+              lastHeartbeatAt: Value(existing?.lastHeartbeatAt),
+              lastBootCtr: Value(existing?.lastBootCtr ?? 0),
+              lastMsgCtr: Value(existing?.lastMsgCtr ?? 0),
+              supervisionState: Value(existing?.supervisionState ?? 0),
+              name: Value(existing?.name ?? device.name),
+              zone: Value(existing?.zone ?? device.zone),
+              registryState: const Value('enrolled'),
+              lastDevSeq: Value(existing?.lastDevSeq ?? 0),
+              alarmLatched: Value(existing?.alarmLatched ?? 0),
+              alarmLatchedAt: Value(existing?.alarmLatchedAt),
+            ),
+          );
+    }
   }
 
   Future<int> _insertEvent({
@@ -411,6 +487,7 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
 
   final service = SafrIngestService(
     db: ref.watch(appDatabaseProvider),
+    identity: () => ref.read(safrIdentityProvider),
     onValidFrame: link.reportValidFrame,
     onInvalidFrame: link.reportInvalidFrame,
     onAckRequired: downlink.sendAck,

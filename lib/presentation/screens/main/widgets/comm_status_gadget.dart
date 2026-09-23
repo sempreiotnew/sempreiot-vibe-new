@@ -161,7 +161,7 @@ class CentralCommGadget extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final network = ref.watch(networkStatusProvider);
     // Protocol-driven: "Conectado" means valid SAFR frames are flowing, not
-    // merely that a USB port is open (docs/protocol-safr-v2.md §8).
+    // merely that a USB port is open (docs/safr/protocol-safr-v3.md §8).
     final link = ref.watch(serialLinkProvider);
     final mesh = ref.watch(meshLinkStateProvider);
     final iot = ref.watch(centralIotConnectionProvider);

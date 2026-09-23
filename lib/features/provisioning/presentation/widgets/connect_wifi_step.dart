@@ -1,6 +1,5 @@
 import 'dart:math' as math;
 
-import 'package:app_settings/app_settings.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,18 +7,25 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../application/provisioning_wizard_provider.dart';
+import '../../data/services/wifi_join_service.dart';
 import 'wizard_buttons.dart';
 
-/// Step 2 — guide the user to join the device's SoftAP. The wizard notifier
-/// is already polling /info underneath; the step auto-advances on contact.
-class ConnectWifiStep extends ConsumerWidget {
-  const ConnectWifiStep({super.key});
+/// Step 3 — programmatic join of the device's setup SoftAP (POC-BRIEF.md
+/// §6.2). The wizard notifier already attempted `WifiJoinService.connect`
+/// and started polling /info on entering this step; this widget just
+/// reflects progress and offers the manual-settings fallback.
+class ConnectingStep extends ConsumerWidget {
+  const ConnectingStep({super.key, required this.installationId});
+  final String installationId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final deviceId =
-        ref.watch(provisioningWizardProvider).credentials?.deviceId ?? '';
-    final ssid = 'SEMPREIOT-${deviceId.toUpperCase()}';
+    final provider = provisioningWizardProvider(installationId);
+    final notifier = ref.read(provider.notifier);
+    final error = ref.watch(provider.select((s) => s.error));
+    final ssid = notifier.ssidHint;
+    final automatic =
+        !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
     return SingleChildScrollView(
       child: Column(
@@ -29,7 +35,7 @@ class ConnectWifiStep extends ConsumerWidget {
           const Center(child: _RadarPulse()),
           const SizedBox(height: 24),
           Text(
-            'Conecte-se ao dispositivo',
+            'Conectando ao dispositivo',
             style: TextStyle(
               color: context.textPrimary,
               fontSize: 20,
@@ -37,40 +43,50 @@ class ConnectWifiStep extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 6),
-          Text(
-            'O dispositivo cria uma rede Wi-Fi própria durante a configuração.',
-            style: TextStyle(color: context.textSecondary, fontSize: 13),
-          ),
-          const SizedBox(height: 24),
-          const _InstructionTile(
-            index: 1,
-            text: 'Abra os ajustes de Wi-Fi do seu aparelho',
-          ),
-          _InstructionTile.rich(
-            index: 2,
-            prefix: 'Conecte-se à rede ',
-            highlight: ssid,
-          ),
-          const _InstructionTile(
-            index: 3,
-            text: 'Volte para este aplicativo',
-          ),
-          const SizedBox(height: 24),
-          if (!kIsWeb) ...[
-            WizardPrimaryButton(
-              label: 'Abrir Ajustes de Wi-Fi',
-              icon: Icons.wifi_rounded,
-              onTap: () =>
-                  AppSettings.openAppSettings(type: AppSettingsType.wifi),
+          Text.rich(
+            TextSpan(
+              text: automatic ? 'Entrando na rede ' : 'Entre na rede ',
+              style: TextStyle(color: context.textSecondary, fontSize: 13),
+              children: [
+                TextSpan(
+                  text: ssid,
+                  style: const TextStyle(
+                    color: AppColors.secondary,
+                    fontWeight: FontWeight.w700,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+                TextSpan(
+                  text: automatic
+                      ? ' automaticamente...'
+                      : ' pelos Ajustes de Wi-Fi e volte para o app.',
+                ),
+              ],
             ),
+          ),
+          const SizedBox(height: 24),
+          if (error == null)
+            const _SearchingBanner()
+          else ...[
+            _ErrorBanner(message: error),
+            const SizedBox(height: 16),
+            if (!kIsWeb)
+              const WizardPrimaryButton(
+                label: 'Abrir Ajustes de Wi-Fi',
+                icon: Icons.wifi_rounded,
+                onTap: WifiJoinService.openWifiSettingsManually,
+              ),
             const SizedBox(height: 12),
+            WizardSecondaryButton(
+              label: 'Tentar novamente',
+              icon: Icons.refresh_rounded,
+              onTap: notifier.retryConnecting,
+            ),
           ],
-          const _SearchingBanner(),
           const SizedBox(height: 12),
           Center(
             child: TextButton(
-              onPressed: () =>
-                  ref.read(provisioningWizardProvider.notifier).backToScan(),
+              onPressed: notifier.backToScan,
               child: Text(
                 'Voltar',
                 style: TextStyle(color: context.textSecondary, fontSize: 13),
@@ -78,6 +94,34 @@ class ConnectWifiStep extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+}
+
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner({required this.message});
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.error.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.error.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.error_outline_rounded, color: AppColors.error, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(message,
+                style: const TextStyle(color: AppColors.error, fontSize: 12)),
+          ),
         ],
       ),
     );
@@ -175,85 +219,6 @@ class _RadarPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _RadarPainter oldDelegate) =>
       oldDelegate.progress != progress;
-}
-
-class _InstructionTile extends StatelessWidget {
-  const _InstructionTile({required this.index, required this.text})
-      : prefix = null,
-        highlight = null;
-
-  const _InstructionTile.rich({
-    required this.index,
-    required this.prefix,
-    required this.highlight,
-  }) : text = null;
-
-  final int index;
-  final String? text;
-  final String? prefix;
-  final String? highlight;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 26,
-            height: 26,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: AppColors.secondary.withValues(alpha: 0.12),
-              shape: BoxShape.circle,
-            ),
-            child: Text(
-              '$index',
-              style: const TextStyle(
-                color: AppColors.secondary,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: text != null
-                  ? Text(
-                      text!,
-                      style: TextStyle(
-                        color: context.textPrimary,
-                        fontSize: 14,
-                      ),
-                    )
-                  : Text.rich(
-                      TextSpan(
-                        text: prefix,
-                        style: TextStyle(
-                          color: context.textPrimary,
-                          fontSize: 14,
-                        ),
-                        children: [
-                          TextSpan(
-                            text: highlight,
-                            style: const TextStyle(
-                              color: AppColors.secondary,
-                              fontWeight: FontWeight.w700,
-                              fontFamily: 'monospace',
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _SearchingBanner extends StatelessWidget {

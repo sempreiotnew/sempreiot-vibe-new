@@ -7,7 +7,7 @@ import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_frame
 import 'safr_v3_vectors_test.dart' show buildSpecVectors;
 
 /// Hardware-in-the-loop regression: frames captured once from the real mock
-/// firmware (docs/tools/capture-safr.sh) must reframe, CRC-check and decrypt
+/// firmware (tools/capture-safr.sh) must reframe, CRC-check and decrypt
 /// with the Dart implementation — proving mbedTLS ↔ PointyCastle interop and
 /// that the UART path does not corrupt binary (the v1 CRLF bug).
 void main() {
@@ -82,7 +82,7 @@ void main() {
           reason: 'no Appendix-A vector found — capture across a board reset');
     },
     skip: !fixture.existsSync()
-        ? 'No capture yet — run docs/tools/capture-safr.sh with the board attached'
+        ? 'No capture yet — run tools/capture-safr.sh with the board attached'
         : false,
   );
 }

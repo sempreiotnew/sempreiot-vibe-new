@@ -7,18 +7,23 @@ import '../../application/provisioning_wizard_provider.dart';
 import '../../domain/entities/provisioning_step.dart';
 import 'wizard_buttons.dart';
 
-/// Final step — one of the four provisioning outcomes.
+/// Final step — one of the three provisioning outcomes (POC-BRIEF.md §5:
+/// `stored` / `online` / `failed`). There is deliberately no "assumed
+/// success" variant: every outcome shown here came from a `/status` reply
+/// the device itself sent (see `provisioning_wizard_provider.dart`).
 ///
 /// The outcome is passed in (not watched) so the widget keeps its variant
 /// while animating out after restart() resets the wizard to the scan step.
 class ResultStep extends ConsumerWidget {
-  const ResultStep({super.key, required this.step});
+  const ResultStep({super.key, required this.installationId, required this.step});
 
+  final String installationId;
   final ProvisioningStep step;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final notifier = ref.read(provisioningWizardProvider.notifier);
+    final notifier =
+        ref.read(provisioningWizardProvider(installationId).notifier);
     final visual = _VisualFor(step);
 
     return Center(
@@ -82,11 +87,11 @@ class ResultStep extends ConsumerWidget {
 
 class _VisualFor {
   factory _VisualFor(ProvisioningStep step) => switch (step) {
-        ProvisioningStep.resultSuccess => const _VisualFor._(
+        ProvisioningStep.resultOnline => const _VisualFor._(
             icon: Icons.check_circle_rounded,
             color: AppColors.success,
             title: 'Dispositivo conectado!',
-            message: 'O dispositivo entrou na rede mesh da central '
+            message: 'O dispositivo entrou na rede mesh da instalação '
                 'e já está operando.',
           ),
         ProvisioningStep.resultStored => const _VisualFor._(
@@ -94,23 +99,15 @@ class _VisualFor {
             color: AppColors.secondary,
             title: 'Configuração salva',
             message: 'O dispositivo guardou a configuração e se conectará '
-                'automaticamente quando a rede da central estiver ativa.',
-          ),
-        ProvisioningStep.resultAssumed => const _VisualFor._(
-            icon: Icons.wifi_find_rounded,
-            color: AppColors.warning,
-            title: 'Configuração enviada',
-            message: 'O dispositivo recebeu a configuração e saiu da rede de '
-                'configuração — isso normalmente significa que ele entrou na '
-                'rede mesh. Verifique na sua central se ele apareceu.',
+                'automaticamente quando a rede da instalação estiver ativa.',
           ),
         _ => const _VisualFor._(
             icon: Icons.error_rounded,
             color: AppColors.error,
             title: 'Falha na conexão',
-            message: 'O dispositivo não conseguiu entrar na rede mesh. '
-                'Verifique se a central está ligada e ao alcance, '
-                'ou salve a configuração para uso futuro.',
+            message: 'Não foi possível confirmar que o dispositivo salvou '
+                'a configuração. Verifique se ele ainda está na rede de '
+                'configuração e tente novamente.',
           ),
       };
 

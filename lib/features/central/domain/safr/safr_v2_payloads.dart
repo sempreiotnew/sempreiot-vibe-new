@@ -1,9 +1,10 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'safr_v2_frame.dart';
 
 /// Payload models and per-MSG_TYPE fixed-layout codecs.
-/// Layouts: docs/protocol-safr-v3.md §7 (v2 §6 layouts decode-compatibly:
+/// Layouts: docs/safr/protocol-safr-v3.md §7 (v2 §6 layouts decode-compatibly:
 /// the only difference is EVENT gaining DEV_SEQ at bytes 15..16).
 
 // "not available" sentinels (§6)
@@ -96,7 +97,11 @@ enum SafrCommand {
 
   /// Operator alarm reset (spec §7.1.4) — the ONLY thing that clears a
   /// latched alarm (UL 864 / NFPA 72).
-  reset(0x05);
+  reset(0x05),
+
+  /// v3.1, POC round 1 (spec §7.6/§7.10): serial-link-only, board replies
+  /// with INSTALLATION. Never relayed into the mesh.
+  getInstallation(0x10);
 
   const SafrCommand(this.wire);
   final int wire;
@@ -449,6 +454,166 @@ class SafrEventLogDataPayload extends SafrV2Payload {
       logFlags,
       ...origSrcMac,
       ...eventPayload17,
+    ]);
+  }
+}
+
+/// One enrolled device inside an INSTALLATION payload (spec §7.10).
+class SafrEnrolledDevice {
+  const SafrEnrolledDevice({
+    required this.mac,
+    required this.name,
+    required this.zone,
+  });
+  final String mac;
+  final String name;
+  final String zone;
+}
+
+/// Reply to COMMAND GET_INSTALLATION (spec §7.6/§7.10, v3.1 POC round 1).
+/// Board-only, serial-link-only. Never carries `net_psk`/`safr_psk`.
+class SafrInstallationPayload extends SafrV2Payload {
+  const SafrInstallationPayload({
+    required this.systemId,
+    required this.channel,
+    required this.netSsid,
+    required this.name,
+    required this.enrolled,
+  });
+
+  final int systemId;
+  final int channel;
+  final String netSsid;
+  final String name;
+  final List<SafrEnrolledDevice> enrolled;
+
+  static SafrInstallationPayload? parse(Uint8List p) {
+    if (p.length < 6) return null;
+    var off = 0;
+    final systemId = (p[0] << 8) | p[1];
+    final channel = p[2];
+    off = 3;
+
+    String readLenPrefixed(int maxLen) {
+      if (off >= p.length) throw const FormatException('truncated');
+      final len = p[off];
+      off += 1;
+      if (len > maxLen || off + len > p.length) {
+        throw const FormatException('bad length prefix');
+      }
+      final s = utf8.decode(p.sublist(off, off + len));
+      off += len;
+      return s;
+    }
+
+    try {
+      final netSsid = readLenPrefixed(32);
+      final name = readLenPrefixed(32);
+      if (off >= p.length) return null;
+      final enrolledCount = p[off];
+      off += 1;
+      final enrolled = <SafrEnrolledDevice>[];
+      for (var i = 0; i < enrolledCount; i++) {
+        if (off + 6 > p.length) return null;
+        final mac = safrMacToString(p.sublist(off, off + 6));
+        off += 6;
+        final devName = readLenPrefixed(32);
+        final devZone = readLenPrefixed(16);
+        enrolled.add(
+          SafrEnrolledDevice(mac: mac, name: devName, zone: devZone),
+        );
+      }
+      return SafrInstallationPayload(
+        systemId: systemId,
+        channel: channel,
+        netSsid: netSsid,
+        name: name,
+        enrolled: enrolled,
+      );
+    } on FormatException {
+      return null;
+    } on RangeError {
+      return null;
+    }
+  }
+
+  static Uint8List build({
+    required int systemId,
+    required int channel,
+    required String netSsid,
+    required String name,
+    List<SafrEnrolledDevice> enrolled = const [],
+  }) {
+    final ssidBytes = utf8.encode(netSsid);
+    final nameBytes = utf8.encode(name);
+    assert(ssidBytes.length <= 32);
+    assert(nameBytes.length <= 32);
+    final out = <int>[
+      (systemId >> 8) & 0xFF,
+      systemId & 0xFF,
+      channel & 0xFF,
+      ssidBytes.length,
+      ...ssidBytes,
+      nameBytes.length,
+      ...nameBytes,
+      enrolled.length,
+    ];
+    for (final d in enrolled) {
+      final devName = utf8.encode(d.name);
+      final devZone = utf8.encode(d.zone);
+      assert(devName.length <= 32);
+      assert(devZone.length <= 16);
+      out
+        ..addAll(safrMacToBytes(d.mac))
+        ..add(devName.length)
+        ..addAll(devName)
+        ..add(devZone.length)
+        ..addAll(devZone);
+    }
+    return Uint8List.fromList(out);
+  }
+}
+
+/// Sent once by a node after boot, forwarded like any other frame (spec
+/// §7.11, v3.1 POC round 1). `SRC_MAC` (header) identifies the device.
+class SafrNameAnnouncePayload extends SafrV2Payload {
+  const SafrNameAnnouncePayload({required this.name, required this.zone});
+
+  final String name;
+  final String zone;
+
+  static SafrNameAnnouncePayload? parse(Uint8List p) {
+    if (p.isEmpty) return null;
+    try {
+      var off = 0;
+      final nameLen = p[off];
+      off += 1;
+      if (nameLen > 32 || off + nameLen > p.length) return null;
+      final name = utf8.decode(p.sublist(off, off + nameLen));
+      off += nameLen;
+      if (off >= p.length) return null;
+      final zoneLen = p[off];
+      off += 1;
+      if (zoneLen > 16 || off + zoneLen > p.length) return null;
+      final zone = utf8.decode(p.sublist(off, off + zoneLen));
+      return SafrNameAnnouncePayload(name: name, zone: zone);
+    } on RangeError {
+      return null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  static Uint8List build({required String name, required String zone}) {
+    final nameBytes = utf8.encode(name);
+    final zoneBytes = utf8.encode(zone);
+    assert(nameBytes.length <= 32);
+    assert(zoneBytes.length <= 16);
+    return Uint8List.fromList([
+      nameBytes.length,
+      ...nameBytes,
+      zoneBytes.length,
+      ...zoneBytes,
     ]);
   }
 }

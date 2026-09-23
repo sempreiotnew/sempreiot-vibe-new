@@ -37,7 +37,7 @@ class AuditEvents extends Table {
 }
 
 /// Registry of mesh devices, keyed by MAC — the trusted state built from
-/// authenticated SAFR frames only (docs/protocol-safr-v2.md).
+/// authenticated SAFR frames only (docs/safr/protocol-safr-v3.md).
 class MeshDevices extends Table {
   TextColumn get mac        => text()();
   IntColumn get role        => integer().withDefault(const Constant(255))();
@@ -55,6 +55,11 @@ class MeshDevices extends Table {
   // the trouble isn't re-raised on every app restart.
   IntColumn get supervisionState => integer().withDefault(const Constant(0))();
   TextColumn get name       => text().nullable()(); // future friendly names
+  TextColumn get zone       => text().nullable()(); // from NAME_ANNOUNCE/INSTALLATION (spec §7.10/§7.11)
+  // 'enrolled' = known only from the board's INSTALLATION reply (spec §7.10),
+  // never yet heard from directly over the mesh; null once any live frame
+  // arrives (supervisionState/alarmLatched then carry online/missing).
+  TextColumn get registryState => text().nullable()();
   // Highest accepted event DEV_SEQ (SAFR v3 §6) — dedupes 60 s alarm
   // re-announcements and journal replays. 0 = none seen (v2 events).
   IntColumn get lastDevSeq  => integer().withDefault(const Constant(0))();
@@ -100,7 +105,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -129,11 +134,16 @@ class AppDatabase extends _$AppDatabase {
         await _createDeviceEventIndexes();
       }
       if (from < 6) {
-        // SAFR v3: event identity + alarm latching (docs/protocol-safr-v3.md).
+        // SAFR v3: event identity + alarm latching (docs/safr/protocol-safr-v3.md).
         await m.addColumn(meshDevices, meshDevices.lastDevSeq);
         await m.addColumn(meshDevices, meshDevices.alarmLatched);
         await m.addColumn(meshDevices, meshDevices.alarmLatchedAt);
         await m.addColumn(deviceEvents, deviceEvents.devSeq);
+      }
+      if (from < 7) {
+        // SAFR v3.1 (POC-BRIEF.md §4.2/§6.3): NAME_ANNOUNCE/INSTALLATION.
+        await m.addColumn(meshDevices, meshDevices.zone);
+        await m.addColumn(meshDevices, meshDevices.registryState);
       }
     },
   );
@@ -188,6 +198,10 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<void> clearAllMeta() => delete(deviceMetadata).go();
+
+  /// Wipes the mesh device registry (the Rede map). Live devices
+  /// reappear on their next heartbeat; history in deviceEvents is kept.
+  Future<void> clearMeshDevices() => delete(meshDevices).go();
 
   // Metadata helpers — upsert and read by key
   Future<void> setMeta(String key, String value) =>

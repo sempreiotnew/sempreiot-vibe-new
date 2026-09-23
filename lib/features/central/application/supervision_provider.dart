@@ -8,7 +8,7 @@ import '../../../core/database/app_database.dart';
 import '../domain/safr/safr_v2_payloads.dart';
 import 'serial_link_provider.dart';
 
-/// Supervision rule (docs/protocol-safr-v2.md §8): a device that stays silent
+/// Supervision rule (docs/safr/protocol-safr-v3.md §8): a device that stays silent
 /// for 3× its heartbeat interval is missing — raise TROUBLE and mark it
 /// offline; any authenticated frame restores it. State is persisted in
 /// MeshDevices.supervisionState so troubles aren't re-raised on restart.

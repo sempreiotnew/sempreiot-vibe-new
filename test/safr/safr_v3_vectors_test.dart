@@ -5,7 +5,7 @@ import 'package:sempreiot_central_app/features/central/domain/safr/safr_encoder.
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_frame.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
 
-/// Deterministic test vectors — docs/protocol-safr-v3.md Appendix A.
+/// Deterministic test vectors — docs/safr/protocol-safr-v3.md Appendix A.
 /// The mock firmware emits these exact frames on boot; the captured-fixture
 /// test (safr_v3_captured_test.dart) asserts the firmware bytes match.
 ///
@@ -68,7 +68,7 @@ String _hex(Uint8List b) =>
     b.map((x) => x.toRadixString(16).padLeft(2, '0').toUpperCase()).join();
 
 /// Golden full-frame hex — must never change without a spec version bump.
-/// These exact bytes are in docs/protocol-safr-v3.md Appendix A and must be
+/// These exact bytes are in docs/safr/protocol-safr-v3.md Appendix A and must be
 /// reproduced bit-for-bit by the firmware's boot-time vector mode.
 const _goldenHex = [
   'A503004101000153465A4652000001FFFFFFFFFFFF0700010001000000014'
@@ -79,7 +79,7 @@ const _goldenHex = [
       '096E2C02AA08E7655180495E70530D730B37389B0278118BAD4AE559B6C5FDE8530F8D233A1',
 ];
 
-/// SAFR v2 golden frames (docs/protocol-safr-v2.md Appendix A) — the previous
+/// SAFR v2 golden frames (docs/safr/protocol-safr-v3.md Appendix A) — the previous
 /// protocol. Kept as a decode-only regression: packets stored in the DB before
 /// the v3 upgrade must keep rendering forever.
 const _v2GoldenHex = [

@@ -6,13 +6,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/app_database.dart';
 import '../domain/safr/safr_encoder.dart';
+import '../domain/safr/safr_identity.dart';
+import 'central_installation_provider.dart';
 import '../domain/safr/safr_v2_frame.dart';
 import '../domain/safr/safr_v2_payloads.dart';
 import 'safr_traffic_provider.dart';
 import 'serial_link_provider.dart';
 import 'serial_provider.dart';
 
-/// Central → root downlink (docs/protocol-safr-v3.md §7.5–7.9, §9):
+/// Central → root downlink (docs/safr/protocol-safr-v3.md §7.5–7.9, §9):
 /// - ACKs uplink frames that carry F_ACK_REQ (called by the ingest pipeline);
 /// - sends TIME_SYNC on link-up and hourly so device timestamps become real;
 /// - sends LINK_CHECK every 30 s — downlink path supervision (§9.3,
@@ -32,7 +34,7 @@ class SafrDownlink {
   static const _jrnSeqMetaKey = 'safr_jrn_seq';
 
   final Ref _ref;
-  final _encoder = SafrEncoder();
+  SafrEncoder _encoder = SafrEncoder();
   final _pending = <int, _PendingTx>{};
   Timer? _hourlySync;
   Timer? _linkCheck;
@@ -40,7 +42,18 @@ class SafrDownlink {
   bool _journalDraining = false;
   int _jrnHighWater = 0;
 
+  /// Re-keys the encoder for the imported installation. A fresh BOOT_CTR
+  /// keeps CCM nonces unique across the switch (spec §9.1); MSG_ID restarts,
+  /// which is fine because nothing is pending before the link is up.
+  void setIdentity(SafrIdentity id) {
+    _encoder = SafrEncoder(systemId: id.systemId, key: id.key);
+  }
+
   void start() {
+    setIdentity(_ref.read(safrIdentityProvider));
+    _ref.listen<SafrIdentity>(safrIdentityProvider, (_, next) {
+      setIdentity(next);
+    });
     _ref.listen<SerialLinkStatus>(serialLinkProvider, (prev, next) {
       if (next == SerialLinkStatus.connected &&
           prev != SerialLinkStatus.connected) {
@@ -61,6 +74,20 @@ class SafrDownlink {
   Future<void> _onLinkUp() async {
     await sendTimeSync();
     await requestJournalBackfill();
+    await sendGetInstallation();
+  }
+
+  /// v3.1 (spec §7.6): asks the board for its installation identity and
+  /// enrolled device list over the serial link. The board's INSTALLATION
+  /// reply is routed by the ingest pipeline, not here.
+  Future<void> sendGetInstallation() {
+    return _sendTracked(
+      msgType: SafrMsgType.command,
+      payload: SafrCommandPayload.build(cmd: SafrCommand.getInstallation),
+      dstMac: safrBroadcastMacBytes,
+      description: 'consulta de instalação',
+      notifyOnFail: false, // best-effort — the app still works without it
+    ).then((_) {});
   }
 
   Future<bool> _write(Uint8List frame) =>

@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 /// CRC-16/CCITT-FALSE — poly 0x1021, init 0xFFFF, no reflection, no xorout.
 /// Check value: safrCrc16("123456789" as bytes) == 0x29B1.
-/// See docs/protocol-safr-v2.md §5.
+/// See docs/safr/protocol-safr-v3.md §5.
 final Uint16List _table = _buildTable();
 
 Uint16List _buildTable() {

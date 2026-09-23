@@ -13,9 +13,10 @@ import '../../../../features/auth/application/auth_provider.dart';
 import '../../../../features/central/application/central_auth_provider.dart';
 import '../../../../features/central/application/device_info_provider.dart';
 import '../../../../features/central/presentation/screens/device_access_screen.dart';
+import '../../../../features/central/presentation/screens/central_installation_screen.dart';
 import '../../../../features/central/presentation/screens/device_info_screen.dart';
 import '../../../../features/central/presentation/screens/serial_logs_screen.dart';
-import '../../../../features/provisioning/presentation/screens/provisioning_wizard_screen.dart';
+import '../../../../features/installation/presentation/screens/installations_screen.dart';
 import '../../../../features/storage/presentation/screens/storage_screen.dart';
 import '../main_tab.dart';
 
@@ -120,6 +121,20 @@ class MainDrawer extends ConsumerWidget {
                     )
                   else ...[
                     if (AppConfig.isCentral) ...[
+                      // Which installation this central belongs to: imports
+                      // SYSTEM_ID + SAFR key from the installer phone's QR.
+                      _DrawerItem(
+                        icon: Icons.hub_rounded,
+                        label: 'Instalação',
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const CentralInstallationScreen(),
+                            ),
+                          );
+                        },
+                      ),
                       _DrawerItem(
                         icon: Icons.storage_rounded,
                         label: 'Armazenamento',
@@ -187,8 +202,7 @@ class MainDrawer extends ConsumerWidget {
                           Navigator.pop(context);
                           Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (_) =>
-                                  const ProvisioningWizardScreen(),
+                              builder: (_) => const InstallationsScreen(),
                             ),
                           );
                         },
