@@ -305,6 +305,12 @@ bool siot_link_mesh_parent(uint8_t mac[6], int8_t *rssi)
     wifi_ap_record_t ap;
     if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) return false;
     memcpy(mac, ap.bssid, 6);
+    /* ap.bssid is the parent's SoftAP MAC. On ESP32 (IDF v5.5.2,
+     * ESP_MAC_WIFI_SOFTAP) that is the parent's STA MAC — its SAFR identity /
+     * SRC_MAC — with only the last byte incremented (mac[5] += 1, no carry).
+     * Undo it so PARENT_MAC is the identity the tablet keys devices by; the
+     * root then wires under the board and a child under its root. */
+    mac[5] = (uint8_t)(mac[5] - 1);
     *rssi = ap.rssi;
     return true;
 }
