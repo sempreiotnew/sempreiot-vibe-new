@@ -43,7 +43,23 @@ static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 static void tx_sink(const uint8_t *frame, size_t len, const uint8_t dst_mac[6], void *ctx)
 {
     (void)ctx;
-    siot_link_send(SIOT_LINK_SERIAL, dst_mac, frame, len);
+    if (siot_link_send(SIOT_LINK_SERIAL, dst_mac, frame, len) == ESP_OK) {
+        const siot_evt_frame_t ev = {.msg_type = frame[4]};
+        siot_evbus_post(SIOT_EVT_SAFR_TX, &ev, sizeof(ev)); /* blue pulse: a frame went to the tablet */
+    }
+}
+
+/* A relayed frame (uplink to the tablet, downlink into the mesh): blue pulse + log. */
+static void relay(siot_link_kind_t to, const uint8_t *raw, size_t raw_len)
+{
+    const esp_err_t err = siot_link_send(to, &raw[15], raw, raw_len);
+    if (err == ESP_OK) {
+        const siot_evt_frame_t ev = {.msg_type = raw[4]};
+        siot_evbus_post(SIOT_EVT_SAFR_TX, &ev, sizeof(ev));
+    } else {
+        ESP_LOGW(TAG, "relay type 0x%02X to %s failed: %s", raw[4],
+                 to == SIOT_LINK_MESH ? "mesh (no root connected?)" : "tablet", esp_err_to_name(err));
+    }
 }
 
 static void send_to_tablet(uint8_t msg_type, const uint8_t dst[6], uint8_t flags,
@@ -126,7 +142,7 @@ static void handle_uplink(const siot_safr_frame_t *f, const uint8_t *raw, size_t
     }
     xSemaphoreGive(s_lock);
     /* Forwarded unchanged, fast retries included: the tablet ACKs every time. */
-    siot_link_send(SIOT_LINK_SERIAL, f->dst_mac, raw, raw_len);
+    relay(SIOT_LINK_SERIAL, raw, raw_len);
 }
 
 /* ---- downlink (tablet → board / mesh) -------------------------------------- */
@@ -144,7 +160,7 @@ static void handle_downlink(const siot_safr_frame_t *f, const uint8_t *raw, size
     case SAFR_MSG_COMMAND:   /* LINK_CHECK and every device command */
     case SAFR_MSG_TIME_SYNC:
         send_ack(f->msg_id, SAFR_ACK_OK, f->src_mac);          /* board ACKs every time */
-        if (!dup) siot_link_send(SIOT_LINK_MESH, f->dst_mac, raw, raw_len); /* nodes ACK on their own */
+        if (!dup) relay(SIOT_LINK_MESH, raw, raw_len);         /* nodes ACK on their own */
         return;
     case SAFR_MSG_EVENT_LOG_REQ:
         if (f->payload_len >= 5) {
@@ -154,7 +170,7 @@ static void handle_downlink(const siot_safr_frame_t *f, const uint8_t *raw, size
         }
         return;
     case SAFR_MSG_ACK:
-        if (!dup) siot_link_send(SIOT_LINK_MESH, f->dst_mac, raw, raw_len); /* the §14 item 4 fix */
+        if (!dup) relay(SIOT_LINK_MESH, raw, raw_len); /* the §14 item 4 fix */
         return;
     default:
         return; /* unknown downlink type: dropped */
@@ -180,6 +196,9 @@ static void on_link_rx(siot_link_kind_t kind, const uint8_t *frame, size_t len, 
     s_rx_kind = kind;
     const siot_safr_rx_result_t r = siot_safr_rx(frame, len);
     xSemaphoreGive(s_rx_lock);
+    char src[SIOT_MAC_STR_LEN];
+    ESP_LOGI(TAG, "rx %s type 0x%02X id %u from %s: %d", kind == SIOT_LINK_MESH ? "mesh" : "tablet",
+             frame[4], siot_get_u16(&frame[5]), siot_mac_to_str(&frame[9], src), (int)r);
     if (r == SIOT_SAFR_RX_OK || r == SIOT_SAFR_RX_DUPLICATE) {
         siot_evt_frame_t ev = {.msg_type = frame[4]};
         memcpy(ev.src_mac, &frame[9], 6);

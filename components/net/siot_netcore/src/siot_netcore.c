@@ -68,9 +68,15 @@ static void post_state(siot_state_t next)
 static void tx_sink(const uint8_t *frame, size_t len, const uint8_t dst_mac[6], void *ctx)
 {
     (void)ctx;
-    if (siot_link_send(SIOT_LINK_MESH, dst_mac, frame, len) == ESP_OK) {
+    const esp_err_t err = siot_link_send(SIOT_LINK_MESH, dst_mac, frame, len);
+    if (err == ESP_OK) {
         const siot_evt_frame_t ev = {.msg_type = frame[4]};
         siot_evbus_post(SIOT_EVT_SAFR_TX, &ev, sizeof(ev));
+        ESP_LOGD(TAG, "tx type 0x%02X id %u", frame[4], siot_get_u16(&frame[5]));
+    } else {
+        ESP_LOGW(TAG, "tx type 0x%02X id %u NOT sent: %s (level %u, board %s)", frame[4],
+                 siot_get_u16(&frame[5]), esp_err_to_name(err), siot_link_mesh_level(),
+                 siot_link_mesh_board_up() ? "up" : "down");
     }
 }
 
@@ -111,6 +117,8 @@ static void emit_event(int64_t t, uint8_t evt_type, uint8_t evt_code, bool ack_r
     uint8_t payload[SAFR_EVENT_LEN];
     build_event_payload(payload, t, evt_type, evt_code);
     const uint16_t msg_id = siot_safr_next_msg_id();
+    ESP_LOGI(TAG, "EVENT type %u code %u msg_id %u dev_seq %u%s", evt_type, evt_code, msg_id,
+             siot_get_u16(&payload[15]), ack_req ? " (ACK required)" : "");
     send_uplink(SAFR_MSG_EVENT, msg_id, ack_req ? SAFR_F_ACK_REQ : 0, payload, sizeof(payload));
 
     if (evt_type == SAFR_EVT_ALARM) {
@@ -215,6 +223,9 @@ static void on_ack(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_le
     const uint16_t acked = siot_get_u16(&f->payload[0]);
     const siot_evt_ack_t ev = {.msg_id = acked, .status = f->payload[2]};
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    ESP_LOGI(TAG, "ACK for msg_id %u status %u (%s)", acked, f->payload[2],
+             s_pending_used && s_pending_msg_id == acked ? "confirms the pending frame"
+             : s_pending_used ? "pending is another id" : "nothing pending");
     if (s_pending_used && s_pending_msg_id == acked) s_pending_used = false;
     if (s_comm_fault) { /* the uplink works again: RESTORE (brief §9) */
         s_comm_fault = false;
@@ -277,10 +288,28 @@ static void on_command(const siot_safr_frame_t *f, const uint8_t *raw, size_t ra
 }
 
 /* Link rx (mesh_tcp_task or Mesh-Lite's task) → the SAFR pipeline. */
+static const char *rx_result_name(siot_safr_rx_result_t r)
+{
+    switch (r) {
+    case SIOT_SAFR_RX_OK:                 return "ok";
+    case SIOT_SAFR_RX_DUPLICATE:          return "duplicate";
+    case SIOT_SAFR_RX_NO_HANDLER:         return "no handler";
+    case SIOT_SAFR_RX_BAD_FRAME:          return "bad frame";
+    case SIOT_SAFR_RX_FOREIGN:            return "foreign SYSTEM_ID";
+    case SIOT_SAFR_RX_PLAINTEXT_REJECTED: return "plaintext rejected";
+    case SIOT_SAFR_RX_AUTH_FAILED:        return "auth failed (key?)";
+    case SIOT_SAFR_RX_REPLAY:             return "replay";
+    default:                              return "not initialised";
+    }
+}
+
 static void on_link_rx(siot_link_kind_t kind, const uint8_t *frame, size_t len, void *ctx)
 {
     (void)kind; (void)ctx;
     const siot_safr_rx_result_t r = siot_safr_rx(frame, len);
+    char src[SIOT_MAC_STR_LEN], dst[SIOT_MAC_STR_LEN];
+    ESP_LOGI(TAG, "rx type 0x%02X id %u from %s to %s: %s", frame[4], siot_get_u16(&frame[5]),
+             siot_mac_to_str(&frame[9], src), siot_mac_to_str(&frame[15], dst), rx_result_name(r));
     if (r == SIOT_SAFR_RX_OK || r == SIOT_SAFR_RX_DUPLICATE) {
         siot_evt_frame_t ev = {.msg_type = frame[4]};
         memcpy(ev.src_mac, &frame[9], 6);
