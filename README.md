@@ -49,7 +49,9 @@ firmware/build.sh board --flash 4mb           # 4 MB bench devkits          → 
 firmware/build.sh board --flash 4mb --bench   # 4 MB + console on UART0     → apps/board/build-4mb-bench
 firmware/build.sh node                        # node is always 4 MB         → apps/node/build
 firmware/build.sh host                        # linux host tests
-tools/flash.sh board /dev/cu.usbserial-XXXX --flash 4mb --bench --erase   # id = chip MAC, sticker auto
+tools/flash.sh board /dev/cu.usbserial-XXXX --flash 4mb --erase           # tablet on the USB-TTL adapter (UART0)
+tools/flash.sh board /dev/cu.usbserial-XXXX --flash 4mb --bench --erase   # console on the adapter: NO tablet link there
+                                                                          # (id = chip MAC, sticker auto)
 ```
 
 Round-1 bench units are all 4 MB; the product board is 8 MB (OTA blueprint §1.2: `fw_store`).
@@ -73,10 +75,14 @@ Status (brief §15):
   `siot_netcore` (emitter, fast retry, re-announce, downlink, states), `siot_coordinator` (root
   duties, journal, INSTALLATION, HEARTBEAT/TOPOLOGY shim, **forwards central ACKs downlink**).
   Bench: tap on a node → `MANUAL_TEST` on the tablet → ACK back at the node; `IDENTIFY` blinks blue.
+  2026-09-23 LED traffic language (transmit only): blue tick 100 ms = background frame, blue 500 ms
+  = message, cyan 500 ms = the tablet's ACK for this unit's own frame arrived; board role colour is
+  now a magenta flash every 5 s. Tap on a node = blue then cyan. The board button stays hold-only.
+  Full table: `docs/sempreiot-system-reference.md` §3.7 row 7.7.
 - Next: step 4 (supervision + persistence: device_table, flash journal, TIME_SYNC clock on the
   board, ALARM-first queue, `siot_console`).
 
 Bench flow: `tools/flash.sh <app> <port> --erase` (identity = chip MAC, sticker files created in
 `tools/stickers/<MAC>/` on first use)
 → unit white-blinks (`SIOT-SETUP-<id>`) → provision from the installer app → unit reboots with the code
-stored (board: magenta, node: white solid) → hold the button 5 s → back to white blink.
+stored (board: magenta flash every 5 s, node: white solid) → hold the button 5 s → back to white blink.

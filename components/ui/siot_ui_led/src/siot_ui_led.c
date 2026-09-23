@@ -4,10 +4,12 @@
 
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
 
 #include "siot_board_def.h"
 #include "siot_evbus.h"
 #include "siot_hal_pwm.h"
+#include "siot_safr.h"
 
 static const char *TAG = "siot_ui_led";
 
@@ -19,10 +21,18 @@ static const char *TAG = "siot_ui_led";
 #define SLOW_PERIOD_TICKS     100   /* 5 s */
 #define SLOW_ON_TICKS           5   /* 250 ms flash */
 
-static volatile siot_led_pattern_t s_pattern = SIOT_LED_OFF;
-static volatile siot_led_pattern_t s_base = SIOT_LED_OFF;
-static volatile uint32_t s_ticks_remaining;   /* 0 = steady (base) pattern */
-static volatile uint32_t s_blink_phase;
+typedef struct { siot_led_pattern_t pattern; uint32_t ticks; } pulse_t;
+
+/* Everything below is shared between the esp_timer task (tick) and the
+ * esp_event task (bus handlers); guarded by s_mux. */
+static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
+static siot_led_pattern_t s_pattern = SIOT_LED_OFF;
+static siot_led_pattern_t s_base = SIOT_LED_OFF;
+static uint32_t s_ticks_remaining;   /* 0 = steady (base) pattern */
+static uint32_t s_blink_phase;
+static bool     s_identify;          /* the running transient is IDENTIFY */
+static pulse_t  s_queue[SIOT_LED_PULSE_QUEUE];
+static size_t   s_q_head, s_q_len;
 
 static bool     s_is_board;
 static uint8_t  s_state = SIOT_STATE_SETUP;
@@ -47,13 +57,46 @@ static void pattern_to_rgb(siot_led_pattern_t p, uint32_t phase, bool *r, bool *
     case SIOT_LED_GREEN_BLINK:     *g = slow_on; break;
     case SIOT_LED_GREEN_SOLID:     *g = true; break;
     case SIOT_LED_MAGENTA_SOLID:   *r = true; *b = true; break;
+    case SIOT_LED_MAGENTA_BLINK:   *r = slow_on; *b = slow_on; break;
     case SIOT_LED_RED_SOLID:       *r = true; break;
     case SIOT_LED_RED_BLINK:       *r = slow_on; break;
     case SIOT_LED_BLUE_BLINK:      *b = on; break;
     case SIOT_LED_BLUE_SOLID:      *b = true; break;
+    case SIOT_LED_CYAN_SOLID:      *g = true; *b = true; break;
     case SIOT_LED_OFF:
     default: break;
     }
+}
+
+static uint32_t ms_to_ticks(uint32_t ms)
+{
+    return (ms + LED_TICK_MS - 1) / LED_TICK_MS;
+}
+
+/* s_mux held. Starts a transient now. */
+static void start_transient(siot_led_pattern_t p, uint32_t ticks)
+{
+    s_pattern = p;
+    s_ticks_remaining = ticks;
+    s_blink_phase = 0; /* a blinking transient starts in its "on" half */
+}
+
+/* s_mux held. Pops the next queued pulse or falls back to the base. */
+static void transient_done(void)
+{
+    s_identify = false;
+    if (s_q_len > 0) {
+        const pulse_t next = s_queue[s_q_head];
+        s_q_head = (s_q_head + 1) % SIOT_LED_PULSE_QUEUE;
+        s_q_len--;
+        start_transient(next.pattern, next.ticks);
+        return;
+    }
+    s_pattern = s_base;
+    s_ticks_remaining = 0;
+    /* Resume the base pattern in its "off" part so a pulse is not
+     * immediately followed by a green/white flash. */
+    s_blink_phase = BLINK_HALF_TICKS;
 }
 
 static void led_tick(void *arg)
@@ -61,22 +104,14 @@ static void led_tick(void *arg)
     (void)arg;
     static uint8_t last = 0xFF;
 
-    siot_led_pattern_t p = s_pattern;
-    if (s_ticks_remaining > 0) {
-        s_ticks_remaining--;
-        if (s_ticks_remaining == 0) {
-            s_pattern = s_base;
-            p = s_base;
-            /* Resume the base pattern in its "off" part so a blue pulse is
-             * not immediately followed by a green/white flash. */
-            s_blink_phase = BLINK_HALF_TICKS;
-        }
-    }
+    portENTER_CRITICAL(&s_mux);
+    if (s_ticks_remaining > 0 && --s_ticks_remaining == 0) transient_done();
+    const siot_led_pattern_t p = s_pattern;
+    const uint32_t phase = s_blink_phase++;
+    portEXIT_CRITICAL(&s_mux);
 
     bool r, g, b;
-    pattern_to_rgb(p, s_blink_phase, &r, &g, &b);
-    s_blink_phase++;
-
+    pattern_to_rgb(p, phase, &r, &g, &b);
     const uint8_t rgb = (uint8_t)((r << 2) | (g << 1) | b);
     if (rgb != last) {
         last = rgb;
@@ -86,10 +121,19 @@ static void led_tick(void *arg)
 
 void siot_ui_led_set(siot_led_pattern_t pattern, uint32_t duration_ms)
 {
-    s_blink_phase = 0; /* always start a new pattern in its "on" half */
-    s_ticks_remaining = duration_ms ? (duration_ms + LED_TICK_MS - 1) / LED_TICK_MS : 0;
-    if (duration_ms == 0) s_base = pattern;
-    s_pattern = pattern;
+    portENTER_CRITICAL(&s_mux);
+    if (duration_ms == 0) {
+        s_base = pattern;
+        if (s_ticks_remaining == 0) { /* nothing transient: show it now */
+            s_pattern = pattern;
+            s_blink_phase = 0;
+        }
+    } else {
+        s_q_len = 0; /* an explicit transient wins over queued pulses */
+        s_identify = false;
+        start_transient(pattern, ms_to_ticks(duration_ms));
+    }
+    portEXIT_CRITICAL(&s_mux);
 }
 
 siot_led_pattern_t siot_ui_led_get_base(void)
@@ -97,11 +141,54 @@ siot_led_pattern_t siot_ui_led_get_base(void)
     return s_base;
 }
 
+void siot_ui_led_pulse(siot_led_pattern_t pattern, uint32_t duration_ms, bool fold)
+{
+    const uint32_t ticks = ms_to_ticks(duration_ms);
+    portENTER_CRITICAL(&s_mux);
+    if (s_identify) {
+        portEXIT_CRITICAL(&s_mux);
+        return; /* IDENTIFY owns the LED */
+    }
+    if (s_ticks_remaining == 0) {
+        start_transient(pattern, ticks);
+    } else if (fold && s_q_len == 0 && s_pattern == pattern && s_ticks_remaining <= ticks) {
+        /* same short pulse still lit: merge */
+    } else if (fold && s_q_len > 0 &&
+               s_queue[(s_q_head + s_q_len - 1) % SIOT_LED_PULSE_QUEUE].pattern == pattern &&
+               s_queue[(s_q_head + s_q_len - 1) % SIOT_LED_PULSE_QUEUE].ticks == ticks) {
+        /* identical pulse already last in line: merge */
+    } else if (s_q_len < SIOT_LED_PULSE_QUEUE) {
+        s_queue[(s_q_head + s_q_len) % SIOT_LED_PULSE_QUEUE] = (pulse_t){pattern, ticks};
+        s_q_len++;
+    } /* else: queue full, dropped */
+    portEXIT_CRITICAL(&s_mux);
+}
+
 void siot_ui_led_comm_blink(void)
 {
-    if (s_pattern == SIOT_LED_BLUE_SOLID && s_ticks_remaining > 0) return;
-    if (s_pattern == SIOT_LED_BLUE_BLINK && s_ticks_remaining > 0) return; /* IDENTIFY running */
-    siot_ui_led_set(SIOT_LED_BLUE_SOLID, SIOT_LED_COMM_BLINK_MS);
+    siot_ui_led_pulse(SIOT_LED_BLUE_SOLID, SIOT_LED_TICK_MS, true);
+}
+
+/* ---- traffic → pulse (system reference §3.7) --------------------------- */
+
+static bool is_message(uint8_t msg_type)
+{
+    switch (msg_type) {
+    case SAFR_MSG_EVENT:
+    case SAFR_MSG_ACK:
+    case SAFR_MSG_COMMAND:
+    case SAFR_MSG_TIME_SYNC:
+        return true;
+    default: /* HEARTBEAT, TOPOLOGY, NAME_ANNOUNCE, EVENT_LOG_*, INSTALLATION */
+        return false;
+    }
+}
+
+/* One pulse per frame this unit puts on a link. */
+static void on_tx(uint8_t msg_type)
+{
+    if (is_message(msg_type)) siot_ui_led_pulse(SIOT_LED_BLUE_SOLID, SIOT_LED_MSG_MS, false);
+    else siot_ui_led_comm_blink();
 }
 
 /* ---- state → base pattern (brief §9 table) --------------------------- */
@@ -116,7 +203,7 @@ static siot_led_pattern_t pattern_for_state(void)
     case SIOT_STATE_OFFLINE:               return SIOT_LED_WHITE_SOLID;
     case SIOT_STATE_ONLINE:
     case SIOT_STATE_DEGRADED:
-        if (s_is_board) return SIOT_LED_MAGENTA_SOLID;
+        if (s_is_board) return SIOT_LED_MAGENTA_BLINK;
         return s_level == 1 ? SIOT_LED_GREEN_BLINK : SIOT_LED_OFF;
     case SIOT_STATE_FACTORY_RESET:
     default:                               return SIOT_LED_OFF;
@@ -153,11 +240,16 @@ static void on_event(siot_evt_id_t id, const void *data, void *ctx)
         uint32_t s = ((const siot_evt_identify_t *)data)->seconds;
         if (s == 0) s = SIOT_LED_IDENTIFY_DEFAULT_S;
         siot_ui_led_set(SIOT_LED_BLUE_BLINK, s * 1000);
+        portENTER_CRITICAL(&s_mux);
+        s_identify = true;
+        portEXIT_CRITICAL(&s_mux);
         break;
     }
     case SIOT_EVT_SAFR_TX:
-    case SIOT_EVT_SAFR_RX:
-        siot_ui_led_comm_blink();
+        on_tx(((const siot_evt_frame_t *)data)->msg_type);
+        break;
+    case SIOT_EVT_ACK_RECEIVED: /* the tablet confirmed a frame this unit sent */
+        siot_ui_led_pulse(SIOT_LED_CYAN_SOLID, SIOT_LED_MSG_MS, false);
         break;
     default:
         break;
