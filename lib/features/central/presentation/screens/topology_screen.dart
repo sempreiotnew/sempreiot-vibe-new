@@ -173,6 +173,22 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
                           onReset: _resetZoom,
                         ),
                       ),
+                      Positioned(
+                        right: 12,
+                        top: 12,
+                        child: Material(
+                          color: context.bgColor.withValues(alpha: 0.85),
+                          shape: const CircleBorder(),
+                          elevation: 2,
+                          child: IconButton(
+                            tooltip: 'Limpar dispositivos',
+                            icon: const Icon(Icons.delete_sweep_rounded,
+                                size: 20),
+                            color: AppColors.error,
+                            onPressed: _clearRegistry,
+                          ),
+                        ),
+                      ),
                     ],
                   );
                 }),
@@ -191,6 +207,34 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
       ),
       body: body,
     );
+  }
+
+  /// Wipes the device registry so the map stops showing units from old
+  /// sessions or installations. Live devices reappear on their next heartbeat.
+  Future<void> _clearRegistry() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Limpar dispositivos'),
+        content: const Text(
+            'Remove todos os dispositivos do mapa da rede. Os que estiverem '
+            'ativos reaparecem no próximo heartbeat; o histórico de eventos é '
+            'mantido.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Limpar'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await ref.read(appDatabaseProvider).clearMeshDevices();
+    }
   }
 
   /// Layered tree: central on top, then layer 0 (root), 1, 2… scaled to the

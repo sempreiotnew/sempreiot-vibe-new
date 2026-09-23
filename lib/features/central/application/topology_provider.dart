@@ -42,18 +42,29 @@ class TopologyNode {
 /// Gated by the serial link: with the USB down NOTHING is reachable, so every
 /// device is offline — a leaf must never read as "sleeping" behind a dead
 /// cable.
+/// A device unheard for this long drops off the map (still kept in the DB;
+/// a manual clear removes it for good). Longer than the offline threshold so
+/// a unit shows offline for a while before it disappears.
+const _hideAfter = Duration(minutes: 10);
+
 final topologyProvider = Provider<List<TopologyNode>>((ref) {
   final supervision = ref.watch(supervisionProvider);
   final linkUp =
       ref.watch(serialLinkProvider) == SerialLinkStatus.connected;
 
-  final parents = supervision
+  final now = DateTime.now().toUtc();
+  final visible = [
+    for (final s in supervision)
+      if (now.difference(s.device.lastSeenAt) < _hideAfter) s,
+  ];
+
+  final parents = visible
       .map((s) => s.device.parentMac)
       .whereType<String>()
       .toSet();
 
   return [
-    for (final s in supervision)
+    for (final s in visible)
       TopologyNode(
         mac: s.device.mac,
         role: _resolveRole(s.device.role, s.device.layer, s.device.mac, parents),
