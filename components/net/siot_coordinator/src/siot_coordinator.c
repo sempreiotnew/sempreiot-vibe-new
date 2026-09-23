@@ -43,10 +43,30 @@ static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 static void tx_sink(const uint8_t *frame, size_t len, const uint8_t dst_mac[6], void *ctx)
 {
     (void)ctx;
-    if (siot_link_send(SIOT_LINK_SERIAL, dst_mac, frame, len) == ESP_OK) {
+    /* The board originates COMMAND only for the network-wide TEST button, and
+     * that goes downlink into the mesh. Everything else it originates
+     * (HEARTBEAT, TOPOLOGY, ACK, INSTALLATION, EVENT_LOG_DATA) reports up to
+     * the tablet. Relayed frames do not pass through here (see relay()). */
+    const siot_link_kind_t kind = frame[4] == SAFR_MSG_COMMAND ? SIOT_LINK_MESH : SIOT_LINK_SERIAL;
+    if (siot_link_send(kind, dst_mac, frame, len) == ESP_OK) {
         const siot_evt_frame_t ev = {.msg_type = frame[4]};
-        siot_evbus_post(SIOT_EVT_SAFR_TX, &ev, sizeof(ev)); /* blue pulse: a frame went to the tablet */
+        siot_evbus_post(SIOT_EVT_SAFR_TX, &ev, sizeof(ev)); /* blue pulse on transmit */
     }
+}
+
+/* TEST button (system reference §3.5 row 5.3): broadcast a COMMAND TEST into
+ * the mesh so every node raises its own MANUAL_TEST (a site-wide walk test).
+ * The board raises no event of its own; the nodes' MANUAL_TEST frames flow
+ * back up and are journaled + forwarded to the tablet. No F_ACK_REQ: the
+ * MANUAL_TEST events are the confirmation, not a per-node command ACK. */
+static void on_button(siot_evt_id_t id, const void *data, void *ctx)
+{
+    (void)data; (void)ctx;
+    if (id != SIOT_EVT_BUTTON_TAP) return; /* double tap: no bench ALARM from the control unit */
+    const uint8_t payload[2] = {SAFR_CMD_TEST, 0x00}; /* CMD, ARG_LEN = 0 */
+    ESP_LOGW(TAG, "TEST tap -> broadcast COMMAND TEST to all nodes");
+    siot_safr_set_level(0);
+    siot_safr_send(SAFR_BCAST_MAC, SAFR_MSG_COMMAND, siot_safr_next_msg_id(), 0, payload, sizeof(payload));
 }
 
 /* A relayed frame (uplink to the tablet, downlink into the mesh): blue pulse + log. */
@@ -273,8 +293,10 @@ esp_err_t siot_coordinator_start(void)
     siot_safr_set_level(0);
     siot_safr_set_tx(tx_sink, NULL);
     siot_link_set_rx(on_link_rx, NULL);
+    esp_err_t err = siot_evbus_subscribe(SIOT_EVT_BUTTON_TAP, on_button, NULL, NULL);
+    if (err != ESP_OK) return err;
 
-    esp_err_t err = siot_link_start(SIOT_LINK_SERIAL);
+    err = siot_link_start(SIOT_LINK_SERIAL);
     if (err != ESP_OK) return err;
     err = siot_link_start(SIOT_LINK_MESH);
     if (err != ESP_OK) return err;

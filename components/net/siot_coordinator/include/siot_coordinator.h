@@ -15,6 +15,9 @@
  *            anything else        dropped
  *   shim     own HEARTBEAT every 15 s and TOPOLOGY every 60 s with LAYER 0,
  *            role root, PARENT_MAC = central, children = AC devices heard
+ *   button   tap → broadcast COMMAND TEST into the mesh so every node raises
+ *            its own MANUAL_TEST (site-wide walk test); the board raises no
+ *            event of its own
  *
  * Step 4 adds the device_table with "missing" after 45 s, the flash
  * journal, the TIME_SYNC wall clock and the ALARM-first queue.
