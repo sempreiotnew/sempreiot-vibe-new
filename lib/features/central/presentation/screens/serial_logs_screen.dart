@@ -7,6 +7,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../application/serial_link_provider.dart';
 import '../../application/serial_logs_provider.dart';
+import '../../application/central_installation_provider.dart';
 import '../../domain/safr/safr_parser.dart';
 import '../../domain/safr/safr_v2_frame.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
@@ -386,13 +387,18 @@ class _Console extends StatelessWidget {
   }
 }
 
-class _FrameRow extends StatelessWidget {
+class _FrameRow extends ConsumerWidget {
   const _FrameRow({required this.packet});
   final SerialPacket packet;
 
   @override
-  Widget build(BuildContext context) {
-    final result = parseSafr(packet.rawBytes);
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Decrypt with the imported installation's key so the log shows the TRUE
+    // authentication result (the viewer used to parse with no key, which made
+    // every encrypted frame read as "falha de autenticação").
+    final id = ref.watch(safrIdentityProvider);
+    final result =
+        parseSafr(packet.rawBytes, key: id.key, expectedSystemId: id.systemId);
     final row = switch (result) {
       SafrWireResult(:final frame) => _wireRow(frame),
       SafrV1Result(:final frame) => _v1Row(frame),

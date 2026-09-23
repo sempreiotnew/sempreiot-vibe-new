@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/database/app_database.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -7,6 +8,7 @@ import '../../../../core/theme/theme_ext.dart';
 import '../../domain/safr/safr_v2_frame.dart' as v2;
 import '../../domain/safr/safr_v2_payloads.dart' as v2p;
 import '../../domain/safr_frame.dart';
+import '../../application/central_installation_provider.dart';
 
 class SafrDetailScreen extends StatefulWidget {
   const SafrDetailScreen({super.key, required this.packet});
@@ -860,7 +862,7 @@ String _hexDump(Uint8List bytes) {
 /// what the field is for (shown as secondary text under the value).
 typedef _Fact = (String, String, String?);
 
-class _WireDetailScaffold extends StatelessWidget {
+class _WireDetailScaffold extends ConsumerWidget {
   const _WireDetailScaffold({
     required this.packet,
     required this.showHex,
@@ -872,8 +874,12 @@ class _WireDetailScaffold extends StatelessWidget {
   final VoidCallback onToggleHex;
 
   @override
-  Widget build(BuildContext context) {
-    final frame = v2.parseSafrWireFrame(packet.rawBytes);
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Decrypt with the imported installation's key (was keyless, so every
+    // encrypted frame showed a false authentication failure).
+    final id = ref.watch(safrIdentityProvider);
+    final frame = v2.parseSafrWireFrame(packet.rawBytes,
+        key: id.key, expectedSystemId: id.systemId);
     final (color, label) = _badge(frame);
 
     return Scaffold(
@@ -983,7 +989,7 @@ class _WireDetailScaffold extends StatelessWidget {
           'Versão',
           'SAFR v${f.ver}',
           f.ver == v2.safrVer3
-              ? 'Protocolo atual (docs/protocol-safr-v3.md).'
+              ? 'Protocolo atual (docs/safr/protocol-safr-v3.md).'
               : 'Protocolo anterior — somente leitura de pacotes antigos.',
         ),
         (
@@ -1526,7 +1532,7 @@ class _WireErrorCard extends StatelessWidget {
       _ => (
           'Falha ao decodificar',
           'O cabeçalho é válido mas o payload não segue o layout esperado '
-              'para este tipo de mensagem (veja docs/protocol-safr-v3.md).',
+              'para este tipo de mensagem (veja docs/safr/protocol-safr-v3.md).',
         ),
     };
 
