@@ -497,7 +497,7 @@ class _MeshGraphPainter extends CustomPainter {
     final phase = (nowMs % 2200) / 2200.0;
     _pulse(canvas, layout[_centralKey], AppColors.secondary, phase, 30);
     for (final n in nodes) {
-      if (n.role == SafrNodeRole.root && n.online) {
+      if (n.role == SafrNodeRole.root && n.layer > 0 && n.online) {
         _pulse(canvas, layout[n.mac], AppColors.warning,
             (phase + 0.5) % 1.0, 26);
       }
@@ -671,7 +671,13 @@ class _MeshGraphPainter extends CustomPainter {
 
     label('CENTRAL', rowH * 0.52 + 12);
     for (var i = 0; i < layers.length; i++) {
-      label(layers[i] == 0 ? 'ROOT' : 'CAMADA ${layers[i]}',
+      final ly = layers[i];
+      label(
+          ly == 0
+              ? 'PLACA'
+              : ly == 1
+                  ? 'ROOT'
+                  : 'CAMADA ${ly - 1}',
           rowH * (i + 1) + rowH * 0.52 + 12);
     }
   }
@@ -746,17 +752,22 @@ class _NodeChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isRoot = node.role == SafrNodeRole.root;
+    // The board sits at layer 0 as the gateway to the central; it is not a
+    // mesh root (the elected node at layer 1 is). Render it distinctly.
+    final isGateway = node.layer == 0;
+    final isRoot = !isGateway && node.role == SafrNodeRole.root;
     final statusColor = !node.online
         ? AppColors.error
         : node.sleeping
             ? context.textSecondary
             : AppColors.success;
-    final icon = switch (node.role) {
-      SafrNodeRole.root => Icons.power_rounded,
-      SafrNodeRole.node => Icons.cell_tower_rounded,
-      _ => node.sleeping ? Icons.dark_mode_rounded : Icons.sensors_rounded,
-    };
+    final icon = isGateway
+        ? Icons.router_rounded
+        : switch (node.role) {
+            SafrNodeRole.root => Icons.power_rounded,
+            SafrNodeRole.node => Icons.cell_tower_rounded,
+            _ => node.sleeping ? Icons.dark_mode_rounded : Icons.sensors_rounded,
+          };
     final ringColor = isRoot
         ? AppColors.warning
         : node.online
@@ -833,7 +844,7 @@ class _NodeChip extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (isRoot)
+                  if (isRoot || isGateway)
                     Positioned(
                       left: -8,
                       bottom: -7,
@@ -841,19 +852,22 @@ class _NodeChip extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 5, vertical: 1.5),
                         decoration: BoxDecoration(
-                          color: AppColors.warning,
+                          color:
+                              isGateway ? AppColors.secondary : AppColors.warning,
                           borderRadius: BorderRadius.circular(6),
                           boxShadow: [
                             BoxShadow(
-                              color:
-                                  AppColors.warning.withValues(alpha: 0.4),
+                              color: (isGateway
+                                      ? AppColors.secondary
+                                      : AppColors.warning)
+                                  .withValues(alpha: 0.4),
                               blurRadius: 6,
                             ),
                           ],
                         ),
-                        child: const Text(
-                          'ROOT',
-                          style: TextStyle(
+                        child: Text(
+                          isGateway ? 'PLACA' : 'ROOT',
+                          style: const TextStyle(
                             color: Colors.black,
                             fontSize: 7.5,
                             fontWeight: FontWeight.w900,
@@ -909,12 +923,14 @@ class _NodeDetailSheetState extends ConsumerState<_NodeDetailSheet> {
   @override
   Widget build(BuildContext context) {
     final node = widget.node;
-    final roleLabel = switch (node.role) {
-      SafrNodeRole.root => 'Root (alimentado 24h)',
-      SafrNodeRole.node => 'Repetidor',
-      SafrNodeRole.leaf => 'Sensor (dorme entre envios)',
-      _ => 'Desconhecido',
-    };
+    final roleLabel = node.layer == 0
+        ? 'Placa (gateway para a central)'
+        : switch (node.role) {
+            SafrNodeRole.root => 'Root da malha (alimentado 24h)',
+            SafrNodeRole.node => 'Repetidor',
+            SafrNodeRole.leaf => 'Sensor (dorme entre envios)',
+            _ => 'Desconhecido',
+          };
     final hasName = node.name?.isNotEmpty == true;
 
     return SafeArea(
