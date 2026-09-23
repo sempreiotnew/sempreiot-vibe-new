@@ -81,7 +81,10 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
     // heartbeats, topology, ACKs — used to spawn a dot every time (the
     // constant blue balls); those are dropped so the walk-test dot stands out.
     if (tick.severity < 1) return;
-    final nodes = {for (final n in ref.read(topologyProvider)) n.mac: n};
+    final nodes = {
+      for (final n in ref.read(topologyProvider))
+        if (n.layer > 0) n.mac: n
+    };
     if (!nodes.containsKey(tick.mac)) return;
 
     // Path from the device up to the central, following parent links.
@@ -116,7 +119,19 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
 
   @override
   Widget build(BuildContext context) {
-    final nodes = ref.watch(topologyProvider);
+    // The board (layer 0) is folded into the CENTRAL chip, not drawn as its
+    // own node; the mesh (layer 1+) hangs off the central directly.
+    final allNodes = ref.watch(topologyProvider);
+    TopologyNode? board;
+    final nodes = <TopologyNode>[];
+    for (final n in allNodes) {
+      if (n.layer == 0) {
+        board ??= n;
+      } else {
+        nodes.add(n);
+      }
+    }
+    final boardMac = board?.mac;
 
     final body = Column(
       children: [
@@ -152,10 +167,13 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
                                       dots: _dots,
                                       repaint: _ticker,
                                       isDark: context.isDark,
+                                      boardMac: boardMac,
                                     ),
                                   ),
                                 ),
-                                _CentralChip(position: layout[_centralKey]!),
+                                _CentralChip(
+                                    position: layout[_centralKey]!,
+                                    board: board),
                                 for (final node in nodes)
                                   if (layout.containsKey(node.mac))
                                     _NodeChip(
@@ -473,12 +491,14 @@ class _MeshGraphPainter extends CustomPainter {
     required this.dots,
     required Listenable repaint,
     required this.isDark,
+    this.boardMac,
   }) : super(repaint: repaint);
 
   final List<TopologyNode> nodes;
   final Map<String, Offset> layout;
   final List<_TrafficDot> dots;
   final bool isDark;
+  final String? boardMac;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -494,7 +514,7 @@ class _MeshGraphPainter extends CustomPainter {
       if (from == null) continue;
       final parentKey = (n.parentMac != null && byMac.containsKey(n.parentMac))
           ? n.parentMac!
-          : (n.layer == 0 ? _centralKey : null);
+          : (n.layer <= 1 || n.parentMac == boardMac ? _centralKey : null);
       final to = parentKey != null ? layout[parentKey] : null;
       if (to == null) continue;
 
@@ -720,12 +740,7 @@ class _MeshGraphPainter extends CustomPainter {
     label('CENTRAL', rowH * 0.52 + 12);
     for (var i = 0; i < layers.length; i++) {
       final ly = layers[i];
-      label(
-          ly == 0
-              ? 'PLACA'
-              : ly == 1
-                  ? 'ROOT'
-                  : 'CAMADA ${ly - 1}',
+      label(ly == 1 ? 'ROOT' : 'CAMADA ${ly - 1}',
           rowH * (i + 1) + rowH * 0.52 + 12);
     }
   }
@@ -737,8 +752,9 @@ class _MeshGraphPainter extends CustomPainter {
 // ── Chips ────────────────────────────────────────────────────────────────────
 
 class _CentralChip extends StatelessWidget {
-  const _CentralChip({required this.position});
+  const _CentralChip({required this.position, this.board});
   final Offset position;
+  final TopologyNode? board;
 
   @override
   Widget build(BuildContext context) {
@@ -781,6 +797,25 @@ class _CentralChip extends StatelessWidget {
               letterSpacing: 1.0,
             ),
           ),
+          if (board != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              board!.mac,
+              style: TextStyle(
+                color: context.textSecondary.withValues(alpha: 0.8),
+                fontSize: 8,
+                fontFamily: 'monospace',
+              ),
+            ),
+            if (board!.rssi != null)
+              Text(
+                '${board!.rssi} dBm',
+                style: TextStyle(
+                  color: context.textSecondary.withValues(alpha: 0.7),
+                  fontSize: 8,
+                ),
+              ),
+          ],
         ],
       ),
     );
@@ -800,22 +835,19 @@ class _NodeChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // The board sits at layer 0 as the gateway to the central; it is not a
-    // mesh root (the elected node at layer 1 is). Render it distinctly.
-    final isGateway = node.layer == 0;
-    final isRoot = !isGateway && node.role == SafrNodeRole.root;
+    // Only an online device shows as the root; a stale/offline ex-root does
+    // not keep the ROOT marker.
+    final isRoot = node.role == SafrNodeRole.root && node.online;
     final statusColor = !node.online
         ? AppColors.error
         : node.sleeping
             ? context.textSecondary
             : AppColors.success;
-    final icon = isGateway
-        ? Icons.router_rounded
-        : switch (node.role) {
-            SafrNodeRole.root => Icons.power_rounded,
-            SafrNodeRole.node => Icons.cell_tower_rounded,
-            _ => node.sleeping ? Icons.dark_mode_rounded : Icons.sensors_rounded,
-          };
+    final icon = switch (node.role) {
+      SafrNodeRole.root => Icons.power_rounded,
+      SafrNodeRole.node => Icons.cell_tower_rounded,
+      _ => node.sleeping ? Icons.dark_mode_rounded : Icons.sensors_rounded,
+    };
     final ringColor = isRoot
         ? AppColors.warning
         : node.online
@@ -892,7 +924,7 @@ class _NodeChip extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (isRoot || isGateway)
+                  if (isRoot)
                     Positioned(
                       left: -8,
                       bottom: -7,
@@ -900,22 +932,18 @@ class _NodeChip extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 5, vertical: 1.5),
                         decoration: BoxDecoration(
-                          color:
-                              isGateway ? AppColors.secondary : AppColors.warning,
+                          color: AppColors.warning,
                           borderRadius: BorderRadius.circular(6),
                           boxShadow: [
                             BoxShadow(
-                              color: (isGateway
-                                      ? AppColors.secondary
-                                      : AppColors.warning)
-                                  .withValues(alpha: 0.4),
+                              color: AppColors.warning.withValues(alpha: 0.4),
                               blurRadius: 6,
                             ),
                           ],
                         ),
-                        child: Text(
-                          isGateway ? 'PLACA' : 'ROOT',
-                          style: const TextStyle(
+                        child: const Text(
+                          'ROOT',
+                          style: TextStyle(
                             color: Colors.black,
                             fontSize: 7.5,
                             fontWeight: FontWeight.w900,
