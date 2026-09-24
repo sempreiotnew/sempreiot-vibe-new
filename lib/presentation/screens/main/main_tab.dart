@@ -7,11 +7,10 @@ enum MainTab {
   central,
   centrais,
   devices,
-  eventos,
   rede;
 
   static List<MainTab> get tabs => AppConfig.isCentral
-      ? [principal, central, devices, rede, eventos]
+      ? [principal, central, devices, rede]
       : [principal, centrais];
 
   /// USER mode drilling into a specific central: the reduced set of tabs
@@ -23,7 +22,6 @@ enum MainTab {
         MainTab.central => 'Central',
         MainTab.centrais => 'Centrais',
         MainTab.devices => 'Dispositivos',
-        MainTab.eventos => 'Eventos',
         MainTab.rede => 'Rede',
       };
 
@@ -32,7 +30,6 @@ enum MainTab {
         MainTab.central => Icons.sensors_rounded,
         MainTab.centrais => Icons.hub_rounded,
         MainTab.devices => Icons.devices_rounded,
-        MainTab.eventos => Icons.notifications_active_rounded,
         MainTab.rede => Icons.hub_rounded,
       };
 }

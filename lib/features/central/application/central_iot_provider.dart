@@ -10,7 +10,8 @@ import '../../iot/domain/entities/mqtt_message_entity.dart';
 import '../../iot/domain/repositories/i_iot_mqtt_repository.dart';
 import '../data/services/central_credentials_service.dart';
 
-export '../../../core/connectivity/connectivity_provider.dart' show NetworkStatus;
+export '../../../core/connectivity/connectivity_provider.dart'
+    show NetworkStatus;
 
 final centralMqttRepositoryProvider = Provider<IIotMqttRepository>((ref) {
   final db = ref.read(appDatabaseProvider);
@@ -91,7 +92,10 @@ class CentralIotConnectionNotifier extends AsyncNotifier<bool> {
         // dropped still sees "offline" the moment they subscribe. Topic
         // must go through presenceTopicFor so it stays in sync with what
         // viewers subscribe to (and with the shared policy's */will grant).
-        will: (identityId) => (topic: presenceTopicFor(identityId), payload: '{"status":"offline"}'),
+        will: (identityId) => (
+          topic: presenceTopicFor(identityId),
+          payload: '{"status":"offline"}'
+        ),
       );
       if (_disposed) return;
 
@@ -112,7 +116,8 @@ class CentralIotConnectionNotifier extends AsyncNotifier<bool> {
       }
 
       state = const AsyncData(true);
-      debugPrint('[Central] ✓ MQTT connected, subscribed to ${id ?? "unknown"}/#');
+      debugPrint(
+          '[Central] ✓ MQTT connected, subscribed to ${id ?? "unknown"}/#');
     } catch (e, st) {
       debugPrint('[Central] ✗ MQTT connection failed: $e');
       if (_disposed) return;
@@ -137,4 +142,3 @@ class CentralIotConnectionNotifier extends AsyncNotifier<bool> {
     Future.delayed(_retryInterval, _doConnect);
   }
 }
-

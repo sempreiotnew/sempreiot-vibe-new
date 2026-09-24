@@ -15,8 +15,8 @@ import '../../../features/centrais/presentation/screens/centrais_list_screen.dar
 import '../../../core/connectivity/network_status_provider.dart';
 import '../../widgets/iot_network_animation.dart';
 import '../auth/login_screen.dart';
-import '../../../features/central/presentation/screens/events_screen.dart';
 import '../../../features/central/presentation/screens/topology_screen.dart';
+import '../../../features/central/presentation/widgets/latched_alarm_banner.dart';
 import 'main_tab.dart';
 import 'status_panel_style_provider.dart';
 import 'widgets/comm_status_gadget.dart';
@@ -135,9 +135,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
             centralId: widget.centralId,
             onMenuTap: () => _scaffoldKey.currentState?.openDrawer(),
             // Show back arrow when drilling into a specific central.
-            onBack: isCentralDetail
-                ? () => Navigator.of(context).pop()
-                : null,
+            onBack: isCentralDetail ? () => Navigator.of(context).pop() : null,
           ),
           drawer: isLocked
               ? null
@@ -148,30 +146,30 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                 ),
           body: _TabBody(currentTab: _currentTab, centralId: widget.centralId),
           bottomNavigationBar: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 420),
-              transitionBuilder: (child, animation) {
-                final curved = CurvedAnimation(
-                  parent: animation,
-                  curve: Curves.easeInOutCubic,
-                );
-                return FadeTransition(
-                  opacity: curved,
-                  child: SizeTransition(
-                    sizeFactor: curved,
-                    axisAlignment: -1,
-                    child: child,
+            duration: const Duration(milliseconds: 420),
+            transitionBuilder: (child, animation) {
+              final curved = CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeInOutCubic,
+              );
+              return FadeTransition(
+                opacity: curved,
+                child: SizeTransition(
+                  sizeFactor: curved,
+                  axisAlignment: -1,
+                  child: child,
+                ),
+              );
+            },
+            // Hide nav when locked or when viewing a specific central's detail.
+            child: (isLocked || isCentralDetail)
+                ? const SizedBox.shrink(key: ValueKey('nav_hidden'))
+                : MainBottomNav(
+                    key: const ValueKey('nav_unlocked'),
+                    currentTab: _currentTab,
+                    onTabChanged: _handleTabChange,
                   ),
-                );
-              },
-              // Hide nav when locked or when viewing a specific central's detail.
-              child: (isLocked || isCentralDetail)
-                  ? const SizedBox.shrink(key: ValueKey('nav_hidden'))
-                  : MainBottomNav(
-                      key: const ValueKey('nav_unlocked'),
-                      currentTab: _currentTab,
-                      onTabChanged: _handleTabChange,
-                    ),
-            ),
+          ),
         );
 
         return Stack(
@@ -248,7 +246,6 @@ class _TabBody extends StatelessWidget {
               title: 'Dispositivos',
               subtitle: 'Nenhum dispositivo conectado ainda.',
             ),
-          MainTab.eventos => const EventsScreen(),
           MainTab.rede => const TopologyScreen(embedded: true),
         },
       ),
@@ -295,14 +292,14 @@ class _CentralDashboard extends ConsumerWidget {
   (Color, String) _centralStatus(WidgetRef ref) {
     if (centralId == null) {
       return switch (ref.watch(networkStatusProvider)) {
-        NetworkStatus.online  => (AppColors.success, 'Operacional'),
+        NetworkStatus.online => (AppColors.success, 'Operacional'),
         NetworkStatus.limited => (AppColors.warning, 'Acesso limitado'),
-        NetworkStatus.offline => (AppColors.error,   'Sem conexão'),
+        NetworkStatus.offline => (AppColors.error, 'Sem conexão'),
       };
     }
     return switch (ref.watch(presenceStatusProvider(centralId!))) {
-      PresenceStatus.online  => (AppColors.success, 'Operacional'),
-      PresenceStatus.offline => (AppColors.error,   'Sem conexão'),
+      PresenceStatus.online => (AppColors.success, 'Operacional'),
+      PresenceStatus.offline => (AppColors.error, 'Sem conexão'),
       PresenceStatus.unknown => (AppColors.warning, 'Verificando…'),
     };
   }
@@ -320,6 +317,9 @@ class _CentralDashboard extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Local registry only: a viewer's phone has no copy of the
+          // central's latches (row 6.7 of the system reference is open).
+          if (centralId == null) const LatchedAlarmBanner(),
           _CentralStatusSection(color: statusColor, label: statusLabel),
           const SizedBox(height: 10),
           _OfflineDim(
@@ -427,10 +427,26 @@ class _OfflineDim extends StatelessWidget {
   final Widget child;
 
   static const _grayscale = ColorFilter.matrix(<double>[
-    0.2126, 0.7152, 0.0722, 0, 0,
-    0.2126, 0.7152, 0.0722, 0, 0,
-    0.2126, 0.7152, 0.0722, 0, 0,
-    0, 0, 0, 1, 0,
+    0.2126,
+    0.7152,
+    0.0722,
+    0,
+    0,
+    0.2126,
+    0.7152,
+    0.0722,
+    0,
+    0,
+    0.2126,
+    0.7152,
+    0.0722,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
   ]);
 
   @override
@@ -539,9 +555,9 @@ class _AppStatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (statusColor, statusLabel) = switch (networkStatus) {
-      NetworkStatus.online  => (AppColors.success, 'Conectado'),
+      NetworkStatus.online => (AppColors.success, 'Conectado'),
       NetworkStatus.limited => (AppColors.warning, 'Acesso limitado'),
-      NetworkStatus.offline => (AppColors.error,   'Sem conexão'),
+      NetworkStatus.offline => (AppColors.error, 'Sem conexão'),
     };
 
     return Container(
@@ -599,7 +615,9 @@ class _AppStatusCard extends StatelessWidget {
               ],
             ),
           ),
-          _PulsingStatusDot(color: statusColor, active: networkStatus == NetworkStatus.online),
+          _PulsingStatusDot(
+              color: statusColor,
+              active: networkStatus == NetworkStatus.online),
         ],
       ),
     );
@@ -705,7 +723,8 @@ class _PanelStyleSwitch extends ConsumerWidget {
 /// Retro digital panel: dark bezel, glowing segment-style readout and the
 /// classic three-LED column (OK / alerta / falha) of old alarm centrals.
 class _ArcadeStatusPanel extends StatelessWidget {
-  const _ArcadeStatusPanel({super.key, required this.color, required this.label});
+  const _ArcadeStatusPanel(
+      {super.key, required this.color, required this.label});
 
   final Color color;
   final String label;
@@ -760,11 +779,14 @@ class _ArcadeStatusPanel extends StatelessWidget {
           Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _ArcadeLed(color: AppColors.success, active: color == AppColors.success),
+              _ArcadeLed(
+                  color: AppColors.success, active: color == AppColors.success),
               const SizedBox(height: 4),
-              _ArcadeLed(color: AppColors.warning, active: color == AppColors.warning),
+              _ArcadeLed(
+                  color: AppColors.warning, active: color == AppColors.warning),
               const SizedBox(height: 4),
-              _ArcadeLed(color: AppColors.error, active: color == AppColors.error),
+              _ArcadeLed(
+                  color: AppColors.error, active: color == AppColors.error),
             ],
           ),
           const SizedBox(width: 8),
@@ -804,7 +826,8 @@ class _ArcadeLed extends StatelessWidget {
 }
 
 class _CentralStatusCard extends StatelessWidget {
-  const _CentralStatusCard({super.key, required this.color, required this.label});
+  const _CentralStatusCard(
+      {super.key, required this.color, required this.label});
 
   final Color color;
   final String label;
@@ -866,7 +889,8 @@ class _CentralStatusCard extends StatelessWidget {
               ],
             ),
           ),
-          _PulsingStatusDot(color: statusColor, active: statusColor == AppColors.success),
+          _PulsingStatusDot(
+              color: statusColor, active: statusColor == AppColors.success),
           const SizedBox(width: 8),
           const _PanelStyleSwitch(),
         ],
@@ -1091,7 +1115,6 @@ class _MetricCard extends StatelessWidget {
     );
   }
 }
-
 
 // ── Gadget row ───────────────────────────────────────────────────────────────
 
@@ -1601,7 +1624,8 @@ class _PinOverlayState extends ConsumerState<_PinOverlay> {
   Widget build(BuildContext context) {
     final authState = ref.watch(centralAuthProvider);
     final hasError = authState is CentralPinError;
-    final errorMessage = authState is CentralPinError ? authState.message : null;
+    final errorMessage =
+        authState is CentralPinError ? authState.message : null;
     final networkStatus = ref.watch(networkStatusProvider);
 
     ref.listen(centralAuthProvider, (_, next) {
@@ -1672,8 +1696,10 @@ class _PinOverlayState extends ConsumerState<_PinOverlay> {
                                   final availH = constraints.maxHeight;
                                   final availW = constraints.maxWidth;
                                   // Fill ~85% of height across 4 rows
-                                  final rowGap = (availH * 0.03).clamp(6.0, 16.0);
-                                  final keyH = ((availH * 0.85) - rowGap * 4) / 4;
+                                  final rowGap =
+                                      (availH * 0.03).clamp(6.0, 16.0);
+                                  final keyH =
+                                      ((availH * 0.85) - rowGap * 4) / 4;
                                   // Each slot = keyW + 2*hPad; hPad = keyW*0.13
                                   // 3 slots fill ~88% of width => keyW = availW*0.88 / (3*1.26)
                                   final keyW = (availW * 0.88) / (3 * 1.26);
@@ -1696,7 +1722,8 @@ class _PinOverlayState extends ConsumerState<_PinOverlay> {
                         child: ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 360),
                           child: SingleChildScrollView(
-                            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 32, vertical: 24),
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [

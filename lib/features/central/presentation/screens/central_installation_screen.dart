@@ -126,8 +126,8 @@ class CentralInstallationScreen extends ConsumerWidget {
                 const SizedBox(height: 20),
                 FilledButton.icon(
                   onPressed: () => _scan(context, ref),
-                  style:
-                      FilledButton.styleFrom(backgroundColor: AppColors.secondary),
+                  style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.secondary),
                   icon: const Icon(Icons.qr_code_scanner_rounded),
                   label: Text(installation == null
                       ? 'Escanear QR da instalação'
@@ -143,7 +143,8 @@ class CentralInstallationScreen extends ConsumerWidget {
                   const SizedBox(height: 24),
                   TextButton.icon(
                     onPressed: () => _clear(context, ref),
-                    style: TextButton.styleFrom(foregroundColor: AppColors.error),
+                    style:
+                        TextButton.styleFrom(foregroundColor: AppColors.error),
                     icon: const Icon(Icons.link_off_rounded),
                     label: const Text('Desvincular'),
                   ),

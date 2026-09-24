@@ -172,8 +172,7 @@ class MainDrawer extends ConsumerWidget {
                           ),
                         );
                       }),
-                      // Technical/debug view of the raw SAFR packet stream;
-                      // the everyday view is the Eventos tab.
+                      // Technical/debug view of the raw SAFR packet stream.
                       _DrawerItem(
                         icon: Icons.receipt_long_rounded,
                         label: 'Logs seriais',

@@ -79,7 +79,8 @@ class _EditorGateState extends ConsumerState<EditorGate> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Icon(Icons.admin_panel_settings_rounded,
-                    size: 40, color: AppColors.secondary.withValues(alpha: 0.8)),
+                    size: 40,
+                    color: AppColors.secondary.withValues(alpha: 0.8)),
                 const SizedBox(height: 20),
                 Text(
                   'Acesso restrito',
@@ -103,7 +104,8 @@ class _EditorGateState extends ConsumerState<EditorGate> {
                   duration: const Duration(milliseconds: 200),
                   child: Text(
                     _error ?? '',
-                    style: const TextStyle(fontSize: 13, color: AppColors.error),
+                    style:
+                        const TextStyle(fontSize: 13, color: AppColors.error),
                   ),
                 ),
                 const SizedBox(height: 32),

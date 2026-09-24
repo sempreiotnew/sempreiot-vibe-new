@@ -2,17 +2,18 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:drift/drift.dart' show Value;
+import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/database/app_database.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
+import '../../../../core/utils/relative_time.dart';
 import '../../application/safr_downlink_provider.dart';
 import '../../application/safr_traffic_provider.dart';
 import '../../application/topology_provider.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
-import 'events_screen.dart' show relativeTime;
 
 /// Rede — live map of the fire-alarm mesh. Central on top, root marked,
 /// curved glowing links, and dots with trails traveling along the real path
@@ -30,8 +31,22 @@ class TopologyScreen extends ConsumerStatefulWidget {
 /// Pseudo-MAC of the central in the graph (top of the tree).
 const _centralKey = '@central';
 
+/// The map's zoom factor. The map is only ever translated and uniformly
+/// scaled, so the x-axis entry IS the scale. Never read the "max scale on
+/// axis" helper here: it also looks at the z axis, which reads 1.0 whenever
+/// the map is zoomed OUT below 1:1 — the landscape opening view — and every
+/// zoom, pan clamp and label position then computed with the wrong scale.
+double _scaleOf(Matrix4 m) => m.storage[0];
+
+/// Opacity of a device (and its link) that has been silent for longer than
+/// [topologyStaleAfter]: still on the map, visibly faded.
+const _staleOpacity = 0.32;
+
 class _TopologyScreenState extends ConsumerState<TopologyScreen>
     with SingleTickerProviderStateMixin {
+  /// Floor for pinch/button zoom-out; the fit scale may go below it when
+  /// the tree is taller than the viewport (landscape), so the effective
+  /// minimum is min(_minZoom, fit).
   static const _minZoom = 0.5;
   static const _maxZoom = 4.0;
 
@@ -39,6 +54,12 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
   final _dots = <_TrafficDot>[];
   final _transform = TransformationController();
   Size _viewSize = Size.zero;
+  Size _canvasSize = Size.zero;
+
+  /// (viewport, canvas) the current transform was fitted for; a change in
+  /// either (rotation, a new layer) re-fits so the tree never ends up
+  /// off-screen or cropped.
+  (Size, Size)? _fittedFor;
   StreamSubscription<SafrTrafficTick>? _trafficSub;
 
   @override
@@ -60,21 +81,99 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
     super.dispose();
   }
 
-  /// Button zoom: scales around the viewport center, clamped to the same
-  /// limits the pinch gesture obeys.
-  void _zoomBy(double factor) {
-    final current = _transform.value.getMaxScaleOnAxis();
-    final target = (current * factor).clamp(_minZoom, _maxZoom);
+  /// Button zoom: pivots on the tree's centre line and the screen's middle.
+  void _zoomBy(double factor) => _applyZoom(factor);
+
+  /// Scales the map by [factor], clamped to the zoom limits, about a pivot
+  /// in SCREEN space: x = the tree's own centre line (so the tree never
+  /// moves sideways on its own — the old code pivoted on a canvas point and
+  /// drifted), y = [pivotY] (the fingers' row for a pinch) or the middle
+  /// of the screen (buttons).
+  void _applyZoom(double factor, {double? pivotY}) {
+    final current = _scaleOf(_transform.value);
+    final target =
+        (current * factor).clamp(math.min(_minZoom, _fitScale), _maxZoom);
     final applied = target / current;
     if (applied == 1.0) return;
-    final center = _viewSize.center(Offset.zero);
-    _transform.value = _transform.value.clone()
-      ..translateByDouble(center.dx, center.dy, 0, 1)
-      ..scaleByDouble(applied, applied, 1, 1)
-      ..translateByDouble(-center.dx, -center.dy, 0, 1);
+    final treeCentreX =
+        _transform.value.getTranslation().x + _canvasSize.width / 2 * current;
+    final c = Offset(treeCentreX, pivotY ?? _viewSize.height / 2);
+    final about = Matrix4.identity()
+      ..translateByDouble(c.dx, c.dy, 0, 1)
+      ..scaleByDouble(applied, applied, applied, 1)
+      ..translateByDouble(-c.dx, -c.dy, 0, 1);
+    _transform.value = _clamped(about * _transform.value);
   }
 
-  void _resetZoom() => _transform.value = Matrix4.identity();
+  /// Moves the map by [delta] screen pixels.
+  void _applyPan(Offset delta) {
+    if (delta == Offset.zero) return;
+    _transform.value = _clamped(
+        Matrix4.translationValues(delta.dx, delta.dy, 0) * _transform.value);
+  }
+
+  /// Keeps at least part of the canvas on screen: the map can be dragged
+  /// around freely but never completely lost (margin in screen pixels).
+  Matrix4 _clamped(Matrix4 m) {
+    const margin = 320.0;
+    final s = _scaleOf(m);
+    final t = m.getTranslation();
+    final slackX = _viewSize.width - _canvasSize.width * s;
+    final slackY = _viewSize.height - _canvasSize.height * s;
+    final tx = t.x
+        .clamp(math.min(slackX, 0.0) - margin, math.max(slackX, 0.0) + margin);
+    final ty = t.y
+        .clamp(math.min(slackY, 0.0) - margin, math.max(slackY, 0.0) + margin);
+    if (tx == t.x && ty == t.y) return m;
+    return m.clone()..setTranslationRaw(tx, ty, 0);
+  }
+
+  // Pinch / drag. Flutter reports both through one scale gesture: `scale`
+  // is cumulative since the gesture started and the focal point is the
+  // fingers' centre (or the single finger).
+  double _gestureScale = 1.0;
+  Offset _gestureFocal = Offset.zero;
+
+  void _onScaleStart(ScaleStartDetails d) {
+    _gestureScale = 1.0;
+    _gestureFocal = d.localFocalPoint;
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails d) {
+    if (d.scale != _gestureScale && _gestureScale != 0) {
+      _applyZoom(d.scale / _gestureScale, pivotY: d.localFocalPoint.dy);
+      _gestureScale = d.scale;
+    }
+    _applyPan(d.localFocalPoint - _gestureFocal);
+    _gestureFocal = d.localFocalPoint;
+  }
+
+  /// Below this the chips stop being readable, so the opening view never
+  /// goes smaller — a very tall tree is panned instead.
+  static const _fitFloor = 0.7;
+
+  /// Opening/"fit" scale: the whole canvas in the viewport when that stays
+  /// readable, else [_fitFloor]; never above 1:1.
+  double get _fitScale {
+    if (_viewSize.isEmpty || _canvasSize.isEmpty) return 1.0;
+    final fit = math.min(_viewSize.width / _canvasSize.width,
+        _viewSize.height / _canvasSize.height);
+    return fit.clamp(_fitFloor, 1.0);
+  }
+
+  /// "Ajustar à tela": the tree centred in the viewport (in landscape it
+  /// opens zoomed out rather than cropped). When it is still bigger than the
+  /// screen at the readable floor it stays centred across (the central on
+  /// the centre line, the outer siblings reached by panning) and starts at
+  /// the top.
+  void _fitToView() {
+    final s = _fitScale;
+    final tx = (_viewSize.width - _canvasSize.width * s) / 2;
+    final ty = math.max(0.0, (_viewSize.height - _canvasSize.height * s) / 2);
+    _transform.value = Matrix4.identity()
+      ..translateByDouble(tx, ty, 0, 1)
+      ..scaleByDouble(s, s, s, 1);
+  }
 
   void _onTraffic(SafrTrafficTick tick) {
     // Only animate real events (alert/alarm/trouble). Routine traffic —
@@ -135,7 +234,7 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
 
     final body = Column(
       children: [
-        _MeshStatusBar(nodes: nodes),
+        _MeshStatusBar(nodes: nodes, onClear: _clearRegistry),
         Expanded(
           child: nodes.isEmpty
               ? const _EmptyMesh()
@@ -143,45 +242,89 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
                   final size =
                       Size(constraints.maxWidth, constraints.maxHeight);
                   _viewSize = size;
-                  final layout = _computeLayout(nodes, size);
+                  final layout = _MeshLayout.compute(nodes, size);
+                  _canvasSize = layout.canvas;
+                  final key = (size, layout.canvas);
+                  if (_fittedFor != key) {
+                    _fittedFor = key;
+                    WidgetsBinding.instance
+                        .addPostFrameCallback((_) => _fitToView());
+                  }
                   return Stack(
                     children: [
-                      // Pinch to zoom, drag to pan (standard gestures);
-                      // buttons below mirror the same transform.
+                      // Pinch = the SAME zoom the buttons do (pivot on the
+                      // tree's centre line and the fingers' row), fingers'
+                      // travel = pan. Our own gesture math, so the tree
+                      // never slides sideways on its own. The canvas grows
+                      // past the viewport when the mesh is crowded — pan to
+                      // reach the rest.
                       Positioned.fill(
-                        child: InteractiveViewer(
-                          transformationController: _transform,
-                          minScale: _minZoom,
-                          maxScale: _maxZoom,
-                          boundaryMargin: const EdgeInsets.all(320),
-                          child: SizedBox(
-                            width: size.width,
-                            height: size.height,
-                            child: Stack(
-                              children: [
-                                Positioned.fill(
-                                  child: CustomPaint(
-                                    painter: _MeshGraphPainter(
-                                      nodes: nodes,
-                                      layout: layout,
-                                      dots: _dots,
-                                      repaint: _ticker,
-                                      isDark: context.isDark,
-                                      boardMac: boardMac,
-                                    ),
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onScaleStart: _onScaleStart,
+                          onScaleUpdate: _onScaleUpdate,
+                          child: ClipRect(
+                            child: OverflowBox(
+                              alignment: Alignment.topLeft,
+                              minWidth: 0,
+                              minHeight: 0,
+                              maxWidth: double.infinity,
+                              maxHeight: double.infinity,
+                              child: ValueListenableBuilder<Matrix4>(
+                                valueListenable: _transform,
+                                builder: (_, m, child) => Transform(
+                                  transform: m,
+                                  alignment: Alignment.topLeft,
+                                  child: child,
+                                ),
+                                child: SizedBox(
+                                  width: layout.canvas.width,
+                                  height: layout.canvas.height,
+                                  child: Stack(
+                                    children: [
+                                      Positioned.fill(
+                                        child: CustomPaint(
+                                          painter: _MeshGraphPainter(
+                                            nodes: nodes,
+                                            layout: layout,
+                                            dots: _dots,
+                                            repaint: _ticker,
+                                            isDark: context.isDark,
+                                            boardMac: boardMac,
+                                          ),
+                                        ),
+                                      ),
+                                      _CentralChip(
+                                          position:
+                                              layout.positions[_centralKey]!,
+                                          board: board),
+                                      for (final node in nodes)
+                                        if (layout.positions
+                                            .containsKey(node.mac))
+                                          _NodeChip(
+                                            node: node,
+                                            position:
+                                                layout.positions[node.mac]!,
+                                            onTap: () => _showNodeSheet(node),
+                                          ),
+                                    ],
                                   ),
                                 ),
-                                _CentralChip(
-                                    position: layout[_centralKey]!,
-                                    board: board),
-                                for (final node in nodes)
-                                  if (layout.containsKey(node.mac))
-                                    _NodeChip(
-                                      node: node,
-                                      position: layout[node.mac]!,
-                                      onTap: () => _showNodeSheet(node),
-                                    ),
-                              ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      // Lane labels live in screen space: pinned to the
+                      // left edge whatever the pan/zoom, following only
+                      // the rows' vertical position.
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: CustomPaint(
+                            painter: _LaneLabelsPainter(
+                              layout: layout,
+                              transform: _transform,
+                              isDark: context.isDark,
                             ),
                           ),
                         ),
@@ -192,23 +335,7 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
                         child: _ZoomControls(
                           onZoomIn: () => _zoomBy(1.3),
                           onZoomOut: () => _zoomBy(1 / 1.3),
-                          onReset: _resetZoom,
-                        ),
-                      ),
-                      Positioned(
-                        right: 12,
-                        top: 12,
-                        child: Material(
-                          color: context.bgColor.withValues(alpha: 0.85),
-                          shape: const CircleBorder(),
-                          elevation: 2,
-                          child: IconButton(
-                            tooltip: 'Limpar dispositivos',
-                            icon: const Icon(Icons.delete_sweep_rounded,
-                                size: 20),
-                            color: AppColors.error,
-                            onPressed: _clearRegistry,
-                          ),
+                          onReset: _fitToView,
                         ),
                       ),
                     ],
@@ -239,9 +366,9 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
       builder: (ctx) => AlertDialog(
         title: const Text('Limpar dispositivos'),
         content: const Text(
-            'Remove todos os dispositivos do mapa da rede. Os que estiverem '
-            'ativos reaparecem no próximo heartbeat; o histórico de eventos é '
-            'mantido.'),
+            'Remove todos os dispositivos do mapa da rede, inclusive os '
+            'inativos. Os que estiverem ativos reaparecem no próximo '
+            'heartbeat; o histórico de logs é mantido.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -259,41 +386,27 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
     }
   }
 
-  /// Layered tree: central on top, then layer 0 (root), 1, 2… scaled to the
-  /// available area; a left gutter hosts the layer labels drawn by the
-  /// painter.
-  Map<String, Offset> _computeLayout(List<TopologyNode> nodes, Size size) {
-    final layers = <int, List<TopologyNode>>{};
-    for (final n in nodes) {
-      layers.putIfAbsent(n.layer, () => []).add(n);
-    }
-    final layerKeys = layers.keys.toList()..sort();
-    final rowCount = layerKeys.length + 1; // + central row
-    final rowH = (size.height - 24) / rowCount;
-    final usableW = size.width - 36; // gutter for layer labels
-    final map = <String, Offset>{
-      _centralKey: Offset(36 + usableW / 2, rowH * 0.52 + 12),
-    };
-    for (var i = 0; i < layerKeys.length; i++) {
-      final row = layers[layerKeys[i]]!;
-      for (var j = 0; j < row.length; j++) {
-        map[row[j].mac] = Offset(
-          36 + usableW * (j + 1) / (row.length + 1),
-          rowH * (i + 1) + rowH * 0.52 + 12,
-        );
-      }
-    }
-    return map;
-  }
-
+  /// The sheet is taller than the default half-screen budget (facts + three
+  /// commands + feedback), so it is scroll-controlled, capped at 90 % of the
+  /// viewport and scrolls inside; on wide screens it stays a readable column.
   void _showNodeSheet(TopologyNode node) {
     showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: context.surfaceColor,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
-      builder: (_) => _NodeDetailSheet(node: node),
+      constraints: const BoxConstraints(maxWidth: 560),
+      builder: (ctx) => ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(ctx).height * 0.9,
+        ),
+        child: SingleChildScrollView(
+          child: _NodeDetailSheet(node: node),
+        ),
+      ),
     );
   }
 }
@@ -301,8 +414,12 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
 // ── Status bar ───────────────────────────────────────────────────────────────
 
 class _MeshStatusBar extends StatelessWidget {
-  const _MeshStatusBar({required this.nodes});
+  const _MeshStatusBar({required this.nodes, required this.onClear});
   final List<TopologyNode> nodes;
+
+  /// "Limpar dispositivos" lives here, not floating over the canvas, so it
+  /// can never collide with the zoom controls on a short landscape screen.
+  final VoidCallback onClear;
 
   @override
   Widget build(BuildContext context) {
@@ -317,8 +434,8 @@ class _MeshStatusBar extends StatelessWidget {
     }
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       decoration: BoxDecoration(
         color: context.surfaceColor,
         borderRadius: BorderRadius.circular(12),
@@ -326,15 +443,29 @@ class _MeshStatusBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          _StatusCount(
-              color: AppColors.success, label: 'ATIVOS', count: online),
-          const SizedBox(width: 14),
-          _StatusCount(
-              color: context.textSecondary, label: 'DORMINDO', count: sleeping),
-          const SizedBox(width: 14),
-          _StatusCount(
-              color: AppColors.error, label: 'OFFLINE', count: offline),
-          const Spacer(),
+          // One line always: on a narrow phone the counts scale down a
+          // little instead of wrapping and doubling the strip's height.
+          Expanded(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _StatusCount(
+                      color: AppColors.success, label: 'ATIVOS', count: online),
+                  const SizedBox(width: 14),
+                  _StatusCount(
+                      color: context.textSecondary,
+                      label: 'DORMINDO',
+                      count: sleeping),
+                  const SizedBox(width: 14),
+                  _StatusCount(
+                      color: AppColors.error, label: 'OFFLINE', count: offline),
+                ],
+              ),
+            ),
+          ),
           if (lastSeen != null)
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -358,6 +489,21 @@ class _MeshStatusBar extends StatelessWidget {
                 ),
               ],
             ),
+          const SizedBox(width: 10),
+          IconButton(
+            tooltip: 'Limpar dispositivos',
+            // M3 pads the tap target to 48 px, which alone made the strip
+            // two lines tall; the strip stays one compact line.
+            style: IconButton.styleFrom(
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              fixedSize: const Size(30, 30),
+              minimumSize: const Size(30, 30),
+              padding: EdgeInsets.zero,
+              foregroundColor: AppColors.error,
+            ),
+            icon: const Icon(Icons.delete_sweep_rounded, size: 20),
+            onPressed: onClear,
+          ),
         ],
       ),
     );
@@ -386,7 +532,10 @@ class _StatusCount extends StatelessWidget {
             color: count > 0 ? color : color.withValues(alpha: 0.3),
             shape: BoxShape.circle,
             boxShadow: count > 0
-                ? [BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 5)]
+                ? [
+                    BoxShadow(
+                        color: color.withValues(alpha: 0.5), blurRadius: 5)
+                  ]
                 : null,
           ),
         ),
@@ -495,7 +644,7 @@ class _MeshGraphPainter extends CustomPainter {
   }) : super(repaint: repaint);
 
   final List<TopologyNode> nodes;
-  final Map<String, Offset> layout;
+  final _MeshLayout layout;
   final List<_TrafficDot> dots;
   final bool isDark;
   final String? boardMac;
@@ -506,16 +655,15 @@ class _MeshGraphPainter extends CustomPainter {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
 
     _paintGrid(canvas, size);
-    _paintLayerLabels(canvas, size);
 
     // Links: curved, two-pass (glow + core).
     for (final n in nodes) {
-      final from = layout[n.mac];
+      final from = layout.positions[n.mac];
       if (from == null) continue;
       final parentKey = (n.parentMac != null && byMac.containsKey(n.parentMac))
           ? n.parentMac!
           : (n.layer <= 1 || n.parentMac == boardMac ? _centralKey : null);
-      final to = parentKey != null ? layout[parentKey] : null;
+      final to = parentKey != null ? layout.positions[parentKey] : null;
       if (to == null) continue;
 
       final parentOnline =
@@ -550,23 +698,26 @@ class _MeshGraphPainter extends CustomPainter {
           Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1.1
-            ..color = color.withValues(alpha: 0.55),
+            ..color =
+                color.withValues(alpha: n.stale ? 0.55 * _staleOpacity : 0.55),
         );
       }
 
-      // Link quality: the child's RSSI to this parent, printed on the line.
-      if (n.rssi != null) {
-        _linkLabel(canvas, path, '${n.rssi} dBm',
-            healthy ? color : AppColors.error);
+      // Link quality: the child's RSSI to this parent, printed on the line
+      // (not for a stale device — that reading is long out of date).
+      if (n.rssi != null && !n.stale) {
+        _linkLabel(
+            canvas, path, '${n.rssi} dBm', healthy ? color : AppColors.error);
       }
     }
 
     // Pulse rings on the central and the root.
     final phase = (nowMs % 2200) / 2200.0;
-    _pulse(canvas, layout[_centralKey], AppColors.secondary, phase, 30);
+    _pulse(
+        canvas, layout.positions[_centralKey], AppColors.secondary, phase, 30);
     for (final n in nodes) {
       if (n.role == SafrNodeRole.root && n.layer > 0 && n.online) {
-        _pulse(canvas, layout[n.mac], AppColors.warning,
+        _pulse(canvas, layout.positions[n.mac], AppColors.warning,
             (phase + 0.5) % 1.0, 26);
       }
     }
@@ -628,8 +779,8 @@ class _MeshGraphPainter extends CustomPainter {
     canvas.drawRRect(
       RRect.fromRectAndRadius(rect, const Radius.circular(7)),
       Paint()
-        ..color =
-            (isDark ? const Color(0xFF0B0F1A) : Colors.white).withValues(alpha: 0.85),
+        ..color = (isDark ? const Color(0xFF0B0F1A) : Colors.white)
+            .withValues(alpha: 0.85),
     );
     canvas.drawRRect(
       RRect.fromRectAndRadius(rect, const Radius.circular(7)),
@@ -667,7 +818,7 @@ class _MeshGraphPainter extends CustomPainter {
   Offset? _positionAlong(List<String> keys, double progress) {
     final points = [
       for (final key in keys)
-        if (layout[key] != null) layout[key]!,
+        if (layout.positions[key] != null) layout.positions[key]!,
     ];
     if (points.length < 2) return null;
     final segments = points.length - 1;
@@ -711,18 +862,106 @@ class _MeshGraphPainter extends CustomPainter {
     }
   }
 
-  void _paintLayerLabels(Canvas canvas, Size size) {
-    final layers = <int>{for (final n in nodes) n.layer}.toList()..sort();
-    final rowCount = layers.length + 1;
-    final rowH = (size.height - 24) / rowCount;
+  @override
+  bool shouldRepaint(_MeshGraphPainter old) => true;
+}
 
-    void label(String text, double y) {
+// ── Arena-free tap ───────────────────────────────────────────────────────────
+
+/// Tap detection that stays OUT of the gesture arena. A chip must never
+/// compete with the viewer's pinch/pan: with a TapGestureRecognizer on the
+/// chip, a pinch that began on a chip (where fingers usually land) lost part
+/// of the hand's movement and the map slid away from the fingers. A raw
+/// Listener sees every pointer event without claiming any of them, so the
+/// viewer keeps the whole gesture; the tap fires only for a short, still,
+/// single-finger touch.
+class _ArenaFreeTap extends StatefulWidget {
+  const _ArenaFreeTap({required this.onTap, required this.child});
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  State<_ArenaFreeTap> createState() => _ArenaFreeTapState();
+}
+
+class _ArenaFreeTapState extends State<_ArenaFreeTap> {
+  Offset? _down;
+  int _pointers = 0;
+  bool _cancelled = false;
+
+  void _onDown(PointerDownEvent e) {
+    _pointers++;
+    if (_pointers == 1) {
+      _down = e.position;
+      _cancelled = false;
+    } else {
+      _cancelled = true; // second finger: this is a pinch, not a tap
+    }
+  }
+
+  void _onMove(PointerMoveEvent e) {
+    if (_down != null && (e.position - _down!).distance > kTouchSlop) {
+      _cancelled = true;
+    }
+  }
+
+  void _onUp(PointerUpEvent e) {
+    _pointers = math.max(0, _pointers - 1);
+    if (_pointers > 0) return;
+    if (!_cancelled && _down != null) widget.onTap();
+    _down = null;
+  }
+
+  void _onCancel(PointerCancelEvent e) {
+    _pointers = math.max(0, _pointers - 1);
+    _cancelled = true;
+    if (_pointers == 0) _down = null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: _onDown,
+      onPointerMove: _onMove,
+      onPointerUp: _onUp,
+      onPointerCancel: _onCancel,
+      child: widget.child,
+    );
+  }
+}
+
+// ── Lane labels (screen-space gutter) ────────────────────────────────────────
+
+/// CENTRAL / ROOT / CAMADA n, rotated along the left edge of the viewport.
+/// Repaints with the transform so each label tracks its row's screen y while
+/// its x and size never change — the gutter is fixed, the map moves.
+class _LaneLabelsPainter extends CustomPainter {
+  _LaneLabelsPainter({
+    required this.layout,
+    required this.transform,
+    required this.isDark,
+  }) : super(repaint: transform);
+
+  final _MeshLayout layout;
+  final TransformationController transform;
+  final bool isDark;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final m = transform.value;
+    final scale = _scaleOf(m);
+    final ty = m.getTranslation().y;
+
+    void label(String text, double lane) {
+      final y = ty + lane * scale;
+      if (y < 0 || y > size.height) return; // row scrolled off-screen
       final tp = TextPainter(
         text: TextSpan(
           text: text,
           style: TextStyle(
-            color: (isDark ? Colors.white : Colors.black)
-                .withValues(alpha: 0.18),
+            color:
+                (isDark ? Colors.white : Colors.black).withValues(alpha: 0.22),
             fontSize: 8,
             fontWeight: FontWeight.w800,
             letterSpacing: 1.2,
@@ -737,16 +976,96 @@ class _MeshGraphPainter extends CustomPainter {
       canvas.restore();
     }
 
-    label('CENTRAL', rowH * 0.52 + 12);
-    for (var i = 0; i < layers.length; i++) {
-      final ly = layers[i];
-      label(ly == 1 ? 'ROOT' : 'CAMADA ${ly - 1}',
-          rowH * (i + 1) + rowH * 0.52 + 12);
+    label('CENTRAL', layout.centralLane);
+    final layers = layout.laneCenters.keys.toList()..sort();
+    for (final ly in layers) {
+      label(ly == 1 ? 'ROOT' : 'CAMADA ${ly - 1}', layout.laneCenters[ly]!);
     }
   }
 
   @override
-  bool shouldRepaint(_MeshGraphPainter old) => true;
+  bool shouldRepaint(_LaneLabelsPainter old) =>
+      old.layout != layout || old.isDark != isDark;
+}
+
+// ── Layout ───────────────────────────────────────────────────────────────────
+
+/// Where every node sits on the canvas, plus the lanes the painter labels.
+///
+/// The tree always grows top → bottom: central row on top, one row per
+/// layer, siblings spread across the width, rotated labels in a left gutter.
+/// The canvas is at least the viewport and grows when a row or a lane would
+/// otherwise overlap chips; the screen then zooms out to fit it (landscape)
+/// rather than changing the picture.
+class _MeshLayout {
+  const _MeshLayout({
+    required this.positions,
+    required this.centralLane,
+    required this.laneCenters,
+    required this.canvas,
+  });
+
+  final Map<String, Offset> positions;
+
+  /// y of the central row.
+  final double centralLane;
+
+  /// y of each mesh layer's row.
+  final Map<int, double> laneCenters;
+
+  /// Canvas size the chips and painter are laid out in (≥ viewport).
+  final Size canvas;
+
+  // Chip footprint: node chip 104 × ~62, central chip 120 × ~95.
+  // The same margin on both sides keeps the tree centred; the left one
+  // also hosts the rotated lane labels.
+  static const _gutter = 36.0;
+  static const _edge = 12.0;
+  static const _minAcross = 116.0; // node pitch along a row
+  static const _minLane = 104.0; // row pitch
+
+  static _MeshLayout compute(List<TopologyNode> nodes, Size viewport) {
+    final layers = <int, List<TopologyNode>>{};
+    for (final n in nodes) {
+      layers.putIfAbsent(n.layer, () => []).add(n);
+    }
+    final layerKeys = layers.keys.toList()..sort();
+    final laneCount = layerKeys.length + 1; // + central row
+    var widest = 1;
+    for (final l in layers.values) {
+      widest = math.max(widest, l.length);
+    }
+
+    // Siblings sit at (j+1)/(n+1) of the usable width, so n chips need
+    // n+1 pitches for the pitch itself to stay ≥ _minAcross.
+    final width =
+        math.max(viewport.width, 2 * _gutter + (widest + 1) * _minAcross);
+    final height = math.max(viewport.height, 2 * _edge + laneCount * _minLane);
+    final rowH = (height - 2 * _edge) / laneCount;
+    final usableW = width - 2 * _gutter;
+    double laneY(int i) => _edge + rowH * (i + 0.52);
+
+    final positions = <String, Offset>{
+      _centralKey: Offset(_gutter + usableW / 2, laneY(0)),
+    };
+    final laneCenters = <int, double>{};
+    for (var i = 0; i < layerKeys.length; i++) {
+      final row = layers[layerKeys[i]]!;
+      laneCenters[layerKeys[i]] = laneY(i + 1);
+      for (var j = 0; j < row.length; j++) {
+        positions[row[j].mac] = Offset(
+          _gutter + usableW * (j + 1) / (row.length + 1),
+          laneY(i + 1),
+        );
+      }
+    }
+    return _MeshLayout(
+      positions: positions,
+      centralLane: laneY(0),
+      laneCenters: laneCenters,
+      canvas: Size(width, height),
+    );
+  }
 }
 
 // ── Chips ────────────────────────────────────────────────────────────────────
@@ -756,67 +1075,73 @@ class _CentralChip extends StatelessWidget {
   final Offset position;
   final TopologyNode? board;
 
+  static const _width = 120.0;
+  static const _circle = 54.0;
+
   @override
   Widget build(BuildContext context) {
     return Positioned(
-      left: position.dx - 30,
-      top: position.dy - 30,
-      child: Column(
-        children: [
-          Container(
-            width: 54,
-            height: 54,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [AppColors.primary, Color(0xFF2E6DA4)],
-              ),
-              border: Border.all(
-                color: AppColors.secondary.withValues(alpha: 0.7),
-                width: 1.6,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.secondary.withValues(alpha: 0.30),
-                  blurRadius: 16,
+      left: position.dx - _CentralChip._width / 2,
+      top: position.dy - _CentralChip._circle / 2,
+      child: SizedBox(
+        width: _CentralChip._width,
+        child: Column(
+          children: [
+            Container(
+              width: _CentralChip._circle,
+              height: _CentralChip._circle,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [AppColors.primary, Color(0xFF2E6DA4)],
                 ),
-              ],
+                border: Border.all(
+                  color: AppColors.secondary.withValues(alpha: 0.7),
+                  width: 1.6,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.secondary.withValues(alpha: 0.30),
+                    blurRadius: 16,
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.tablet_mac_rounded,
+                  color: Colors.white, size: 24),
             ),
-            child: const Icon(Icons.tablet_mac_rounded,
-                color: Colors.white, size: 24),
-          ),
-          const SizedBox(height: 5),
-          Text(
-            'CENTRAL',
-            style: TextStyle(
-              color: context.textSecondary,
-              fontSize: 9,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 1.0,
-            ),
-          ),
-          if (board != null) ...[
-            const SizedBox(height: 2),
+            const SizedBox(height: 5),
             Text(
-              board!.mac,
+              'CENTRAL',
               style: TextStyle(
-                color: context.textSecondary.withValues(alpha: 0.8),
-                fontSize: 8,
-                fontFamily: 'monospace',
+                color: context.textSecondary,
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.0,
               ),
             ),
-            if (board!.rssi != null)
+            if (board != null) ...[
+              const SizedBox(height: 2),
               Text(
-                '${board!.rssi} dBm',
+                board!.mac,
                 style: TextStyle(
-                  color: context.textSecondary.withValues(alpha: 0.7),
+                  color: context.textSecondary.withValues(alpha: 0.8),
                   fontSize: 8,
+                  fontFamily: 'monospace',
                 ),
               ),
+              if (board!.rssi != null)
+                Text(
+                  '${board!.rssi} dBm',
+                  style: TextStyle(
+                    color: context.textSecondary.withValues(alpha: 0.7),
+                    fontSize: 8,
+                  ),
+                ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -857,123 +1182,154 @@ class _NodeChip extends StatelessWidget {
     return Positioned(
       left: position.dx - 52,
       top: position.dy - 26,
-      child: GestureDetector(
-        onTap: onTap,
-        child: SizedBox(
-          width: 104,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  // Outer ring + inner avatar (double-ring look)
-                  Container(
-                    width: 46,
-                    height: 46,
-                    padding: const EdgeInsets.all(3),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border:
-                          Border.all(color: ringColor, width: isRoot ? 1.8 : 1.1),
-                      boxShadow: [
-                        BoxShadow(
-                          color: (isRoot ? AppColors.warning : ringColor)
-                              .withValues(alpha: node.online ? 0.28 : 0.10),
-                          blurRadius: 12,
-                        ),
-                      ],
-                    ),
-                    child: Container(
+      child: Opacity(
+        opacity: node.stale ? _staleOpacity : 1.0,
+        child: _ArenaFreeTap(
+          onTap: onTap,
+          child: SizedBox(
+            width: 104,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    // Outer ring + inner avatar (double-ring look)
+                    Container(
+                      width: 46,
+                      height: 46,
+                      padding: const EdgeInsets.all(3),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: node.online
-                            ? Color.alphaBlend(
-                                ringColor.withValues(alpha: 0.10),
-                                context.surfaceColor)
-                            : context.surfaceColor,
+                        border: Border.all(
+                            color: ringColor, width: isRoot ? 1.8 : 1.1),
+                        boxShadow: [
+                          BoxShadow(
+                            color: (isRoot ? AppColors.warning : ringColor)
+                                .withValues(alpha: node.online ? 0.28 : 0.10),
+                            blurRadius: 12,
+                          ),
+                        ],
                       ),
-                      child: Icon(
-                        icon,
-                        size: 19,
-                        color: node.online
-                            ? context.textPrimary
-                            : context.textSecondary.withValues(alpha: 0.7),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    right: -1,
-                    top: -1,
-                    child: Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: statusColor,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: context.bgColor, width: 1.8),
-                        boxShadow: node.online && !node.sleeping
-                            ? [
-                                BoxShadow(
-                                  color:
-                                      statusColor.withValues(alpha: 0.6),
-                                  blurRadius: 5,
-                                ),
-                              ]
-                            : null,
-                      ),
-                    ),
-                  ),
-                  if (isRoot)
-                    Positioned(
-                      left: -8,
-                      bottom: -7,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 5, vertical: 1.5),
                         decoration: BoxDecoration(
-                          color: AppColors.warning,
-                          borderRadius: BorderRadius.circular(6),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppColors.warning.withValues(alpha: 0.4),
-                              blurRadius: 6,
-                            ),
-                          ],
+                          shape: BoxShape.circle,
+                          color: node.online
+                              ? Color.alphaBlend(
+                                  ringColor.withValues(alpha: 0.10),
+                                  context.surfaceColor)
+                              : context.surfaceColor,
                         ),
-                        child: const Text(
-                          'ROOT',
-                          style: TextStyle(
-                            color: Colors.black,
-                            fontSize: 7.5,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0.5,
+                        child: Icon(
+                          icon,
+                          size: 19,
+                          color: node.online
+                              ? context.textPrimary
+                              : context.textSecondary.withValues(alpha: 0.7),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: -1,
+                      top: -1,
+                      child: Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: statusColor,
+                          shape: BoxShape.circle,
+                          border:
+                              Border.all(color: context.bgColor, width: 1.8),
+                          boxShadow: node.online && !node.sleeping
+                              ? [
+                                  BoxShadow(
+                                    color: statusColor.withValues(alpha: 0.6),
+                                    blurRadius: 5,
+                                  ),
+                                ]
+                              : null,
+                        ),
+                      ),
+                    ),
+                    if (node.alarmLatched)
+                      Positioned(
+                        right: -10,
+                        bottom: -7,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: AppColors.error,
+                            borderRadius: BorderRadius.circular(6),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.error.withValues(alpha: 0.4),
+                                blurRadius: 6,
+                              ),
+                            ],
+                          ),
+                          child: const Text(
+                            'ALARME',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 7.5,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.5,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 5),
-              // Identification: the device's name when set, otherwise the
-              // full MAC address — never a truncated fragment.
-              Text(
-                node.name?.isNotEmpty == true ? node.name! : node.mac,
-                maxLines: 1,
-                textAlign: TextAlign.center,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: node.name?.isNotEmpty == true
-                      ? context.textPrimary
-                      : context.textSecondary,
-                  fontSize: node.name?.isNotEmpty == true ? 9.5 : 8,
-                  fontWeight: FontWeight.w600,
-                  fontFamily:
-                      node.name?.isNotEmpty == true ? null : 'monospace',
-                  letterSpacing: node.name?.isNotEmpty == true ? 0 : -0.2,
+                    if (isRoot)
+                      Positioned(
+                        left: -8,
+                        bottom: -7,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: AppColors.warning,
+                            borderRadius: BorderRadius.circular(6),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.warning.withValues(alpha: 0.4),
+                                blurRadius: 6,
+                              ),
+                            ],
+                          ),
+                          child: const Text(
+                            'ROOT',
+                            style: TextStyle(
+                              color: Colors.black,
+                              fontSize: 7.5,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 5),
+                // Identification: the device's name when set, otherwise the
+                // full MAC address — never a truncated fragment.
+                Text(
+                  node.name?.isNotEmpty == true ? node.name! : node.mac,
+                  maxLines: 1,
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: node.name?.isNotEmpty == true
+                        ? context.textPrimary
+                        : context.textSecondary,
+                    fontSize: node.name?.isNotEmpty == true ? 9.5 : 8,
+                    fontWeight: FontWeight.w600,
+                    fontFamily:
+                        node.name?.isNotEmpty == true ? null : 'monospace',
+                    letterSpacing: node.name?.isNotEmpty == true ? 0 : -0.2,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1067,12 +1423,23 @@ class _NodeDetailSheetState extends ConsumerState<_NodeDetailSheet> {
             if (node.batteryPct != null)
               _fact(context, 'Bateria', '${node.batteryPct}%'),
             _fact(context, 'Última comunicação', relativeTime(node.lastSeenAt)),
+            if (node.alarmLatched)
+              _fact(
+                context,
+                'Alarme retido',
+                node.alarmLatchedAt != null
+                    ? 'desde ${relativeTime(node.alarmLatchedAt!)}'
+                    : 'sim',
+                valueColor: AppColors.error,
+              ),
             _fact(
                 context,
                 'Estado',
                 node.online
                     ? (node.sleeping ? 'Dormindo' : 'Online')
-                    : 'Sem comunicação'),
+                    : node.stale
+                        ? 'Sem comunicação há muito tempo'
+                        : 'Sem comunicação'),
             const SizedBox(height: 16),
             Text(
               'COMANDOS — CENTRAL → DISPOSITIVO',
@@ -1112,9 +1479,19 @@ class _NodeDetailSheetState extends ConsumerState<_NodeDetailSheet> {
             _cmdRow(
               SafrCommand.test,
               'Testar',
-              'Solicita um autoteste — o resultado chega em Eventos',
+              'Solicita um autoteste — o resultado aparece em Logs seriais',
               Icons.quiz_outlined,
             ),
+            if (node.alarmLatched)
+              // The root's ACK is what clears the latch, so this stays
+              // available even while the sensor itself is unreachable.
+              _cmdRow(
+                SafrCommand.reset,
+                'Rearmar',
+                'Libera o alarme retido deste dispositivo (só após o ACK do root)',
+                Icons.restart_alt_rounded,
+                requiresOnline: false,
+              ),
             // Inline result: never a SnackBar fighting the sheet for space.
             if (_feedback != null) ...[
               const SizedBox(height: 10),
@@ -1127,9 +1504,8 @@ class _NodeDetailSheetState extends ConsumerState<_NodeDetailSheet> {
                       .withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
-                    color:
-                        (_feedbackOk ? AppColors.success : AppColors.trouble)
-                            .withValues(alpha: 0.45),
+                    color: (_feedbackOk ? AppColors.success : AppColors.trouble)
+                        .withValues(alpha: 0.45),
                     width: 0.7,
                   ),
                 ),
@@ -1203,7 +1579,8 @@ class _NodeDetailSheetState extends ConsumerState<_NodeDetailSheet> {
     if (mounted) Navigator.pop(this.context);
   }
 
-  Widget _fact(BuildContext context, String label, String value) {
+  Widget _fact(BuildContext context, String label, String value,
+      {Color? valueColor}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 5),
       child: Row(
@@ -1216,7 +1593,7 @@ class _NodeDetailSheetState extends ConsumerState<_NodeDetailSheet> {
           Expanded(
             child: Text(value,
                 style: TextStyle(
-                    color: context.textPrimary,
+                    color: valueColor ?? context.textPrimary,
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600)),
           ),
@@ -1225,13 +1602,14 @@ class _NodeDetailSheetState extends ConsumerState<_NodeDetailSheet> {
     );
   }
 
-  Widget _cmdRow(SafrCommand cmd, String label, String description,
-      IconData icon,
-      {List<int> args = const []}) {
+  Widget _cmdRow(
+      SafrCommand cmd, String label, String description, IconData icon,
+      {List<int> args = const [], bool requiresOnline = true}) {
     final busy = _sending == cmd;
-    final enabled = widget.node.online && _sending == null;
-    final color =
-        enabled ? AppColors.secondary : context.textSecondary.withValues(alpha: 0.5);
+    final enabled = (widget.node.online || !requiresOnline) && _sending == null;
+    final color = enabled
+        ? AppColors.secondary
+        : context.textSecondary.withValues(alpha: 0.5);
 
     return Container(
       margin: const EdgeInsets.only(top: 8),
@@ -1301,9 +1679,11 @@ class _NodeDetailSheetState extends ConsumerState<_NodeDetailSheet> {
       _sending = cmd;
       _feedback = null;
     });
-    final confirmed = await ref
-        .read(safrDownlinkProvider)
-        .sendCommand(widget.node.mac, cmd, args: args);
+    final downlink = ref.read(safrDownlinkProvider);
+    // RESET goes through sendReset so the latch clears only on the root's ACK.
+    final confirmed = cmd == SafrCommand.reset
+        ? await downlink.sendReset(widget.node.mac)
+        : await downlink.sendCommand(widget.node.mac, cmd, args: args);
     if (!mounted) return;
     setState(() {
       _sending = null;

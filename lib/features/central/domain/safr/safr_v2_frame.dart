@@ -155,8 +155,7 @@ bool safrCrcOk(Uint8List bytes) {
   if (bytes.length < safrV2MinFrame) return false;
   final len = (bytes[2] << 8) | bytes[3];
   if (len != bytes.length || len > safrMaxFrame) return false;
-  final minFrame =
-      bytes[1] == safrVer3 ? safrV3MinFrame : safrV2MinFrame;
+  final minFrame = bytes[1] == safrVer3 ? safrV3MinFrame : safrV2MinFrame;
   if (len < minFrame) return false;
   final crc = (bytes[len - 2] << 8) | bytes[len - 1];
   return safrCrc16(bytes, 0, len - 2) == crc;

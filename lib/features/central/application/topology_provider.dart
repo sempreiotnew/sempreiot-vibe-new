@@ -15,6 +15,8 @@ class TopologyNode {
     required this.batteryPct,
     required this.online,
     required this.lastSeenAt,
+    required this.alarmLatched,
+    this.alarmLatchedAt,
     this.name,
   });
 
@@ -26,6 +28,10 @@ class TopologyNode {
   final int? batteryPct;
   final bool online;
   final DateTime lastSeenAt;
+
+  /// Alarm held on the panel (SAFR v3 §7.1.4) until the operator RESET.
+  final bool alarmLatched;
+  final DateTime? alarmLatchedAt;
   final String? name;
 
   /// Leaves sleep between wakes: online but silent for a while.
@@ -33,7 +39,16 @@ class TopologyNode {
       role == SafrNodeRole.leaf &&
       online &&
       DateTime.now().toUtc().difference(lastSeenAt).inSeconds > 20;
+
+  /// Unheard for a long time (beyond the offline threshold). The node stays
+  /// on the map, dimmed, until the operator clears the registry by hand.
+  bool get stale =>
+      !online &&
+      DateTime.now().toUtc().difference(lastSeenAt) > topologyStaleAfter;
 }
+
+/// Silence after which an offline device is drawn dimmed on the map.
+const topologyStaleAfter = Duration(minutes: 10);
 
 /// Graph derived from the trusted device registry + supervision status.
 /// Role falls back to a topology heuristic when the device never reported
@@ -42,38 +57,31 @@ class TopologyNode {
 /// Gated by the serial link: with the USB down NOTHING is reachable, so every
 /// device is offline — a leaf must never read as "sleeping" behind a dead
 /// cable.
-/// A device unheard for this long drops off the map (still kept in the DB;
-/// a manual clear removes it for good). Longer than the offline threshold so
-/// a unit shows offline for a while before it disappears.
-const _hideAfter = Duration(minutes: 10);
-
+///
+/// Every registered device stays on the map, however long it has been silent
+/// (it is only dimmed once `stale`); the manual "Limpar dispositivos" action
+/// is the one way a unit leaves the map.
 final topologyProvider = Provider<List<TopologyNode>>((ref) {
   final supervision = ref.watch(supervisionProvider);
-  final linkUp =
-      ref.watch(serialLinkProvider) == SerialLinkStatus.connected;
+  final linkUp = ref.watch(serialLinkProvider) == SerialLinkStatus.connected;
 
-  final now = DateTime.now().toUtc();
-  final visible = [
-    for (final s in supervision)
-      if (now.difference(s.device.lastSeenAt) < _hideAfter) s,
-  ];
-
-  final parents = visible
-      .map((s) => s.device.parentMac)
-      .whereType<String>()
-      .toSet();
+  final parents =
+      supervision.map((s) => s.device.parentMac).whereType<String>().toSet();
 
   return [
-    for (final s in visible)
+    for (final s in supervision)
       TopologyNode(
         mac: s.device.mac,
-        role: _resolveRole(s.device.role, s.device.layer, s.device.mac, parents),
+        role:
+            _resolveRole(s.device.role, s.device.layer, s.device.mac, parents),
         layer: s.device.layer,
         parentMac: s.device.parentMac,
         rssi: s.device.lastRssi,
         batteryPct: s.device.batteryPct,
         online: linkUp && s.online,
         lastSeenAt: s.device.lastSeenAt,
+        alarmLatched: s.device.alarmLatched == 1,
+        alarmLatchedAt: s.device.alarmLatchedAt,
         name: s.device.name,
       ),
   ]..sort((a, b) {

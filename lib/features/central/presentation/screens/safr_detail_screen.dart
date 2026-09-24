@@ -52,8 +52,7 @@ class _SafrDetailScreenState extends State<SafrDetailScreen> {
         title: Row(
           children: [
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: titleColor.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(6),
@@ -119,10 +118,14 @@ class _SafrDetailScreenState extends State<SafrDetailScreen> {
       buf.writeln('Event:    ${p.event.name.toUpperCase()}');
       buf.writeln('Device:   ${frame.srcMac}');
       buf.writeln('Time:     ${safrFmtTs(p.timestamp)}');
-      if (p.tempTenths != null) buf.writeln('Temp:     ${safrFmtTemp(p.tempTenths)}');
+      if (p.tempTenths != null) {
+        buf.writeln('Temp:     ${safrFmtTemp(p.tempTenths)}');
+      }
       if (p.smokeRaw != null) buf.writeln('Smoke:    ${p.smokeRaw} ADU');
       if (p.humidity != null) buf.writeln('Humidity: ${p.humidity} %');
-      if (p.faultCode != null) buf.writeln('Fault:    ${safrFaultCodeName(p.faultCode!)}');
+      if (p.faultCode != null) {
+        buf.writeln('Fault:    ${safrFaultCodeName(p.faultCode!)}');
+      }
       buf.writeln('RSSI:     ${p.rssiDbm} dBm');
     } else if (frame.decryptionAttempted && !frame.decryptionSuccess) {
       buf.writeln('Decryption failed — check PSK and USB connection');
@@ -336,15 +339,16 @@ class _FaultCard extends StatelessWidget {
       if (payload.faultTemp == true) 'Temperatura',
       if (payload.faultBatt == true) 'Bateria',
     ];
-    final label =
-        faults.isEmpty ? safrFaultCodeName(payload.faultCode!) : faults.join(', ');
+    final label = faults.isEmpty
+        ? safrFaultCodeName(payload.faultCode!)
+        : faults.join(', ');
 
     return Container(
       decoration: BoxDecoration(
         color: AppColors.error.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(10),
-        border:
-            Border.all(color: AppColors.error.withValues(alpha: 0.3), width: 0.7),
+        border: Border.all(
+            color: AppColors.error.withValues(alpha: 0.3), width: 0.7),
       ),
       padding: const EdgeInsets.all(14),
       child: Row(
@@ -407,12 +411,16 @@ class _PowerCard extends StatelessWidget {
       (
         'Boost',
         payload.pwrBoost,
-        payload.pwrBoost ? AppColors.warning : context.textSecondary.withValues(alpha: 0.3),
+        payload.pwrBoost
+            ? AppColors.warning
+            : context.textSecondary.withValues(alpha: 0.3),
       ),
       (
         'Carregando',
         payload.pwrCharging,
-        payload.pwrCharging ? AppColors.secondary : context.textSecondary.withValues(alpha: 0.3),
+        payload.pwrCharging
+            ? AppColors.secondary
+            : context.textSecondary.withValues(alpha: 0.3),
       ),
       (
         'Tamper',
@@ -432,13 +440,12 @@ class _PowerCard extends StatelessWidget {
           children: bits.map((b) {
             final (label, active, color) = b;
             return Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
                 color: color.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                    color: color.withValues(alpha: 0.3), width: 0.6),
+                border:
+                    Border.all(color: color.withValues(alpha: 0.3), width: 0.6),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -521,8 +528,8 @@ class _DecryptFailureCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.error.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(10),
-        border:
-            Border.all(color: AppColors.error.withValues(alpha: 0.3), width: 0.7),
+        border: Border.all(
+            color: AppColors.error.withValues(alpha: 0.3), width: 0.7),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -584,8 +591,8 @@ class _ErrorCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.error.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(10),
-        border:
-            Border.all(color: AppColors.error.withValues(alpha: 0.3), width: 0.7),
+        border: Border.all(
+            color: AppColors.error.withValues(alpha: 0.3), width: 0.7),
       ),
       child: Row(
         children: [
@@ -1131,8 +1138,11 @@ class _WireDetailScaffold extends ConsumerWidget {
                 'de pré-alarme e auditoria de limiares.',
           ),
         if (p.tempTenths != null)
-          ('Temperatura', '${(p.tempTenths! / 10).toStringAsFixed(1)} °C',
-              null),
+          (
+            'Temperatura',
+            '${(p.tempTenths! / 10).toStringAsFixed(1)} °C',
+            null
+          ),
         if (p.humidityPct != null) ('Umidade', '${p.humidityPct}%', null),
         (
           'Energia',
@@ -1192,8 +1202,11 @@ class _WireDetailScaffold extends ConsumerWidget {
           ),
           if (p.batteryPct != null) ('Bateria', '${p.batteryPct}%', null),
           if (p.tempTenths != null)
-            ('Temperatura', '${(p.tempTenths! / 10).toStringAsFixed(1)} °C',
-                null),
+            (
+              'Temperatura',
+              '${(p.tempTenths! / 10).toStringAsFixed(1)} °C',
+              null
+            ),
           (
             'RSSI → pai',
             p.rssiToParent == null ? '— (root)' : '${p.rssiToParent} dBm',
@@ -1205,12 +1218,19 @@ class _WireDetailScaffold extends ConsumerWidget {
         ];
       case v2p.SafrTopologyPayload p:
         return [
-          ('Papel', p.role.name, 'root = ponte serial · node = repetidor · '
-              'leaf = sensor a bateria.'),
+          (
+            'Papel',
+            p.role.name,
+            'root = ponte serial · node = repetidor · '
+                'leaf = sensor a bateria.'
+          ),
           ('Camada', '${p.layer}', null),
           ('Pai', _endpointLabel(p.parentMac), null),
-          ('RSSI → pai',
-              p.rssiToParent == null ? '—' : '${p.rssiToParent} dBm', null),
+          (
+            'RSSI → pai',
+            p.rssiToParent == null ? '—' : '${p.rssiToParent} dBm',
+            null
+          ),
           ('Filhos', '${p.children.length}', null),
           for (final c in p.children) ('  ${c.mac}', '${c.rssi} dBm', null),
         ];
@@ -1230,9 +1250,8 @@ class _WireDetailScaffold extends ConsumerWidget {
           ),
         ];
       case v2p.SafrCommandPayload p:
-        final cmd = v2p.SafrCommand.values
-            .where((c) => c.wire == p.cmdRaw)
-            .firstOrNull;
+        final cmd =
+            v2p.SafrCommand.values.where((c) => c.wire == p.cmdRaw).firstOrNull;
         return [
           (
             'Comando',
@@ -1262,8 +1281,11 @@ class _WireDetailScaffold extends ConsumerWidget {
       case v2p.SafrTimeSyncPayload p:
         return [
           ('Epoch', '${p.epoch}', 'Unix UTC — o root redistribui à mesh.'),
-          ('Fuso (¼h)', '${p.tzOffsetQuarterHours}',
-              'Apenas dica de exibição.'),
+          (
+            'Fuso (¼h)',
+            '${p.tzOffsetQuarterHours}',
+            'Apenas dica de exibição.'
+          ),
         ];
       case v2p.SafrEventLogReqPayload p:
         return [
@@ -1273,8 +1295,11 @@ class _WireDetailScaffold extends ConsumerWidget {
             'Última posição do diário que a central já possui; o root '
                 'reenvia tudo o que veio depois.',
           ),
-          ('Máx. por lote', p.maxCount == 0 ? 'padrão (32)' : '${p.maxCount}',
-              'Controle de fluxo — o reenvio nunca atropela alarmes vivos.'),
+          (
+            'Máx. por lote',
+            p.maxCount == 0 ? 'padrão (32)' : '${p.maxCount}',
+            'Controle de fluxo — o reenvio nunca atropela alarmes vivos.'
+          ),
         ];
       case v2p.SafrEventLogDataPayload p:
         return [
@@ -1293,8 +1318,13 @@ class _WireDetailScaffold extends ConsumerWidget {
             ].join(' · '),
             null,
           ),
-          if (!p.isEmpty) ('Origem', p.origSrcMac, 'Dispositivo que gerou o '
-              'evento original — o quadro em si vem do root.'),
+          if (!p.isEmpty)
+            (
+              'Origem',
+              p.origSrcMac,
+              'Dispositivo que gerou o '
+                  'evento original — o quadro em si vem do root.'
+            ),
           if (p.event != null) ..._eventFacts(p.event!),
         ];
       default:
@@ -1318,7 +1348,8 @@ class _ValidationCard extends StatelessWidget {
         ? null
         : frame.error == v2.SafrWireError.authFailed
             ? false
-            : frame.error == null || frame.error == v2.SafrWireError.payloadParseError
+            : frame.error == null ||
+                    frame.error == v2.SafrWireError.payloadParseError
                 ? true
                 : null;
     final bool? siteOk = frame.systemId == null
@@ -1542,8 +1573,8 @@ class _WireErrorCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.error.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(12),
-        border:
-            Border.all(color: AppColors.error.withValues(alpha: 0.4), width: 0.7),
+        border: Border.all(
+            color: AppColors.error.withValues(alpha: 0.4), width: 0.7),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

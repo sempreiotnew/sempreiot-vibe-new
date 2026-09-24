@@ -84,7 +84,9 @@ class _PinManagementBody extends ConsumerWidget {
         Row(
           children: [
             Icon(
-              isMaster ? Icons.shield_rounded : Icons.admin_panel_settings_outlined,
+              isMaster
+                  ? Icons.shield_rounded
+                  : Icons.admin_panel_settings_outlined,
               size: 15,
               color: isMaster ? AppColors.error : AccessLevel.level4.color,
             ),
@@ -100,7 +102,6 @@ class _PinManagementBody extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: 20),
-
         const InfoSectionHeader('DESBLOQUEIO'),
         const SizedBox(height: 4),
         Padding(
@@ -116,7 +117,6 @@ class _PinManagementBody extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: 24),
-
         const InfoSectionHeader('PINS DE NÍVEL'),
         const SizedBox(height: 10),
         InfoCard(
@@ -132,7 +132,6 @@ class _PinManagementBody extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: 24),
-
         if (isMaster) ...[
           const InfoSectionHeader('MASTER'),
           const SizedBox(height: 10),
@@ -149,7 +148,6 @@ class _PinManagementBody extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 24),
-
           const InfoSectionHeader('CREDENCIAIS ROOT'),
           const SizedBox(height: 4),
           Padding(
@@ -179,7 +177,6 @@ class _PinManagementBody extends ConsumerWidget {
           ),
           const SizedBox(height: 24),
         ],
-
         const InfoSectionHeader('AUDITORIA'),
         const SizedBox(height: 10),
         InfoCard(
@@ -242,7 +239,8 @@ class _UnlockPinRow extends ConsumerWidget {
           ? () => _open(context, ref, reset: !configured)
           : () => ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Apenas o Master pode definir um PIN não configurado.'),
+                  content: Text(
+                      'Apenas o Master pode definir um PIN não configurado.'),
                   behavior: SnackBarBehavior.floating,
                 ),
               ),
@@ -347,7 +345,8 @@ class _LevelPinRow extends ConsumerWidget {
           ? () => _open(context, ref, reset: !configured)
           : () => ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Apenas o Master pode definir um PIN não configurado.'),
+                  content: Text(
+                      'Apenas o Master pode definir um PIN não configurado.'),
                   behavior: SnackBarBehavior.floating,
                 ),
               ),
@@ -393,7 +392,8 @@ class _LevelPinRow extends ConsumerWidget {
             if (configured && isMaster)
               IconButton(
                 icon: Icon(Icons.restart_alt_rounded,
-                    size: 18, color: context.textSecondary.withValues(alpha: 0.6)),
+                    size: 18,
+                    color: context.textSecondary.withValues(alpha: 0.6)),
                 tooltip: 'Redefinir sem PIN atual',
                 visualDensity: VisualDensity.compact,
                 onPressed: () => _confirmReset(context, ref),
@@ -427,7 +427,8 @@ class _LevelPinRow extends ConsumerWidget {
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Redefinir', style: TextStyle(color: AppColors.error)),
+            child: const Text('Redefinir',
+                style: TextStyle(color: AppColors.error)),
           ),
         ],
       ),

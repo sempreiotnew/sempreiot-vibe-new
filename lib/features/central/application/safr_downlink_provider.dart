@@ -149,6 +149,7 @@ class SafrDownlink {
 
   /// Operator alarm reset (spec §7.1.4 — UL 864/NFPA 72). Clears the central
   /// latch ONLY after the root ACKs; returns false (latch kept) otherwise.
+  /// [dstMac] = one device, or [safrBroadcastMac] for a system-wide reset.
   Future<bool> sendReset(String dstMac) async {
     final ok = await sendCommand(dstMac, SafrCommand.reset);
     if (ok) {
@@ -172,8 +173,7 @@ class SafrDownlink {
       await _insertSyntheticEvent(
         severity: 1,
         kind: 'link_check_failed',
-        description:
-            'Enlace de descida sem confirmação (LINK_CHECK) — §9.3',
+        description: 'Enlace de descida sem confirmação (LINK_CHECK) — §9.3',
       );
     } else if (ok && _linkCheckFailing) {
       _linkCheckFailing = false;

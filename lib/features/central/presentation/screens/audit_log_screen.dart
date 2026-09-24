@@ -191,7 +191,8 @@ class _AuditRow extends StatelessWidget {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     _Tag(text: actor, color: _actorColor(event.actor, context)),
-                    if (level != null) _Tag(text: level.shortLabel, color: level.color),
+                    if (level != null)
+                      _Tag(text: level.shortLabel, color: level.color),
                     if (levelWire == 'MASTER_PIN')
                       const _Tag(text: 'PIN MASTER', color: AppColors.error),
                     if (gate != null && event.action == 'gate_locked')

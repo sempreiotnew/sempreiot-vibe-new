@@ -40,8 +40,7 @@ final class VerifyLocked extends VerifyOutcome {
   const VerifyLocked(this.remaining);
   final Duration remaining;
 
-  String get message =>
-      'Muitas tentativas. Aguarde ${remaining.inSeconds}s.';
+  String get message => 'Muitas tentativas. Aguarde ${remaining.inSeconds}s.';
 }
 
 /// Central point for every credential stored on this central: master PIN,
@@ -75,7 +74,8 @@ class CredentialsAdminService {
   /// Units provisioned before the unlock PIN existed used the master PIN to
   /// unlock the central — carry that behavior over by copying its hash, so
   /// nobody gets locked out of a deployed device after the update.
-  Future<Map<String, dynamic>> _ensureUnlockPin(Map<String, dynamic> map) async {
+  Future<Map<String, dynamic>> _ensureUnlockPin(
+      Map<String, dynamic> map) async {
     if ((map['unlock_pin'] as String? ?? '').isNotEmpty) return map;
     final masterHash = map['pin'] as String? ?? '';
     if (masterHash.isEmpty) return map;
@@ -118,7 +118,8 @@ class CredentialsAdminService {
 
   static String _newSalt() {
     final rnd = Random.secure();
-    return List.generate(16, (_) => rnd.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+    return List.generate(
+        16, (_) => rnd.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
   }
 
   static String _hash(String salt, String value) =>
@@ -153,18 +154,22 @@ class CredentialsAdminService {
       final lockouts = (g['lockouts'] as int? ?? 0);
       var lock = _baseLock * pow(2, min(lockouts, 7)).toInt();
       if (lock > _maxLock) lock = _maxLock;
-      await _db.setMeta(_guardKey, jsonEncode({
-        'failures': 0,
-        'lockouts': lockouts + 1,
-        'lockedUntil': DateTime.now().add(lock).toIso8601String(),
-      }));
+      await _db.setMeta(
+          _guardKey,
+          jsonEncode({
+            'failures': 0,
+            'lockouts': lockouts + 1,
+            'lockedUntil': DateTime.now().add(lock).toIso8601String(),
+          }));
       await _db.addAudit('system', 'gate_locked',
           {'gate': gate, 'lockSeconds': lock.inSeconds});
     } else {
-      await _db.setMeta(_guardKey, jsonEncode({
-        'failures': failures,
-        'lockouts': g['lockouts'] ?? 0,
-      }));
+      await _db.setMeta(
+          _guardKey,
+          jsonEncode({
+            'failures': failures,
+            'lockouts': g['lockouts'] ?? 0,
+          }));
     }
   }
 
@@ -320,13 +325,16 @@ class CredentialsAdminService {
 
   /// Every tier must have a distinct PIN: gates identify the role by which
   /// PIN matched, so a collision would make the roles ambiguous.
-  String? _checkUnique(Map<String, dynamic> map, String newHash, String selfKey) {
+  String? _checkUnique(
+      Map<String, dynamic> map, String newHash, String selfKey) {
     if ((map['pin'] as String? ?? '') == newHash && selfKey != 'pin') {
       return 'PIN já utilizado (Master).';
     }
     final levels = (map['level_pins'] as Map<String, dynamic>?) ?? {};
     for (final e in levels.entries) {
-      if (e.key != selfKey && e.value == newHash && (e.value as String).isNotEmpty) {
+      if (e.key != selfKey &&
+          e.value == newHash &&
+          (e.value as String).isNotEmpty) {
         return 'PIN já utilizado em outro nível.';
       }
     }
@@ -369,7 +377,8 @@ class CredentialsAdminService {
     map['level_pins'] = levels;
     await _save(map);
 
-    await _db.addAudit(by.auditName,
+    await _db.addAudit(
+        by.auditName,
         currentPin == null ? 'pin_reset' : 'pin_changed',
         {'level': level.wireValue});
     return null;
@@ -474,7 +483,8 @@ class CredentialsAdminService {
 
   /// For features outside this service (grant flow, block/unblock) to leave
   /// their trace in the same trail.
-  Future<void> audit(String actor, String action, Map<String, Object?> detail) =>
+  Future<void> audit(
+          String actor, String action, Map<String, Object?> detail) =>
       _db.addAudit(actor, action, detail);
 }
 

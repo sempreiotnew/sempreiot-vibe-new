@@ -42,7 +42,8 @@ class _CentralPinScreenState extends ConsumerState<CentralPinScreen> {
   Widget build(BuildContext context) {
     final authState = ref.watch(centralAuthProvider);
     final hasError = authState is CentralPinError;
-    final errorMessage = authState is CentralPinError ? authState.message : null;
+    final errorMessage =
+        authState is CentralPinError ? authState.message : null;
     final networkStatus = ref.watch(networkStatusProvider);
 
     ref.listen(centralAuthProvider, (_, next) {
@@ -73,7 +74,9 @@ class _CentralPinScreenState extends ConsumerState<CentralPinScreen> {
                           children: [
                             _Header(),
                             const SizedBox(height: 48),
-                            _PinDots(filledCount: _digits.length, hasError: hasError),
+                            _PinDots(
+                                filledCount: _digits.length,
+                                hasError: hasError),
                             const SizedBox(height: 12),
                             _ErrorLabel(message: errorMessage),
                             const SizedBox(height: 40),

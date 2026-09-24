@@ -259,6 +259,28 @@ Rules:
 - Never design screens assuming a single screen size
 - Use adaptive spacing for web vs mobile
 
+### 🔄 Both orientations, ALWAYS (non-negotiable)
+
+The central tablet lives in **landscape** most of the time; phones are mostly portrait. Every screen,
+sheet, dialog and custom-painted canvas must work in **both** orientations, and "work" means laid out
+for that orientation — not merely "does not crash".
+
+- Never assume `height > width`. Read the shape from `LayoutBuilder` / `MediaQuery.orientationOf`
+  and adapt — but **keep the same picture in both orientations**: scale, fit, scroll or re-space it;
+  do not invent a different layout for landscape (the Rede tree stays vertical in landscape and
+  opens zoomed out to fit — it is NOT turned sideways). Re-flowing a screen into a different shape
+  is a product decision: ask first.
+- Floating controls over a canvas (zoom, clear, FABs) must be placed so they can never overlap each
+  other on the shortest landscape viewport; prefer putting secondary actions in a toolbar/strip.
+- A bottom sheet in landscape has little height: make it `isScrollControlled`, cap it with
+  `MediaQuery.sizeOf(context).height`, and let its content scroll. Never a fixed-height sheet.
+- Scrollable everything that can be taller than the shortest supported viewport (~600 px landscape
+  tablet, ~360 px landscape phone). Yellow/black overflow stripes in either orientation = bug.
+- On rotation, re-check any state tied to geometry (pan/zoom transforms, cached sizes, scroll
+  offsets) and reset or re-map it — never leave content off-screen.
+- Before handing back UI work, state that you checked both orientations (portrait and landscape,
+  phone and tablet widths) — if you could not run it, say so explicitly.
+
 ---
 
 ## 🖥️ Web-Specific Rules

@@ -88,9 +88,10 @@ class CentralCredentialsService extends IotCredentialsService {
     );
 
     if (res.statusCode != 200) {
-      throw Exception('[Central] Cognito auth failed (${res.statusCode}): ${res.body}');
+      throw Exception(
+          '[Central] Cognito auth failed (${res.statusCode}): ${res.body}');
     }
-    
+
     final parsed = jsonDecode(res.body) as Map<String, dynamic>;
     if (parsed.containsKey('ChallengeName')) {
       throw Exception(
@@ -123,15 +124,17 @@ class CentralCredentialsService extends IotCredentialsService {
         'Content-Type': 'application/x-amz-json-1.1',
         'X-Amz-Target': 'AWSCognitoIdentityService.GetId',
       },
-      body: utf8.encode(jsonEncode({'IdentityPoolId': identityPoolId, 'Logins': logins})),
+      body: utf8.encode(
+          jsonEncode({'IdentityPoolId': identityPoolId, 'Logins': logins})),
     );
 
     if (getIdRes.statusCode != 200) {
-      throw Exception('[Central] GetId failed (${getIdRes.statusCode}): ${getIdRes.body}');
+      throw Exception(
+          '[Central] GetId failed (${getIdRes.statusCode}): ${getIdRes.body}');
     }
 
-    final identityId =
-        (jsonDecode(getIdRes.body) as Map<String, dynamic>)['IdentityId'] as String;
+    final identityId = (jsonDecode(getIdRes.body)
+        as Map<String, dynamic>)['IdentityId'] as String;
 
     // GetCredentialsForIdentity — temporary AWS credentials.
     final getCredsRes = await http.post(
@@ -140,11 +143,13 @@ class CentralCredentialsService extends IotCredentialsService {
         'Content-Type': 'application/x-amz-json-1.1',
         'X-Amz-Target': 'AWSCognitoIdentityService.GetCredentialsForIdentity',
       },
-      body: utf8.encode(jsonEncode({'IdentityId': identityId, 'Logins': logins})),
+      body:
+          utf8.encode(jsonEncode({'IdentityId': identityId, 'Logins': logins})),
     );
 
     if (getCredsRes.statusCode != 200) {
-      throw Exception('[Central] GetCredentials failed (${getCredsRes.statusCode}): ${getCredsRes.body}');
+      throw Exception(
+          '[Central] GetCredentials failed (${getCredsRes.statusCode}): ${getCredsRes.body}');
     }
 
     final body = jsonDecode(getCredsRes.body) as Map<String, dynamic>;
@@ -166,7 +171,8 @@ class CentralCredentialsService extends IotCredentialsService {
       userId: _cognitoSub ?? 'central-123456789',
     );
 
-    debugPrint('[Central] AWS credentials OK — identityId: $identityId, expires: $_credsExpiry');
+    debugPrint(
+        '[Central] AWS credentials OK — identityId: $identityId, expires: $_credsExpiry');
     return _cachedCreds!;
   }
 
@@ -181,7 +187,8 @@ class CentralCredentialsService extends IotCredentialsService {
       case 3:
         payload += '=';
     }
-    final map = jsonDecode(utf8.decode(base64Url.decode(payload))) as Map<String, dynamic>;
+    final map = jsonDecode(utf8.decode(base64Url.decode(payload)))
+        as Map<String, dynamic>;
     return map['sub'] as String;
   }
 }

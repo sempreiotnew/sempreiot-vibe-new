@@ -7,7 +7,7 @@ import 'serial_provider.dart';
 /// Protocol-aware USB link status:
 /// - the port is open and the FIRST structurally valid SAFR frame arrives
 ///   ⇒ `connected`, and it STAYS connected while the cable is in — data
-///   quality from then on is judged by the Eventos/Logs screens, not here;
+///   quality from then on is judged by the Logs seriais screen, not here;
 /// - port open, bytes flowing, but nothing ever validates ⇒ `error`
 ///   (wrong firmware/baud/corruption — never silently "Conectando");
 /// - port open and silent ⇒ `connecting`;
@@ -47,7 +47,7 @@ class SerialLinkNotifier extends StateNotifier<SerialLinkStatus> {
 
   /// Kept for the ingest pipeline: an auth failure is still a structurally
   /// valid frame — the link works, the key doesn't. It latches too; the
-  /// failure itself is surfaced as a diagnostic event in Eventos.
+  /// failure itself is recorded as a diagnostic event (Logs seriais).
   void reportInvalidFrame() {
     _latched = true;
     _recompute();

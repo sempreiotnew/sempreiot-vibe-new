@@ -40,7 +40,8 @@ class CentralAuthNotifier extends Notifier<CentralAuthState> {
       VerifyUnset() => const CentralPinError('PIN não configurado.'),
       VerifyLocked(:final remaining) =>
         CentralPinError('Muitas tentativas. Aguarde ${remaining.inSeconds}s.'),
-      VerifyWrong() => const CentralPinError('Código incorreto. Tente novamente.'),
+      VerifyWrong() =>
+        const CentralPinError('Código incorreto. Tente novamente.'),
     };
   }
 

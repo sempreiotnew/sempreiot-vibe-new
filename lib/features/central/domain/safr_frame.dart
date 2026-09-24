@@ -33,8 +33,22 @@ const _fltBatt = 0x04;
 
 // Pre-shared key (AES-128) — must match firmware PSK[]
 final _psk = Uint8List.fromList(const [
-  0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6,
-  0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C,
+  0x2B,
+  0x7E,
+  0x15,
+  0x16,
+  0x28,
+  0xAE,
+  0xD2,
+  0xA6,
+  0xAB,
+  0xF7,
+  0x15,
+  0x88,
+  0x09,
+  0xCF,
+  0x4F,
+  0x3C,
 ]);
 
 // ── Domain types ─────────────────────────────────────────────────
@@ -288,8 +302,7 @@ SafrPayload? _parsePayload(Uint8List p, bool hasSensors, bool hasFault) {
 
   int o = 0;
   final evtRaw = p[o++];
-  final tsRaw =
-      (p[o] << 24) | (p[o + 1] << 16) | (p[o + 2] << 8) | p[o + 3];
+  final tsRaw = (p[o] << 24) | (p[o + 1] << 16) | (p[o + 2] << 8) | p[o + 3];
   o += 4;
   final pwr = p[o++];
   final battRaw = p[o++];

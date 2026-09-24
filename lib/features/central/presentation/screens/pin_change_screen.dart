@@ -13,7 +13,7 @@ enum _PinStep { current, newPin, confirm }
 extension on _PinStep {
   String get title => switch (this) {
         _PinStep.current => 'Digite o PIN atual',
-        _PinStep.newPin  => 'Digite o novo PIN',
+        _PinStep.newPin => 'Digite o novo PIN',
         _PinStep.confirm => 'Confirme o novo PIN',
       };
 }
@@ -43,8 +43,7 @@ class PinChangeScreen extends ConsumerStatefulWidget {
 }
 
 class _PinChangeScreenState extends ConsumerState<PinChangeScreen> {
-  late _PinStep _step =
-      widget.skipCurrent ? _PinStep.newPin : _PinStep.current;
+  late _PinStep _step = widget.skipCurrent ? _PinStep.newPin : _PinStep.current;
   final List<String> _digits = [];
   String? _currentPinValue;
   String _newPinValue = '';
@@ -313,7 +312,8 @@ class _StepIndicator extends StatelessWidget {
       children: steps.map((step) {
         final done = step.index < current.index;
         final active = step == current;
-        final color = (done || active) ? AppColors.secondary : context.borderColor;
+        final color =
+            (done || active) ? AppColors.secondary : context.borderColor;
 
         return Row(
           children: [

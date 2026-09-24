@@ -78,7 +78,9 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
 
     await _inputSub?.cancel();
     _inputSub = null;
-    try { await _port?.close(); } catch (_) {}
+    try {
+      await _port?.close();
+    } catch (_) {}
     _port = null;
 
     try {
@@ -194,7 +196,8 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
       final frameLen = (_byteBuffer[2] << 8) | _byteBuffer[3];
       if (frameLen < _safrMinFrame || frameLen > _safrMaxFrame) {
         // Invalid length — this SOF byte was garbage; skip and retry.
-        debugPrint('[Serial] Invalid SAFR frame length $frameLen, skipping SOF');
+        debugPrint(
+            '[Serial] Invalid SAFR frame length $frameLen, skipping SOF');
         _droppedByteCount++;
         _byteBuffer.removeAt(0);
         continue;
@@ -241,7 +244,9 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
   void _onDisconnected() {
     _inputSub?.cancel();
     _inputSub = null;
-    try { _port?.close(); } catch (_) {}
+    try {
+      _port?.close();
+    } catch (_) {}
     _port = null;
     _connectedDeviceId = null;
     _byteBuffer.clear();
@@ -252,7 +257,9 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
   void dispose() {
     _usbEventSub?.cancel();
     _inputSub?.cancel();
-    try { _port?.close(); } catch (_) {}
+    try {
+      _port?.close();
+    } catch (_) {}
     _dataController.close();
     super.dispose();
   }

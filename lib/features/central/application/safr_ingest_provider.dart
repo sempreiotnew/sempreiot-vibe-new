@@ -73,8 +73,7 @@ class SafrIngestService {
         );
 
     final id = identity?.call() ?? SafrIdentity.dev;
-    final result =
-        parseSafr(bytes, key: id.key, expectedSystemId: id.systemId);
+    final result = parseSafr(bytes, key: id.key, expectedSystemId: id.systemId);
     if (result is! SafrWireResult) return; // v1/invalid: raw log only
     final frame = result.frame;
     final now = DateTime.now().toUtc();
@@ -124,8 +123,7 @@ class SafrIngestService {
     if (frame.ackRequired) {
       await onAckRequired?.call(frame);
       if (accepted != null) {
-        await (db.update(db.deviceEvents)
-              ..where((t) => t.id.equals(accepted)))
+        await (db.update(db.deviceEvents)..where((t) => t.id.equals(accepted)))
             .write(DeviceEventsCompanion(ackedAt: Value(now)));
       }
     }
@@ -501,8 +499,7 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
   );
 
   final sub = serial.dataStream.listen((bytes) {
-    service.handleFrame(bytes,
-        deviceId: serial.connectedDeviceId ?? 'unknown');
+    service.handleFrame(bytes, deviceId: serial.connectedDeviceId ?? 'unknown');
   });
   ref.onDispose(sub.cancel);
   return service;

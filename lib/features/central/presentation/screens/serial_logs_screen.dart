@@ -135,8 +135,7 @@ class _SerialLogsScreenState extends ConsumerState<SerialLogsScreen> {
             tooltip: 'Limpar',
             icon: Icon(Icons.delete_sweep_rounded,
                 size: 19, color: AppColors.error.withValues(alpha: 0.8)),
-            onPressed: () =>
-                ref.read(appDatabaseProvider).deleteAllPackets(),
+            onPressed: () => ref.read(appDatabaseProvider).deleteAllPackets(),
           ),
           const SizedBox(width: 4),
         ],
@@ -161,8 +160,7 @@ class _SerialLogsScreenState extends ConsumerState<SerialLogsScreen> {
                           ),
                       ],
                     ),
-              loading: () =>
-                  const Center(child: CircularProgressIndicator()),
+              loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => Center(child: Text('Erro: $e')),
             ),
           ),
@@ -202,8 +200,7 @@ class _ValidationHeader extends ConsumerWidget {
       decoration: BoxDecoration(
         color: context.surfaceColor,
         borderRadius: BorderRadius.circular(12),
-        border:
-            Border.all(color: context.borderColor.withValues(alpha: 0.6)),
+        border: Border.all(color: context.borderColor.withValues(alpha: 0.6)),
       ),
       child: Column(
         children: [
@@ -251,8 +248,7 @@ class _ValidationHeader extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 8),
-          Divider(
-              height: 1, color: context.borderColor.withValues(alpha: 0.5)),
+          Divider(height: 1, color: context.borderColor.withValues(alpha: 0.5)),
           const SizedBox(height: 8),
           // Row 2: protocol validation counters.
           Row(
@@ -272,16 +268,14 @@ class _ValidationHeader extends ConsumerWidget {
               _Counter(
                 label: 'FALHA AUTH',
                 value: '${stats.authErr}',
-                color: stats.authErr > 0
-                    ? AppColors.error
-                    : context.textSecondary,
+                color:
+                    stats.authErr > 0 ? AppColors.error : context.textSecondary,
               ),
               _Counter(
                 label: 'FALHA CRC',
                 value: '${stats.crcErr}',
-                color: stats.crcErr > 0
-                    ? AppColors.error
-                    : context.textSecondary,
+                color:
+                    stats.crcErr > 0 ? AppColors.error : context.textSecondary,
               ),
               _Counter(
                 label: 'DESCARTADOS',
@@ -319,39 +313,37 @@ class _Counter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (icon != null) ...[
-                Icon(icon, size: 11, color: color),
-                const SizedBox(width: 3),
-              ],
-              Text(
-                value,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 14,
-                  height: 1.0,
-                  fontWeight: FontWeight.w800,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 1),
+          if (icon != null) ...[
+            Icon(icon, size: 11, color: color),
+            const SizedBox(width: 3),
+          ],
           Text(
-            label,
+            value,
             style: TextStyle(
-              color: context.textSecondary,
-              fontSize: 7.5,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.8,
+              color: color,
+              fontSize: 14,
+              height: 1.0,
+              fontWeight: FontWeight.w800,
+              fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
-        ]);
+        ],
+      ),
+      const SizedBox(height: 1),
+      Text(
+        label,
+        style: TextStyle(
+          color: context.textSecondary,
+          fontSize: 7.5,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.8,
+        ),
+      ),
+    ]);
   }
 }
 
@@ -742,61 +734,86 @@ class _LegendSheet extends StatelessWidget {
           ),
           section('CONTADORES DO CABEÇALHO'),
           item('QUADROS', 'Total de quadros recebidos e armazenados.'),
-          item('VERIFICADOS',
+          item(
+              'VERIFICADOS',
               'Quadros que passaram nas DUAS verificações: integridade '
-              '(CRC) e autenticidade criptográfica (AES-CCM). Só quadros '
-              'verificados atualizam o estado dos dispositivos.'),
-          item('FALHA AUTH',
+                  '(CRC) e autenticidade criptográfica (AES-CCM). Só quadros '
+                  'verificados atualizam o estado dos dispositivos.'),
+          item(
+              'FALHA AUTH',
               'Bytes chegaram íntegros, mas a chave (PSK) não confere — '
-              'chave errada ou sistema vizinho. O quadro é registrado e '
-              'ignorado.',
+                  'chave errada ou sistema vizinho. O quadro é registrado e '
+                  'ignorado.',
               color: AppColors.error),
-          item('FALHA CRC',
+          item(
+              'FALHA CRC',
               'Bytes corrompidos na transmissão (cabo, ruído, baud rate). '
-              'O receptor descarta 1 byte e ressincroniza.',
+                  'O receptor descarta 1 byte e ressincroniza.',
               color: AppColors.error),
-          item('DESCARTADOS',
+          item(
+              'DESCARTADOS',
               'Bytes que não formaram quadro válido (ex.: texto de boot do '
-              'ESP32). Alguns são normais ao conectar.'),
+                  'ESP32). Alguns são normais ao conectar.'),
           section('TIPOS DE MENSAGEM'),
-          item('ALARM', 'Alarme de incêndio. Prioridade máxima; fica '
-              'RETIDO na central até rearme manual do operador '
-              '(UL 864 / NFPA 72).', color: AppColors.error),
+          item(
+              'ALARM',
+              'Alarme de incêndio. Prioridade máxima; fica '
+                  'RETIDO na central até rearme manual do operador '
+                  '(UL 864 / NFPA 72).',
+              color: AppColors.error),
           item('ALERT', 'Supervisão / pré-alarme (ex.: fumaça subindo).',
               color: AppColors.warning),
           item('TROUBLE', 'Falha de equipamento ou comunicação.',
               color: AppColors.trouble),
           item('OK', 'Normalização (RESTORE) ou status periódico.',
               color: AppColors.success),
-          item('HB', 'Heartbeat — prova de vida a cada 15 s (60 s em '
-              'sensores a bateria). Silêncio por 3 intervalos ⇒ TROUBLE '
-              '"dispositivo ausente" (NFPA 72: ≤200 s).'),
+          item(
+              'HB',
+              'Heartbeat — prova de vida a cada 15 s (60 s em '
+                  'sensores a bateria). Silêncio por 3 intervalos ⇒ TROUBLE '
+                  '"dispositivo ausente" (NFPA 72: ≤200 s).'),
           item('TOPO', 'Topologia — quem é filho de quem na rede mesh.'),
           item('ACK', 'Confirmação de recebimento de um quadro crítico.'),
-          item('CMD', 'Comando da central: silenciar, teste, rearme (RESET), '
-              'verificação de enlace (LINK_CHECK a cada 30 s).'),
+          item(
+              'CMD',
+              'Comando da central: silenciar, teste, rearme (RESET), '
+                  'verificação de enlace (LINK_CHECK a cada 30 s).'),
           item('TIME', 'Sincronização de relógio para os dispositivos.'),
-          item('LOG? / LOG', 'Diário de eventos: a central pede (LOG?) e o '
-              'root reenvia (LOG) eventos ocorridos enquanto o cabo estava '
-              'desconectado — nenhum alarme se perde (EN 54-25).'),
+          item(
+              'LOG? / LOG',
+              'Diário de eventos: a central pede (LOG?) e o '
+                  'root reenvia (LOG) eventos ocorridos enquanto o cabo estava '
+                  'desconectado — nenhum alarme se perde (EN 54-25).'),
           section('SÍMBOLOS DA LINHA'),
-          item('↑ / ↓', '↑ subida (dispositivo → central) · '
-              '↓ descida (central → rede).'),
+          item(
+              '↑ / ↓',
+              '↑ subida (dispositivo → central) · '
+                  '↓ descida (central → rede).'),
           item('#n', 'MSG_ID — número de sequência usado pelo ACK.'),
-          item('⚑', 'Quadro pede confirmação (F_ACK_REQ). Obrigatório em '
-              'ALARM e TROUBLE.'),
-          item('↻', 'Reanúncio: o mesmo alarme é repetido a cada ≤60 s até '
-              'normalizar ou ser rearmado (NFPA 72). Não duplica o evento.'),
-          item('ev:n', 'DEV_SEQ — identidade do evento. Reanúncios e '
-              'reenvios do diário têm o mesmo ev:n e são deduplicados.'),
+          item(
+              '⚑',
+              'Quadro pede confirmação (F_ACK_REQ). Obrigatório em '
+                  'ALARM e TROUBLE.'),
+          item(
+              '↻',
+              'Reanúncio: o mesmo alarme é repetido a cada ≤60 s até '
+                  'normalizar ou ser rearmado (NFPA 72). Não duplica o evento.'),
+          item(
+              'ev:n',
+              'DEV_SEQ — identidade do evento. Reanúncios e '
+                  'reenvios do diário têm o mesmo ev:n e são deduplicados.'),
           item('✓', 'CRC OK — o quadro chegou íntegro.',
               color: AppColors.success),
-          item('🔒', 'Cadeado fechado: autenticidade verificada (AES-CCM). '
-              'Aberto: falha de autenticação.',
+          item(
+              '🔒',
+              'Cadeado fechado: autenticidade verificada (AES-CCM). '
+                  'Aberto: falha de autenticação.',
               color: AppColors.success),
           item('v2', 'Quadro do protocolo anterior (somente leitura).'),
-          item('ALHEIO', 'SYSTEM_ID de outra instalação — ignorado por '
-              'projeto (EN 54-25: sistemas vizinhos não interoperam).',
+          item(
+              'ALHEIO',
+              'SYSTEM_ID de outra instalação — ignorado por '
+                  'projeto (EN 54-25: sistemas vizinhos não interoperam).',
               color: AppColors.error),
         ],
       ),

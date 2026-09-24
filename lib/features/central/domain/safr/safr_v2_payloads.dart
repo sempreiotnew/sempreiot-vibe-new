@@ -305,7 +305,8 @@ class SafrAckPayload extends SafrV2Payload {
     );
   }
 
-  static Uint8List build({required int ackedMsgId, SafrAckStatus status = SafrAckStatus.ok}) {
+  static Uint8List build(
+      {required int ackedMsgId, SafrAckStatus status = SafrAckStatus.ok}) {
     return Uint8List.fromList([
       (ackedMsgId >> 8) & 0xFF,
       ackedMsgId & 0xFF,
@@ -328,13 +329,15 @@ class SafrCommandPayload extends SafrV2Payload {
     return SafrCommandPayload(cmdRaw: p[0], args: p.sublist(2, 2 + argLen));
   }
 
-  static Uint8List build({required SafrCommand cmd, List<int> args = const []}) {
+  static Uint8List build(
+      {required SafrCommand cmd, List<int> args = const []}) {
     return Uint8List.fromList([cmd.wire, args.length, ...args]);
   }
 }
 
 class SafrTimeSyncPayload extends SafrV2Payload {
-  const SafrTimeSyncPayload({required this.epoch, required this.tzOffsetQuarterHours});
+  const SafrTimeSyncPayload(
+      {required this.epoch, required this.tzOffsetQuarterHours});
 
   static const wireLength = 5;
 
@@ -349,7 +352,8 @@ class SafrTimeSyncPayload extends SafrV2Payload {
     );
   }
 
-  static Uint8List build({required DateTime utcNow, Duration tzOffset = Duration.zero}) {
+  static Uint8List build(
+      {required DateTime utcNow, Duration tzOffset = Duration.zero}) {
     final epoch = utcNow.millisecondsSinceEpoch ~/ 1000;
     final qh = tzOffset.inMinutes ~/ 15;
     return Uint8List.fromList([
@@ -427,8 +431,7 @@ class SafrEventLogDataPayload extends SafrV2Payload {
     if (p.length < wireLength) return null;
     final logFlags = p[4];
     final empty = (logFlags & safrLogFlagEmpty) != 0;
-    final event =
-        empty ? null : SafrEventPayload.parse(p.sublist(11, 11 + 17));
+    final event = empty ? null : SafrEventPayload.parse(p.sublist(11, 11 + 17));
     if (!empty && event == null) return null;
     return SafrEventLogDataPayload(
       jrnSeq: (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3],

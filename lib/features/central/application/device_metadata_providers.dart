@@ -15,4 +15,3 @@ final deviceCredentialsProvider =
     return {};
   }
 });
-

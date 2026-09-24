@@ -95,164 +95,165 @@ class _DeviceAccessScreenState extends ConsumerState<DeviceAccessScreen> {
         ),
       ),
       body: RefreshIndicator(
-              onRefresh: () => ref.read(centralAccessRelationsProvider.notifier).refresh(),
-              child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
-              children: [
-                // ── SOLICITAÇÕES PENDENTES ────────────────────────────────
-                if (pending.isNotEmpty) ...[
-                  _PendingSectionHeader(count: pending.length),
-                  const SizedBox(height: 8),
-                  ...pending.map(
-                    (rel) => Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: _PendingRequestCard(
-                        relation: rel,
-                        centralId: centralId,
-                        actor: role.auditName,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                ],
-
-                // ── CREDENCIAIS ───────────────────────────────────────────
-                const InfoSectionHeader('CREDENCIAIS'),
-                const SizedBox(height: 4),
-                Padding(
+        onRefresh: () =>
+            ref.read(centralAccessRelationsProvider.notifier).refresh(),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
+          children: [
+            // ── SOLICITAÇÕES PENDENTES ────────────────────────────────
+            if (pending.isNotEmpty) ...[
+              _PendingSectionHeader(count: pending.length),
+              const SizedBox(height: 8),
+              ...pending.map(
+                (rel) => Padding(
                   padding: const EdgeInsets.only(bottom: 10),
-                  child: Text(
-                    'PINs de nível, root e senha são gerenciados em PINs de '
-                    'Acesso (restrito a Master e Administrador).',
-                    style: TextStyle(
-                      color: context.textSecondary,
-                      fontSize: 12,
-                    ),
+                  child: _PendingRequestCard(
+                    relation: rel,
+                    centralId: centralId,
+                    actor: role.auditName,
                   ),
                 ),
-                InfoCard(
-                  children: [
-                    InkWell(
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => AccessPinsScreen(initialRole: role),
-                        ),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 36,
-                              height: 36,
-                              decoration: BoxDecoration(
-                                color: AppColors.secondary.withValues(alpha: 0.08),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: const Icon(
-                                Icons.admin_panel_settings_rounded,
-                                size: 18,
-                                color: AppColors.secondary,
-                              ),
-                            ),
-                            const SizedBox(width: 14),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'PINs de Acesso',
-                                    style: TextStyle(
-                                      color: context.textSecondary,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    'Níveis, root, senha e auditoria',
-                                    style: TextStyle(
-                                      color: context.textPrimary,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Icon(
-                              Icons.chevron_right_rounded,
-                              size: 18,
-                              color: AppColors.secondary.withValues(alpha: 0.7),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
+              ),
+              const SizedBox(height: 20),
+            ],
+
+            // ── CREDENCIAIS ───────────────────────────────────────────
+            const InfoSectionHeader('CREDENCIAIS'),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                'PINs de nível, root e senha são gerenciados em PINs de '
+                'Acesso (restrito a Master e Administrador).',
+                style: TextStyle(
+                  color: context.textSecondary,
+                  fontSize: 12,
                 ),
-                const SizedBox(height: 24),
-
-                // ── ACESSO CONCEDIDO ─────────────────────────────────────
-                const InfoSectionHeader('ACESSO CONCEDIDO'),
-                const SizedBox(height: 10),
-                if (granted.isEmpty && syncing)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 20),
-                    child: Center(
-                      child: SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: AppColors.secondary,
-                        ),
-                      ),
-                    ),
-                  )
-                else if (granted.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Text(
-                      'Nenhum usuário com acesso concedido.',
-                      style: TextStyle(
-                        color: context.textSecondary.withValues(alpha: 0.6),
-                        fontSize: 12,
-                      ),
-                    ),
-                  )
-                else
-                  ...granted.map(
-                    (rel) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _GrantedUserCard(
-                        relation: rel,
-                        centralId: centralId,
-                        actor: role,
-                      ),
-                    ),
-                  ),
-                const SizedBox(height: 4),
-                const _AddAccessButton(),
-
-                // ── BLOQUEADOS ────────────────────────────────────────────
-                if (blocked.isNotEmpty) ...[
-                  const SizedBox(height: 24),
-                  const InfoSectionHeader('BLOQUEADOS'),
-                  const SizedBox(height: 10),
-                  ...blocked.map(
-                    (rel) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _BlockedUserCard(relation: rel, actor: role.auditName),
-                    ),
-                  ),
-                ],
-              ],
               ),
             ),
+            InfoCard(
+              children: [
+                InkWell(
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => AccessPinsScreen(initialRole: role),
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 14),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: AppColors.secondary.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.admin_panel_settings_rounded,
+                            size: 18,
+                            color: AppColors.secondary,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'PINs de Acesso',
+                                style: TextStyle(
+                                  color: context.textSecondary,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Níveis, root, senha e auditoria',
+                                style: TextStyle(
+                                  color: context.textPrimary,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(
+                          Icons.chevron_right_rounded,
+                          size: 18,
+                          color: AppColors.secondary.withValues(alpha: 0.7),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+
+            // ── ACESSO CONCEDIDO ─────────────────────────────────────
+            const InfoSectionHeader('ACESSO CONCEDIDO'),
+            const SizedBox(height: 10),
+            if (granted.isEmpty && syncing)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 20),
+                child: Center(
+                  child: SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.secondary,
+                    ),
+                  ),
+                ),
+              )
+            else if (granted.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Text(
+                  'Nenhum usuário com acesso concedido.',
+                  style: TextStyle(
+                    color: context.textSecondary.withValues(alpha: 0.6),
+                    fontSize: 12,
+                  ),
+                ),
+              )
+            else
+              ...granted.map(
+                (rel) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _GrantedUserCard(
+                    relation: rel,
+                    centralId: centralId,
+                    actor: role,
+                  ),
+                ),
+              ),
+            const SizedBox(height: 4),
+            const _AddAccessButton(),
+
+            // ── BLOQUEADOS ────────────────────────────────────────────
+            if (blocked.isNotEmpty) ...[
+              const SizedBox(height: 24),
+              const InfoSectionHeader('BLOQUEADOS'),
+              const SizedBox(height: 10),
+              ...blocked.map(
+                (rel) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _BlockedUserCard(relation: rel, actor: role.auditName),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
-
 }
 
 // ── PIN row ───────────────────────────────────────────────────────────────────
@@ -287,7 +288,8 @@ class _RefreshButtonState extends ConsumerState<_RefreshButton> {
         child: SizedBox(
           width: 18,
           height: 18,
-          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.secondary),
+          child: CircularProgressIndicator(
+              strokeWidth: 2, color: AppColors.secondary),
         ),
       );
     }
@@ -357,7 +359,8 @@ class _GrantedUserCard extends ConsumerWidget {
                     ),
                     const SizedBox(width: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 7, vertical: 3),
                       decoration: BoxDecoration(
                         color: level.color.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(20),
@@ -393,7 +396,8 @@ class _GrantedUserCard extends ConsumerWidget {
             ),
           ),
           IconButton(
-            icon: Icon(Icons.copy_rounded, size: 16, color: context.textSecondary.withValues(alpha: 0.4)),
+            icon: Icon(Icons.copy_rounded,
+                size: 16, color: context.textSecondary.withValues(alpha: 0.4)),
             tooltip: 'Copiar Sub ID',
             visualDensity: VisualDensity.compact,
             padding: EdgeInsets.zero,
@@ -410,7 +414,8 @@ class _GrantedUserCard extends ConsumerWidget {
             },
           ),
           IconButton(
-            icon: const Icon(Icons.tune_rounded, size: 18, color: AppColors.secondary),
+            icon: const Icon(Icons.tune_rounded,
+                size: 18, color: AppColors.secondary),
             tooltip: 'Alterar nível',
             visualDensity: VisualDensity.compact,
             padding: EdgeInsets.zero,
@@ -430,12 +435,14 @@ class _GrantedUserCard extends ConsumerWidget {
           // root-authorized demotion via the level-change sheet.
           if (level != AccessLevel.master)
             IconButton(
-              icon: const Icon(Icons.block_rounded, size: 18, color: AppColors.error),
+              icon: const Icon(Icons.block_rounded,
+                  size: 18, color: AppColors.error),
               tooltip: 'Bloquear',
               visualDensity: VisualDensity.compact,
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              onPressed: () => _confirmBlock(context, ref, relation, centralId, actor.auditName),
+              onPressed: () => _confirmBlock(
+                  context, ref, relation, centralId, actor.auditName),
             ),
         ],
       ),
@@ -466,7 +473,8 @@ class _BlockedUserCardState extends ConsumerState<_BlockedUserCard> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro: $e'), behavior: SnackBarBehavior.floating),
+          SnackBar(
+              content: Text('Erro: $e'), behavior: SnackBarBehavior.floating),
         );
       }
     } finally {
@@ -480,7 +488,8 @@ class _BlockedUserCardState extends ConsumerState<_BlockedUserCard> {
       decoration: BoxDecoration(
         color: context.surfaceColor,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.error.withValues(alpha: 0.3), width: 0.8),
+        border: Border.all(
+            color: AppColors.error.withValues(alpha: 0.3), width: 0.8),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: Row(
@@ -492,7 +501,8 @@ class _BlockedUserCardState extends ConsumerState<_BlockedUserCard> {
               color: AppColors.error.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.block_rounded, size: 20, color: AppColors.error),
+            child: const Icon(Icons.block_rounded,
+                size: 20, color: AppColors.error),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -510,13 +520,19 @@ class _BlockedUserCardState extends ConsumerState<_BlockedUserCard> {
           ),
           if (_loading)
             const SizedBox(
-              width: 18, height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.secondary),
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: AppColors.secondary),
             )
           else
             TextButton(
               onPressed: _unblock,
-              child: const Text('Desbloquear', style: TextStyle(color: AppColors.secondary, fontSize: 12, fontWeight: FontWeight.w600)),
+              child: const Text('Desbloquear',
+                  style: TextStyle(
+                      color: AppColors.secondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600)),
             ),
         ],
       ),
@@ -535,7 +551,8 @@ Future<void> _confirmBlock(
     context: context,
     builder: (ctx) => AlertDialog(
       backgroundColor: ctx.surfaceColor,
-      title: Text('Bloquear usuário?', style: TextStyle(color: ctx.textPrimary)),
+      title:
+          Text('Bloquear usuário?', style: TextStyle(color: ctx.textPrimary)),
       content: Text(
         'O acesso será revogado imediatamente e futuras solicitações deste usuário serão ignoradas.',
         style: TextStyle(color: ctx.textSecondary),
@@ -547,7 +564,8 @@ Future<void> _confirmBlock(
         ),
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(true),
-          child: const Text('Bloquear', style: TextStyle(color: AppColors.error)),
+          child:
+              const Text('Bloquear', style: TextStyle(color: AppColors.error)),
         ),
       ],
     ),
@@ -561,7 +579,8 @@ Future<void> _confirmBlock(
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro: $e'), behavior: SnackBarBehavior.floating),
+        SnackBar(
+            content: Text('Erro: $e'), behavior: SnackBarBehavior.floating),
       );
     }
   }
@@ -660,7 +679,8 @@ class _LevelChangeSheetState extends ConsumerState<_LevelChangeSheet> {
     await _applyChange(level, alreadySaving: true);
   }
 
-  Future<void> _applyChange(AccessLevel level, {bool alreadySaving = false}) async {
+  Future<void> _applyChange(AccessLevel level,
+      {bool alreadySaving = false}) async {
     if (!alreadySaving) setState(() => _saving = true);
     try {
       await ref.read(centralAccessRelationsProvider.notifier).changeLevel(
@@ -712,12 +732,18 @@ class _LevelChangeSheetState extends ConsumerState<_LevelChangeSheet> {
             ),
             Text(
               'Alterar nível de acesso',
-              style: TextStyle(color: context.textPrimary, fontSize: 16, fontWeight: FontWeight.w700),
+              style: TextStyle(
+                  color: context.textPrimary,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 4),
             Text(
               widget.relation.userSubId,
-              style: TextStyle(color: context.textSecondary, fontSize: 11, fontFamily: 'monospace'),
+              style: TextStyle(
+                  color: context.textSecondary,
+                  fontSize: 11,
+                  fontFamily: 'monospace'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -740,11 +766,14 @@ class _LevelChangeSheetState extends ConsumerState<_LevelChangeSheet> {
                   backgroundColor: level.color.withValues(alpha: 0.10),
                   selectedColor: level.color,
                   side: BorderSide(
-                    color: isCurrent ? level.color : level.color.withValues(alpha: 0.3),
+                    color: isCurrent
+                        ? level.color
+                        : level.color.withValues(alpha: 0.3),
                     width: isCurrent ? 1.4 : 0.8,
                   ),
                   avatar: isCurrent && !selected
-                      ? Icon(Icons.check_circle_rounded, size: 14, color: level.color)
+                      ? Icon(Icons.check_circle_rounded,
+                          size: 14, color: level.color)
                       : null,
                 );
               }).toList(),
@@ -763,11 +792,14 @@ class _LevelChangeSheetState extends ConsumerState<_LevelChangeSheet> {
               const SizedBox(height: 16),
               _RootCredentialField(controller: _rootCtrl, hint: 'Root'),
               const SizedBox(height: 10),
-              _RootCredentialField(controller: _senhaCtrl, hint: 'Senha', obscure: true),
+              _RootCredentialField(
+                  controller: _senhaCtrl, hint: 'Senha', obscure: true),
               if (_error != null) ...[
                 const SizedBox(height: 10),
                 Center(
-                  child: Text(_error!, style: const TextStyle(color: AppColors.error, fontSize: 12)),
+                  child: Text(_error!,
+                      style: const TextStyle(
+                          color: AppColors.error, fontSize: 12)),
                 ),
               ],
               const SizedBox(height: 16),
@@ -778,21 +810,25 @@ class _LevelChangeSheetState extends ConsumerState<_LevelChangeSheet> {
                   style: FilledButton.styleFrom(
                     backgroundColor: AccessLevel.master.color,
                     padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
                   child: _saving
                       ? const SizedBox(
                           width: 18,
                           height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
                         )
                       : const Text(
                           'Confirmar',
-                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                          style: TextStyle(
+                              color: Colors.white, fontWeight: FontWeight.w600),
                         ),
                 ),
               ),
-            ] else if (_selected != null && _selected != widget.relation.level) ...[
+            ] else if (_selected != null &&
+                _selected != widget.relation.level) ...[
               const SizedBox(height: 24),
               Center(
                 child: Text(
@@ -804,7 +840,9 @@ class _LevelChangeSheetState extends ConsumerState<_LevelChangeSheet> {
               if (_error != null) ...[
                 const SizedBox(height: 10),
                 Center(
-                  child: Text(_error!, style: const TextStyle(color: AppColors.error, fontSize: 12)),
+                  child: Text(_error!,
+                      style: const TextStyle(
+                          color: AppColors.error, fontSize: 12)),
                 ),
               ],
               const SizedBox(height: 16),
@@ -815,17 +853,20 @@ class _LevelChangeSheetState extends ConsumerState<_LevelChangeSheet> {
                   style: FilledButton.styleFrom(
                     backgroundColor: _selected!.color,
                     padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
                   child: _saving
                       ? const SizedBox(
                           width: 18,
                           height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
                         )
                       : Text(
                           'Confirmar ${_selected!.shortLabel}',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                          style: const TextStyle(
+                              color: Colors.white, fontWeight: FontWeight.w600),
                         ),
                 ),
               ),
@@ -869,7 +910,8 @@ class _RootCredentialField extends StatelessWidget {
             color: context.textSecondary.withValues(alpha: 0.5),
             fontSize: 13,
           ),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
           border: InputBorder.none,
         ),
       ),

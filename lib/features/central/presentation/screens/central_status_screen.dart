@@ -15,7 +15,9 @@ import '../widgets/device_detail_widgets.dart';
 String _friendlyRequestError(Object e) {
   final msg = e.toString();
   const prefix = 'Exception: ';
-  return msg.startsWith(prefix) ? msg.substring(prefix.length) : 'Falha ao enviar. Verifique a conexão.';
+  return msg.startsWith(prefix)
+      ? msg.substring(prefix.length)
+      : 'Falha ao enviar. Verifique a conexão.';
 }
 
 /// Shown when a user taps a central in "Centrais" that isn't (yet) accepted —
@@ -82,8 +84,10 @@ class CentralStatusScreen extends ConsumerWidget {
                 InfoCard(
                   children: [
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                      child: PresenceIndicator(identityId: item.identityId, fontSize: 13),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 14),
+                      child: PresenceIndicator(
+                          identityId: item.identityId, fontSize: 13),
                     ),
                   ],
                 ),
@@ -184,7 +188,8 @@ class _RequestAgainButton extends ConsumerStatefulWidget {
   final SavedCentral item;
 
   @override
-  ConsumerState<_RequestAgainButton> createState() => _RequestAgainButtonState();
+  ConsumerState<_RequestAgainButton> createState() =>
+      _RequestAgainButtonState();
 }
 
 class _RequestAgainButtonState extends ConsumerState<_RequestAgainButton> {
@@ -209,7 +214,9 @@ class _RequestAgainButtonState extends ConsumerState<_RequestAgainButton> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_friendlyRequestError(e)), behavior: SnackBarBehavior.floating),
+          SnackBar(
+              content: Text(_friendlyRequestError(e)),
+              behavior: SnackBarBehavior.floating),
         );
       }
     } finally {
@@ -226,17 +233,22 @@ class _RequestAgainButtonState extends ConsumerState<_RequestAgainButton> {
         style: FilledButton.styleFrom(
           backgroundColor: AppColors.secondary,
           padding: const EdgeInsets.symmetric(vertical: 15),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
         child: _submitting
             ? const SizedBox(
                 width: 18,
                 height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Colors.white),
               )
             : const Text(
                 'Solicitar novamente',
-                style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600),
               ),
       ),
     );
