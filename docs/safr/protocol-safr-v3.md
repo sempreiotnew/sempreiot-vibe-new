@@ -641,9 +641,10 @@ path to the board; it sends the probe four times 1.2 s apart under the same
 MSG_ID (outlasting a unit's ~3 s router scan). **Every** provisioned unit holding the code answers each copy — AC
 nodes, awake leafs and the board (LAYER `0x00` in its offer) — and shows the
 RSSI it heard the probe at on its LED for 1 s (green ≥ −75 dBm, yellow ≥ −85,
-red); the prober collects offers for 4.5 s, counts one answer per SRC_MAC,
-and blinks once per answering unit in the colour of `min(RSSI_SEEN, own rx
-RSSI)`; no answer = one red blink. Parent discovery (`PURPOSE = 0`): only AC
+red); the prober's LED is dark for the 4.5 s window (TEST locked), it counts
+one answer per SRC_MAC and blinks once per answering unit in the colour of
+`min(RSSI_SEEN, own rx RSSI)`; no answer = one red blink; base pattern back =
+unlocked. Parent discovery (`PURPOSE = 0`): only AC
 units that are ONLINE answer.
 
 ---

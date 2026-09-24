@@ -123,7 +123,7 @@ Legend: `[x]` done and verified by build/tests · `[ ]` pending (bench) · `[-]`
 - [ ] **Bench 8** replace old → new (name/zone move, old wiped if online)
 - [ ] **Bench 9** Case B: factory-reset board → "Criar instalação nesta central" → board reboots on the new SSID → share to a phone
 - [ ] **Bench 10** dedup: second `/provision` before reboot → `409 already_stored`
-- [ ] **Bench 11** survey: two nodes, board off, TEST → blue blink on the neighbour, green/yellow/red on the prober **(riskiest: ESP-NOW on the AP interface while JOINING)**
+- [x] **Bench 11** survey (2026-09-24, three nodes, board off): ESP-NOW via Mesh-Lite works; both neighbours answer every copy at −14…−38 dBm; per-unit colours; four copies ride out the router scans. Final UX: dark = locked, breathe = press.
 - [ ] **Bench 12** old tablet build still reads INSTALLATION 0x09 from the new board (compat)
 
 ### Phase 3 — admin window (code done; bench pending)

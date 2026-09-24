@@ -251,21 +251,23 @@ board** if it is already powered (it answers on the installation channel even th
 node — node-to-board reach is the link that matters most). Once a unit is ONLINE, its TEST button is the
 walk-test event again (reference §3.5 row 5.3).
 
-1. Short press → the unit broadcasts an authenticated `PARENT_PROBE {purpose = 1 (survey)}` over
-   ESP-NOW, four times 1.2 s apart under the same MSG_ID. With no board on site every unit scans all
-   channels for the board's Wi-Fi for ~3 s every ~13 s and is deaf and mis-tuned meanwhile; 3.6 s of
-   copies outlasts one scan on either side, so at least one copy always lands (bench 2026-09-24: three
-   copies over 1.2 s still lost whole probes). No access point, no mesh needed.
+1. Short press → the LED goes **dark at once: the button is locked** for the whole survey. The unit
+   broadcasts an authenticated `PARENT_PROBE {purpose = 1 (survey)}` over ESP-NOW, four times 1.2 s
+   apart under the same MSG_ID. With no board on site every unit scans all channels for the board's
+   Wi-Fi for ~3 s every ~13 s and is deaf and mis-tuned meanwhile; 3.6 s of copies outlasts one scan
+   on either side, so at least one copy always lands (bench 2026-09-24). No access point, no mesh needed.
 2. Every unit in range that holds the same code answers each copy with a unicast
-   `PARENT_OFFER {purpose = 1, rssi_seen, layer}` and shows, once per probe, **1 s solid in the colour
+   `PARENT_OFFER {purpose = 1, rssi_seen, layer}` and shows, once per press, **1 s solid in the colour
    of the signal it heard the probe at**: green ≥ −75 dBm, yellow ≥ −85 dBm, red below. So the
    installer standing at a passive unit sees how well *that* unit hears the pressed one.
-3. The pressed unit collects answers for 4.5 s and blinks **once per answering unit** (400 ms, in the
-   order the answers arrive) in the colour of that link's RSSI — the weaker of the two directions.
-   Three units in reach = three blinks. A unit answering a repeated probe counts once. If nobody
-   answers, one red blink at the end. There is no other summary; the console lists every answer with
-   both directions' dBm.
-4. A press during the 4.5 s window restarts the survey.
+3. The pressed unit stays dark and blinks **once per answering unit** (400 ms, in the order the first
+   answers arrive) in the colour of that link's RSSI — the weaker of the two directions. Three units in
+   reach = three blinks. Copies from the same unit never blink again.
+4. 4.5 s after the press the window closes: one red blink if nobody answered, then the **white breathe
+   returns = unlocked**. A press while the LED is dark is ignored (logged as locked). The console lists
+   every answer with both directions' dBm.
+
+The installer's whole rule: **dark = wait, breathing = press.**
 
 What it proves: the radios reach each other at the mounted distance, and both units hold the same code
 (an answer needs the key). What it does not prove: mesh throughput — a Mesh-Lite link needs a better

@@ -113,17 +113,19 @@ Optional, useful on large sites or thick walls, and possible **before** the boar
 1. Mount the units where you intend to leave them; they are configured (§3), the board is off, and
    every LED breathes white slowly. (Two or more AC units may pair among themselves without the board; that changes
    nothing you can see, and TEST is still the survey on every unit that has no path to the board.)
-2. Press **TEST** on a unit. It broadcasts a probe (four copies over 3.6 s: with no board, every unit
-   spends ~3 s of every ~13 s scanning for the board and is deaf meanwhile; the copies outlast that).
+2. Press **TEST** on a unit. Its LED goes **dark: the button is locked** while the survey runs
+   (about 5 s). The unit sends the probe four times over 3.6 s so a neighbour that happens to be
+   scanning for the board still hears it.
 3. Every configured unit in range shows **1 s solid in the colour of the signal it heard**:
    **green** ≥ −75 dBm · **yellow** ≥ −85 dBm · **red** below. Stand next to a unit to see how well it
    hears the one you pressed.
-4. The unit you pressed blinks **once per unit that answered**, in the order the answers arrive, each
-   blink in the colour of that link (the weaker direction of the pair). Three units in reach = three
-   blinks. Nobody in reach = one red blink. The board answers too if it is powered.
-5. Repeat unit by unit. Aim for green on every link, and green between each unit and either the board
-   or a neighbour that is green to the board. A new press restarts the survey. The console prints every answer with both directions'
-   dBm.
+4. The pressed unit, still dark, blinks **once per unit that answered**, in the colour of that link
+   (the weaker direction of the pair). Three units in reach = three blinks. Nobody in reach = one red
+   blink at the end. The board answers too if it is powered.
+5. When the white breathe comes back, the button is unlocked. **Dark = wait, breathing = press.**
+   A press while dark does nothing. Repeat unit by unit; aim for green on every link, and green between
+   each unit and either the board or a neighbour that is green to the board. The console prints every
+   answer with both directions' dBm.
 
 Once a unit is online, TEST goes back to being the site-wide walk test.
 
