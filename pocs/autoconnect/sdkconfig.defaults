@@ -1,0 +1,11 @@
+# Target inferred from pocs/patinha, the existing POC this project reuses
+# GPIO/LED conventions from (POC-BRIEF.md section 1.6/6) -- same silicon
+# family assumed for round 1. Run `idf.py set-target esp32s3` before the
+# first build, or change this if the real board/node hardware differs
+# (POC-BRIEF.md section 0 -- confirm with Talles before flashing).
+CONFIG_IDF_TARGET="esp32s3"
+
+# mbedtls_hkdf() (RFC 5869) is NOT compiled in by default in ESP-IDF's
+# mbedtls config -- required for the provisioning key derivation
+# (pocs/POC-BRIEF.md section 5).
+CONFIG_MBEDTLS_HKDF_C=y

@@ -1,0 +1,11 @@
+## IDF Component Manager Manifest File
+dependencies:
+  idf:
+    version: '>=5.0.0'
+  ## POC-BRIEF.md section 0 says to pin the exact Mesh-Lite version once
+  ## hardware facts are filled in -- 1.0.2 is the latest tagged release as of
+  ## this writing (components.espressif.com/components/espressif/mesh_lite).
+  ## Confirm against the real component registry before building; a
+  ## different pinned version may expose different raw-message API names
+  ## than the ones referenced in node_mesh.c (see the TODOs there).
+  espressif/mesh_lite: "^1.0.2"

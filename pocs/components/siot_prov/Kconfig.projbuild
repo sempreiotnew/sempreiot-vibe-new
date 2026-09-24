@@ -1,0 +1,44 @@
+menu "SIOT Provisioning (autoconnect POC)"
+
+    config SIOT_FACTORY_DEV_ID
+        string "Factory device id (sticker) -- POC fallback only"
+        default "dev-001"
+        help
+            pocs/POC-BRIEF.md section 4.1 says the factory NVS namespace
+            "siot_fact" (id, pop) is written by tools/make_sticker.py and
+            must never be generated at runtime. That tool does not exist in
+            this repo yet, so this value is used ONLY when "siot_fact" is
+            empty in NVS, purely to unblock this POC on a bare devkit.
+            Remove once the factory partition flow (make_sticker.py +
+            nvs_partition_gen) exists.
+
+    config SIOT_FACTORY_POP
+        string "Factory POP secret (sticker) -- POC fallback only"
+        default "abc123POP0000"
+        help
+            See SIOT_FACTORY_DEV_ID. WPA2 requires 8+ characters; the
+            blueprint specifies 16+ for the real sticker POP.
+
+    config SIOT_DEV_MODEL
+        string "Device model string"
+        default "SIOT-SENSOR-01"
+        help
+            pocs/APP-BRIEF.md section 5 step 2: the board's sticker model
+            must start with "SIOT-BOARD" so the app's wizard can detect it
+            automatically -- set this to e.g. "SIOT-BOARD-01" when building
+            for the board role below.
+
+    choice SIOT_ROLE
+        prompt "Unit role"
+        default SIOT_ROLE_NODE
+        help
+            POST /enroll (pocs/POC-BRIEF.md section 5) is only served when
+            this is the board.
+
+        config SIOT_ROLE_NODE
+            bool "node (AC device / battery detector)"
+        config SIOT_ROLE_BOARD
+            bool "board (raises the installation network; never a mesh node)"
+    endchoice
+
+endmenu

@@ -1,0 +1,227 @@
+# SempreIoT — System Reference (central catalogue of what the product does)
+
+_Started 2026-09-22. This is the one document that lists **every functionality of the system**, what it
+does in plain words, whether it exists today, and where it is specified and implemented. It is the
+entry point for a new engineer, the answer sheet for customer questions, and the place a new feature
+is registered before it is built. It does not replace the detailed docs — it indexes them (§7)._
+
+**Maintenance rule:** a functionality is not "done" until it has a row in §3 with status
+`Implemented` and a pointer to the code. A new feature starts as a `Planned` row. Status values:
+`Implemented` (in the product image / app build) · `POC` (proven on the bench in `pocs/`, not yet in
+the product firmware) · `Planned <phase>` · `Open` (not designed yet).
+
+---
+
+## 1. What SempreIoT is
+
+A wireless fire-detection and alarm system for buildings. Smoke/heat detectors, sirens and I/O
+modules form a self-healing **Wi-Fi mesh** (ESP32-S3, ESP-Mesh-Lite); battery-powered detectors talk to
+the mesh by **ESP-NOW**; a **board** at the top of the mesh is the control unit and bridges everything
+over USB to a **tablet** that is the operator's panel. Everything on the wire is one binary,
+authenticated protocol, **SAFR v3**. The system works with no internet; when internet exists, the
+tablet mirrors status to the cloud so remote viewers can follow it. The design targets certification
+under **UL 864 / NFPA 72 (US)** and **EN 54-25 / ISO 7240-25 (EU/international)**.
+
+---
+
+## 2. Parts of the system
+
+| Part | What it is | Hardware / runtime | Status |
+|---|---|---|---|
+| **Board** | The control unit. Raises the installation's Wi-Fi access point, bridges the mesh to the tablet over USB, ACKs commands, journals every event, will latch alarms and supervise devices on its own. Never a mesh node. | ESP32-S3, 8 MB flash, mains + battery, native USB to the tablet | POC (`pocs/board`) → Phase 1 firmware |
+| **Tablet (Central app)** | Operator panel: shows devices, events, alarms; SILENCE / RESET; latching and supervision today; talks to the board over USB only. | Android tablet, Flutter app in CENTRAL mode (`mobile/sempreiot_central_app`) | Implemented |
+| **AC device** | Any mains-powered unit (siren, I/O module, AC detector, repeater). Mesh node; root-capable. | ESP32-S3, 4 MB, one firmware image for every AC type | POC (`pocs/node`) → Phase 1 firmware |
+| **Battery detector** | Battery-powered smoke/heat detector. Sleeps; wakes to talk to one AC device by ESP-NOW; never root, never relay. | ESP32-S3, batteries, ADPD188BI smoke + HDC2080 temp/humidity | Planned Phase 2 |
+| **Installer / Viewer app** | Same Flutter app on a phone. Installer functions (create installation, provision units) work offline; viewer functions need internet. | Android (iOS later), APP mode | Implemented (round 1) |
+| **Cloud** | Mirrors the tablet's presence/status for remote viewers; access control between users and centrals. Never in the fire path. | AWS IoT Core (MQTT), Cognito, Lambda (`lambda/`) | Implemented (presence, storage, access) |
+| **Factory station** | Writes identity into every unit and prints its sticker. | Python tool + flasher | Planned (OTA/production blueprint) |
+
+---
+
+## 3. Functionality catalogue
+
+### 3.1 Identity, installation and provisioning
+
+| # | Functionality | What it does | Status | Spec | Code |
+|---|---|---|---|---|---|
+| 1.1 | Factory identity + sticker | Every unit ships with `id` + `pop` (secret) in a read-only NVS partition and a QR sticker `{id, mac, pop}`. No identity is ever typed by hand. | POC (`make_sticker.py`, `siot_fact`) → Phase 1 moves it to `nvs_factory` | blueprint §2, OTA blueprint §1/§4 | `tools/make_sticker.py`, `siot_prov/prov_store.c` |
+| 1.2 | Installation code | One bundle per site: `SYSTEM_ID`, `NET_SSID = SIOT-<SYSTEM_ID hex4>`, `NET_PSK`, `SAFR_PSK`, `CHANNEL`, `MESH_ID`. Created once by whichever app comes first; every unit, board included, holds the same code. | Implemented (app) / POC (firmware) | blueprint §0, POC-BRIEF §6.1 | `features/installation/` (app), `prov_types.h` |
+| 1.3 | Setup network | An unprovisioned unit raises `SIOT-SETUP-<id>` (WPA2 = `pop`) with an HTTP server. | POC | POC-BRIEF §4.1/§5 | `siot_prov/wifi_softap.c`, `prov_http.c` |
+| 1.4 | Provisioning handshake | Phone joins the setup network, proves it read the sticker (`HMAC(pop, nonce)`), pushes the code encrypted (AES-CCM under a key derived from `pop`), sets name + zone. ~20 s per unit, offline. | Implemented (app wizard) / POC (firmware) | POC-BRIEF §5, blueprint §3 | `features/provisioning/` (app), `prov_http.c`, `prov_crypto.c` |
+| 1.5 | Board device table | The board keeps one entry per MAC (`expected/online/missing/retired`, name, zone, role), discovered from authenticated traffic and edited by the tablet; `/enroll` is only an "expected" hint; retired MACs are dropped after CCM; pending rename/decommission pushed on the unit's next frame; cap 120 in the existing `nvs`. Replaces the ≤ 8 enrolled list. | Implemented (firmware + tablet, lifecycle Phase 2, 2026-09-24; bench test pending) | `installation-lifecycle-v1.md` §3, spec §7.12 | `siot_devtab`, `siot_coordinator.c`, `coord_devtable.c`, app `_handleDeviceTable` |
+| 1.5b | Sharing the code / backups | The code leaves a phone or tablet only as a passphrase-encrypted QR (v2, PBKDF2 + AES-GCM); second installers use "Entrar em instalação existente"; plaintext v1 backup is read-only legacy with a warning on the tablet. Instalação screen and tablet rename behind `EditorGate`; wizard shows the installation name and the "já foi configurado" hint; SYSTEM_ID mismatch banner on the dashboard. | Implemented (app, lifecycle Phase 1, 2026-09-24) | lifecycle §2, §5 D, §5.1, §7 | `installation_backup_codec.dart`, `join_installation_screen.dart`, `central_installation_screen.dart`, `foreignSystemIdProvider` |
+| 1.6 | Tablet reads the installation from the board | On USB link-up the tablet asks `GET_INSTALLATION`/`GET_DEVICE_TABLE`; the board answers identity, SSID, channel, name and the device table — never the secrets. **The code itself** the tablet pulls once with `GET_CODE` on the setup channel after the operator types (or scans) the board sticker's `pop` — no camera, no phone needed (lifecycle §4.1). | Implemented (firmware `coord_setup.c` + tablet "Ler código da placa", lifecycle Phase 2, 2026-09-24; bench test pending) | spec §3.1/§7.6/§7.10/§7.12/§7.13 | `coord_setup.c`, app `safr_downlink_provider.dart` `sendGetCode` |
+| 1.7 | Case A / Case B installation | A: installer provisions units before the board exists; B: tablet + board first (tablet arms the board with `SET_INSTALLATION` on the pop-keyed setup channel, "Criar instalação nesta central"), phone scans the encrypted installation QR from the tablet. Any order, any number of installers. | A: POC · B: Implemented (Phase 2, 2026-09-24; bench test pending) | blueprint §3, lifecycle §5 | `coord_setup.c`, app `central_installation_screen.dart` |
+| 1.8 | Factory reset | Button held 5 s at any time wipes the code (keeps identity) and returns to setup mode. | POC | blueprint §2 | `node_button.c`, `board_button.c` |
+| 1.9 | Device naming | Each unit announces its operator-given name, zone and role after boot (`NAME_ANNOUNCE`); the tablet shows names, never MACs. Renames from the tablet go to the board and the unit (`SET_DEVICE`; the unit stores and re-announces). | Implemented (Phase 2, 2026-09-24; bench test pending) | spec §7.11, §7.6 0x12 | `siot_netcore.c` `apply_set_device`, app node sheet |
+| 1.10 | Survey mode | TEST button on a provisioned unit with no path to the board: ESP-NOW probe (×3) / offer range test between units and the board, via Mesh-Lite's ESP-NOW layer on nodes. Passive units show 1 s green/yellow/red = how well they heard the probe (≥ −75 / ≥ −85 dBm); the pressed unit blinks once per answering unit in that link's colour, one red blink = nobody. | Implemented and **bench-verified 2026-09-24** (two nodes side by side: −14 dBm, green); per-unit colours added after the three-node run | lifecycle §6, spec §7.14/§7.15 | `siot_survey.c`, `siot_ui_led.c` |
+| 1.12 | Board admin window | Double tap on the board: the installation AP is suspended and `SIOT-SETUP-<id>` (WPA2 = pop) comes up for 5 min with `GET /info`, `/identify`, `GET /code` (the code encrypted for the sticker, same envelope as `/provision` in reverse); closes 2 s after a delivery; refused within 10 min of an ALARM; LED white blink while open. Phone: "Entrar pela placa". | Implemented (lifecycle Phase 3, 2026-09-24; bench test pending — the root loses the board for the window) | lifecycle §11, spec provisioning HTTP | `coord_admin.c`, `prov_http.c` admin mode, `link_mesh_board.c` suspend/resume, app `join_from_board_screen.dart` |
+| 1.11 | Provisioning dedup | `/provision` answers `409 already_stored` after the first success; the wizard explains the already-configured case. | Implemented (Phase 1 + 2) | lifecycle §5.1 | `prov_http.c`, wizard provider |
+
+### 3.2 Network
+
+| # | Functionality | What it does | Status | Spec | Code |
+|---|---|---|---|---|---|
+| 2.1 | Installation access point | The board raises `NET_SSID` on a fixed channel (1/6/11); nothing else creates Wi-Fi. | POC | blueprint §1/§4 | `board_main.c` |
+| 2.2 | Self-forming mesh | AC devices run ESP-Mesh-Lite against the board's AP; the best link becomes root (level 1), the rest join under it, up to 4 levels. No user action. | POC | blueprint §4, brief §6.3 | `node_mesh.c` |
+| 2.3 | Root failover | If the root dies, another AC device becomes root automatically; the mesh also survives the board being off and re-homes when it returns. Target < 60 s (max 120 s). | POC (numbers not yet recorded) | blueprint §7, POC-BRIEF §7 | `node_mesh.c` (`join_mesh_ignore_router_status`, keepalive, connect timeout) |
+| 2.4 | Uplink path | Any node → root (Mesh-Lite raw message) → board (TCP) → tablet (USB). Frames are forwarded unchanged. | POC | brief §6.3 | `node_mesh.c`, `tcp_link.c`, `serial_link.c` |
+| 2.5 | Downlink path | Tablet → board → root → broadcast down the tree with per-node re-broadcast and dedupe; each node acts only on frames addressed to it or broadcast. | POC | brief §6.3 | `node_mesh.c`, `root_duties.c` |
+| 2.6 | Tablet link | Raw SAFR bytes at 115200 8N1 over USB (native USB-Serial-JTAG in the product; UART0 on the bench). Resync on frame boundaries after noise or boot chatter. | POC | spec §2, brief §6.5 | `serial_link.c`, app `serial_provider.dart` |
+| 2.7 | ESP-NOW battery link | Battery detector wakes, sends to its bound AC device, gets an ACK (with a "command pending" flag when needed), sleeps. Binds to the best parent by probe/offer. | Planned Phase 2 (wire format not yet written) | blueprint §4.5/§5.1/§9.2 | — |
+| 2.8 | Site separation | Units of one installation cannot join or be understood by a neighbouring one: distinct Wi-Fi PSK, distinct `SYSTEM_ID` (dropped before decryption), distinct SAFR key. | POC | spec §3.1, blueprint §7 | `safr_frame.c` |
+
+### 3.3 Protocol, security and delivery assurance (SAFR v3)
+
+| # | Functionality | What it does | Status | Spec | Code |
+|---|---|---|---|---|---|
+| 3.1 | Authenticated, encrypted frames | Every frame on every hop: AES-128-CCM with a 16-byte tag, header authenticated, 12-byte nonce from sender MAC + boot counter + message counter, CRC-16 for wire integrity, `LEN ≤ 250`. | Implemented (app) / POC (firmware) | spec §3–§5 | `pocs/components/safr`, app `safr_crypto.dart` |
+| 3.2 | Replay protection | Receivers remember the last counter pair per sender and drop older frames. | Implemented (app) · Planned Phase 1 (board/nodes) | spec §4 | app `safr_ingest_provider.dart` |
+| 3.3 | Acknowledged delivery | Alarm and trouble events demand an ACK; unacknowledged frames are resent 3× (2 s apart) and then the sender raises its own communication trouble — it never gives up silently. | POC | spec §7.2/§9.1 | `node_safr.c` |
+| 3.4 | Alarm re-announcement | An active alarm is repeated at least every 60 s until the operator resets, so it cannot be missed after a link outage. | POC | spec §7.2 | `node_safr.c` |
+| 3.5 | Event identity and dedupe | Each event carries a device sequence number; repeats and replays never create duplicate alarms. | Implemented (app) / POC | spec §6 | app, `node_mesh.c` |
+| 3.6 | Event journal and backfill | The board stores every event; after a USB outage the tablet requests what it missed (`EVENT_LOG_REQ`) and receives it deduped. ≥ 64 entries; flash-persisted in the product. | POC (RAM journal) → Phase 1 (flash) | spec §8 | `root_duties.c`, app |
+| 3.7 | Severity priority | Alarm > supervisory > trouble > restore in every transmit queue and on screen. | Implemented (app) · Planned Phase 1 (firmware queue) | spec §0 | app |
+| 3.8 | Time synchronisation | Tablet sends the clock to the board on link-up and hourly; the board pushes it into the mesh so event timestamps are real wall-clock. | POC (nodes) · Planned Phase 1 (board clock) | spec §7.7 | `node_safr.c`, `root_duties.c` |
+
+### 3.4 Supervision (knowing a device is alive)
+
+| # | Functionality | What it does | Status | Spec | Code |
+|---|---|---|---|---|---|
+| 4.1 | Heartbeats and topology | Every powered device reports liveness every 15 s and its position in the mesh (parent, children, signal) every 60 s. | POC | spec §7.3/§7.4/§9.2 | `node_safr.c`, `root_duties.c` |
+| 4.2 | Device-missing trouble | A device silent for 3 × its interval (45 s powered, 180 s battery) is flagged missing with a trouble; any valid frame restores it. Inside the 200 s (NFPA 72) / 300 s (EN 54-25) limits. | Implemented (tablet) · Planned Phase 1 (board) | spec §9.2, blueprint §5.3 | app `supervisionProvider` |
+| 4.3 | Downlink supervision | The tablet proves the link *towards* the board works: `LINK_CHECK` every 30 s, trouble after 3 unconfirmed. | Implemented (app) / POC (board ACKs) | spec §9.3 | app, `root_duties.c` |
+| 4.4 | Link-quality trouble | Sustained CRC/auth failures (≥ 5 in 60 s) raise a trouble even if some frames get through. | Implemented (app) | spec §9.4 | app |
+| 4.5 | Board self-reporting | The board reports itself as the layer-0 device so the tablet shows "mesh connected". | POC | POC-BRIEF §4.2 | `root_duties.c` |
+
+### 3.5 Alarm handling and operator actions
+
+| # | Functionality | What it does | Status | Spec | Code |
+|---|---|---|---|---|---|
+| 5.1 | Alarm latching | An alarm stays on the panel until an operator RESET — never cleared by a restore, a timeout or silence. The tablet shows the held alarms in a red banner on Principal (broadcast REARMAR) and on the unit's sheet in Rede (per-device REARMAR); the latch clears only after the root ACKs the RESET. | Implemented (tablet) · Planned (board as control unit) | spec §7.1.4 | app `latched_alarm_banner.dart`, `alarm_latch_provider.dart` |
+| 5.2 | SILENCE / RESET | SILENCE stops sounders and keeps the latch; RESET clears the latch only after the root ACKs and stops re-announcement at the device. | Implemented (app) / POC (device side) | spec §7.6 | app, `node_safr.c` |
+| 5.3 | Test button | Short press on a **node** sends a `MANUAL_TEST` supervisory event with ACK required, distinct from a real alarm (walk test); the tablet ticks the unit with time and RSSI. Double tap = bench ALARM. Short press on the **board** broadcasts a `COMMAND TEST` into the mesh so **every node** raises its own `MANUAL_TEST` — a one-button site-wide walk test; the board raises no event of its own (decided 2026-09-23). Hold ≥ 5 s on either = factory reset (row 1.8). | Phase 1 firmware (steps 2–3) | spec §7.1.2/§7.6, blueprint §6.4 | `siot_ui_button`, `siot_netcore` (node), `siot_coordinator` (board) |
+| 5.4 | IDENTIFY ("blink it") | From the tablet, make one unit blink blue for N seconds to locate it during commissioning. | POC | spec §7.6 | `node_safr.c` |
+| 5.5 | Smoke / heat detection | ADPD188BI smoke and HDC2080 temperature with pre-alarm trend; raw values reported so thresholds can be verified by a lab. | Planned (sensing phase) | spec §7.1, GPIO docs | — |
+| 5.6 | Sirens and cause-and-effect | Board sends `SOUND` to selected sirens; every siren also sounds on any authenticated alarm it overhears, board reachable or not. | Planned (`COMMAND SOUND` undefined) | blueprint §6 | — |
+| 5.7 | Relay output | Remote control of the unit's relay (GPIO 12). | Planned | spec §7.6 (`RELAY_SET`) | — |
+| 5.8 | Power and tamper troubles | AC lost, on battery, charging, tamper (removed from base), battery low/critical with ≥ 7 days (NFPA) / ~30 days (EN) warning. | Planned (inputs exist on the PCB; reporting is Phase 2+) | spec §7.1.2/§7.1.3 | `pocs/patinha` (GPIO reference) |
+| 5.9 | Walk-test report | Tablet exports the installation report (units, zones, MACs, firmware, test times, RSSI) as PDF. | Planned | blueprint §6.4 | — |
+
+### 3.6 Operator interface (tablet) and remote access
+
+| # | Functionality | What it does | Status | Spec | Code |
+|---|---|---|---|---|---|
+| 6.1 | Central dashboard | Principal / Central / Dispositivos / Rede tabs, device registry with names, alarm-hold banner, comm-status tiles (Wi-Fi, USB, mesh, cloud). The Rede map keeps every registered unit: silent for > 10 min = drawn dimmed, never auto-removed; only the operator's "Limpar dispositivos" clears the registry. (The Eventos feed tab was removed 2026-09-23.) | Implemented | app doc §8 | `mobile/…/features/central` |
+| 6.2 | Unlock PIN | 6-digit PIN gates the operator UI; comms keep running underneath. | Implemented | app doc §1 | `main_screen.dart` |
+| 6.3 | Event history | Append-only local event log (Drift DB, `DeviceEvents` — §3.6.1) — the panel event history NFPA 72 requires. Visible today through Logs seriais. | Implemented | app doc §2, spec §11 | `core/database` |
+| 6.4 | Serial diagnostics | Raw packet log with CRC/auth/foreign/replay/plaintext diagnostics for the bench and for support. | Implemented | app doc §5 | `serial_logs` |
+| 6.5 | Cloud presence and storage | The central publishes online/offline, link health and storage snapshot (retained MQTT); viewers see it live. | Implemented | app doc §6 | `iot/` |
+| 6.6 | Viewer access control | A phone user requests access to a central; the operator accepts/rejects/blocks; levels enforced by IoT policies. | Implemented | app doc §4 | `access/`, `lambda/` |
+| 6.7 | Remote events and alarms | Viewers receive real alarms/events/topology from the central. | Open — today only presence/storage/access reach the cloud | app doc §6 | — |
+
+#### 3.6.1 Tablet local database (Drift, SQLite file `sempreiot`, schema v8)
+
+The tablet keeps all of its state in one Drift database, `mobile/sempreiot_central_app/lib/core/database/app_database.dart`.
+**This table is the catalogue of record: whenever a table is created, removed or renamed, update it in
+the same change** (rule in `CLAUDE.md`).
+
+| Table | Key | What it holds | Written by | Read by | Retention |
+|---|---|---|---|---|---|
+| `SerialPackets` | `id` (auto) | Every reframed USB frame: `receivedAt`, `deviceId` (serial port), `rawBytes`, `byteLength`, `hexPreview`. Forensics and the Logs seriais screen. | `serial_provider` / ingest | Logs seriais, SAFR detail | purged after 30 days |
+| `DeviceMetadata` | `key` | Key/value JSON store for this central: `info` (name, firmware, subId, dates), `credentials` (PIN hashes, root, level PINs), `access` (viewer relations), `iot` (IoT client id/password), `pin_guard` (unlock rate limiter), `safr_jrn_seq` (journal high-water mark). | installation, credentials, access, IoT services, ingest | same | permanent (factory reset wipes) |
+| `AuditEvents` | `id` (auto) | Append-only security trail: `at`, `actor` (`master`/`admin`/`root`/`system`/`central`), `action`, JSON `detail` (never a PIN or password). | PIN change, grants/blocks, unlock failures | Audit log screen (`recentAudit`) | permanent |
+| `MeshDevices` | `mac` | Trusted device registry built only from authenticated SAFR frames: `role`, `layer`, `parentMac`, `lastRssi`, `batteryPct`, `firstSeenAt`, `lastSeenAt`, `lastHeartbeatAt`, replay counters `lastBootCtr`/`lastMsgCtr`, `supervisionState` (0 online / 1 missing), `name`, `zone`, `registryState` (`enrolled` = known from INSTALLATION / DEVICE_TABLE only), `lastDevSeq`, **`alarmLatched` + `alarmLatchedAt`** (the alarm hold, row 5.1), and the v3.2 board-table mirror (schema v8, lifecycle §3): `boardState` (0 expected · 1 online · 2 missing · 3 retired, null = not in the board's table), `boardFlags` (spec §7.12 bits: seen-ever, annotated, pending rename, heard-while-retired, pending decommission), `tableSyncedAt`. Rows the board no longer lists and that were only board-sourced are pruned after each full DEVICE_TABLE sync. | ingest (frames + DEVICE_TABLE), supervision, downlink (`clearAlarmLatch`), device management (rename/forget) | Rede map + node sheet, alarm banner, supervision, dedupe | until "Ressincronizar com a placa" / forget |
+| `DeviceEvents` | `id` (auto) | Decoded event feed: `receivedAt`, `deviceMac`, `msgType` (0 = synthetic), wire `eventType`/`eventCode`, `severity` 0 ok · 1 trouble · 2 alert · 3 alarm, `detailJson`, `packetId` → `SerialPackets`, `errorKind` (crc_failed / auth_failed / foreign_system / plaintext_rejected / parse_error), `ackedAt`, `devSeq` (dedupe key with `deviceMac`). | ingest, supervision troubles, downlink link-check troubles | Logs seriais (joined to packets) | purged after 30 days |
+
+### 3.7 Maintenance, updates, production
+
+| # | Functionality | What it does | Status | Spec | Code |
+|---|---|---|---|---|---|
+| 7.1 | Add / replace / retire / rename / forget a unit | Same provisioning flow to add; tablet node sheet ("Gerenciar", Master/Nível 4 PIN) sends `SET_DEVICE`, `RETIRE`/`UNRETIRE`, `REPLACE_DEVICE`, `DECOMMISSION` (typed confirmation), `FORGET_DEVICE`; every action audited. | Implemented (Phase 2, 2026-09-24; bench test pending) | spec §7.6 v3.2, lifecycle §5 E–H | `siot_coordinator.c` `handle_lifecycle_command`, app `topology_screen.dart` |
+| 7.2 | Replace the board / tablet / lost phone | Board: provision from any code holder or arm from the tablet (Case B), then "Reenviar nomes à placa"; tablet: "Ler código da placa" (`GET_CODE`) or the encrypted QR; phone: encrypted QR from any holder, or the board admin window ("Entrar pela placa"). | Implemented (Phases 2–3, 2026-09-24; bench test pending) | lifecycle §4, §5 I–K, §11 | app `central_installation_screen.dart`, `join_from_board_screen.dart` |
+| 7.3 | Channel change | `SET_CHANNEL {channel, switch_at}` down the mesh, board switches last. | Planned (undefined) | blueprint §8 | — |
+| 7.4 | Firmware update (OTA) | Two signed images (board, node); the board stores the node image and serves the whole site through the mesh; rollback on failed self-test; battery detectors update via the "pending" flag. | Planned (OTA blueprint) | `ota-and-production-blueprint-v1.md` | — |
+| 7.5 | Factory station | Flashes bootloader + app + identity, prints the sticker, records the unit in the factory DB; secure boot + flash encryption on production units. | Planned | OTA blueprint §5 | — |
+| 7.6 | Bench tooling | Console commands, host tests (protocol vectors), hardware-in-the-loop script, failover timer, LED language for silent bench debugging (7.7). | Phase 1 firmware (LED language, host tests, timer) → Phase 1 step 4 (console, HIL) | brief §9/§11 | `siot_ui_led`, `firmware/test/host`, `tools` |
+| 7.7 | LED language — traffic pulses | Decided 2026-09-23 so a walk test can be read from the LEDs alone. Role colours: white blink = setup, white solid = joining, **green flash 250 ms every 5 s = root node**, off = child node, **magenta flash 250 ms every 5 s = board**, red = alarm latched, blue blink = IDENTIFY. Traffic pulses fire **only when the unit transmits** (its own frames; on the board also every relay), never on receive: **blue 100 ms** = background frame (`HEARTBEAT`, `TOPOLOGY`, `NAME_ANNOUNCE`, `EVENT_LOG_*`, `INSTALLATION`); **blue 500 ms** = message (`EVENT`, `ACK`, `COMMAND`, `TIME_SYNC`); **cyan 500 ms** = the tablet's ACK for a frame this unit sent arrived (the only cyan). Pulses queue in order, never override. Reading a walk test: tap on a node → *blue* (sent) then *cyan* (confirmed); board → one *blue* when it forwards the event to the tablet, one *blue* when it forwards the ACK back; three blues 2 s apart and no cyan = no ACK (tablet not connected or link down). Ticks fold into a running tick; IDENTIFY suppresses pulses while it runs. | Phase 1 firmware | brief §9 (base colours) | `siot_ui_led` (`on_tx`, pulse queue) |
+
+---
+
+## 4. Numbers customers ask about
+
+| Question | Answer | Where it comes from |
+|---|---|---|
+| How fast does an alarm reach the panel? | Budget ≤ 10 s end to end; measured ≪ 1 s on a healthy 2-level mesh. | spec §0; POC-BRIEF §7 |
+| How soon do we know a device is dead? | 45 s for a powered device, 180 s for a battery detector (3 missed heartbeats). Limits: 200 s NFPA 72, 300 s EN 54-25. | spec §9.2 |
+| Can an alarm be lost if the tablet is unplugged? | No: the board journals every event and the tablet backfills on reconnect; the device also repeats an active alarm every 60 s until reset. | spec §7.2, §8 |
+| What if the root device fails? | Another AC device takes over automatically; target under 60 s, worst case 120 s. Alarms raised during the switch are delivered. | blueprint §7 |
+| What if the board fails? | The mesh keeps running; sirens still sound on any authenticated alarm they overhear; the tablet shows a link trouble. | blueprint §7 |
+| Does it need internet? | No — not for installation, operation or alarms. Internet only adds remote viewing. | blueprint rule 6 |
+| How is it secured? | AES-128-CCM authenticated encryption on every frame with a per-installation key; Wi-Fi WPA2 with a per-installation password; per-unit sticker secret for provisioning; neighbouring systems are cryptographically incompatible. | spec §4, §3.1 |
+| How many devices? | Mesh up to 4 levels; blueprint targets 50 units validated, 250 simulated (POC E, not yet run). | blueprint §9.5 |
+| How long does installing a unit take? | ~20–30 s per unit from the phone, offline. | blueprint §3, POC-BRIEF §7 |
+| Battery life of a detector? | Decided by POC D (battery pack + 60–150 s cadence) — not yet measured. | blueprint §11 |
+| Which standards? | Designed for UL 864 / NFPA 72 and EN 54-25 / ISO 7240-25; the board is the certifiable control unit, the tablet a supplementary annunciator. Numeric limits to be verified against purchased editions before a lab submittal. | spec §0 |
+
+---
+
+## 5. Compliance principles baked into the design
+
+- Alarm priority over all other traffic; alarm latching until manual reset; silence ≠ reset.
+- Every communication path supervised in both directions (heartbeats up, `LINK_CHECK` down).
+- No alarm message lost: acknowledged delivery, re-announcement, journal + backfill, dedupe.
+- Site-specific identification: neighbouring installations cannot interoperate.
+- Every signal identifies the specific device (MAC + name + zone).
+- The control unit (board) must enforce every mandatory behaviour with the tablet disconnected —
+  today several of these still live in the tablet app; moving them to the board is Phase 1/2 work
+  (§3.4, §3.5). Certification hardware (watchdog, supervised power, sounder) is outside the protocol.
+
+---
+
+## 6. Development status and roadmap (one line per phase)
+
+| Phase | Content | State |
+|---|---|---|
+| POC round 1 | Board + 2 AC nodes + provisioning from the phone + SAFR over Mesh-Lite + failover, on the bench | Done on the bench (Sep 2026); measurements not written up |
+| **Firmware Phase 1 — Network core** | Permanent `firmware/` tree, SAFR, identity, provisioning, mesh, serial, board root duties, supervision, host/HIL tests; freeze at `fw-0.1.0` | Steps 1–3 of brief §15 built and running on the bench (2026-09-23: provisioning, mesh, tap → tablet → ACK, LED traffic language); step 4 (supervision + persistence) next |
+| Phase 2 — Battery detectors | ESP-NOW leaf protocol, deep sleep, parent mailbox, power/tamper inputs | Needs the v3.1 spec section first |
+| Sensing & alarm engine | ADPD188BI / HDC2080, thresholds, sirens, cause-and-effect, board-side latching | Planned |
+| OTA & production | Signed images, board-served mesh OTA, factory station, secure boot | Blueprint written |
+| App | Remote events to viewers, walk-test report, maintenance flows | Planned |
+
+---
+
+## 7. Document index — which file answers what (and who wins on conflict)
+
+Order of authority: **1 → 2 → 3**; a POC brief or a phase brief never overrides the protocol or the
+blueprint.
+
+| # | File | What it is |
+|---|---|---|
+| 1 | `docs/safr/protocol-safr-v3.md` | The wire format, crypto, ACK/retry, timings, compliance tags, test vectors. Single source of truth for anything on the wire. |
+| 2 | `docs/others/system-blueprint-v1.md` | The rules, vocabulary, installation cases, network formation, operation, failures, maintenance, engineering order. |
+| 2b | `docs/others/installation-lifecycle-v1.md` | Installation lifecycle: device table, key custody, every scenario (any install order, several installers, add/replace/retire/rename, lost phone, dead board/tablet, re-key), survey mode, gating, phase map. Below the blueprint, above the briefs. |
+| 2c | `docs/others/installation-guide.md` | The practical step-by-step for installers and operators (create, share, configure units and board, survey, tablet in service, later changes, recovery), with each step tagged by the lifecycle phase that delivers it. Not normative. |
+| 3 | `docs/ota/ota-and-production-blueprint-v1.md` | Images, partition tables, OTA flows, factory station, secure boot. Identity §4.1 superseded by the Phase 1 brief (id + pop). |
+| 4 | `docs/phases-development/firmware-phase1-network-brief_3.md` | What Phase 1 of the product firmware builds, the `firmware/` tree, exit checklist, open items, implementation order. |
+| 4b | `docs/phases-development/phase2-installation-lifecycle-brief.md` | The installation-lifecycle implementation plan (Phases 0–4): what was built per area, the deploy recipe, the bench checklist, and the Phase 4 items that are deliberately not done. |
+| 5 | `docs/others/app-sempreiot-central.md` | The Flutter app as it is: modes, providers, DB, SAFR pipeline, cloud, wizard. (Table catalogue of record is §3.6.1 of this file.) |
+| 6 | `docs/spec/definition-central.md`, `docs/spec/definition-detector.md` | PCB GPIO maps, sensors, UART/USB. |
+| 7 | `pocs/POC-BRIEF.md`, `pocs/APP-BRIEF.md`, `pocs/README.md` | Round-1 POC contracts and the bench LED language. |
+| 8 | `CLAUDE.md` | Toolchain and coding rules for every session (IDF 5.5.2, header-before-docs). |
+| 9 | this file | Functionality catalogue, customer numbers, status, index. |
+
+---
+
+## 8. Glossary (use these words and no others — blueprint §0)
+
+**Board** — the control unit attached to the tablet; raises the installation Wi-Fi; never a mesh node.
+**Tablet / Central** — the operator's panel app, USB to the board. **AC device** — mains-powered mesh
+node (siren, I/O, AC detector, repeater); root-capable. **Battery detector / leaf** — sleeping
+ESP-NOW detector. **Root** — the AC device currently connected to the board's AP, chosen by Mesh-Lite.
+**The code** — the installation bundle (`SYSTEM_ID`, `NET_SSID`, `NET_PSK`, `SAFR_PSK`, `CHANNEL`,
+`MESH_ID`). **Sticker** — factory QR `{id, mac, pop}`. **Setup network** — `SIOT-SETUP-<id>`, raised
+while unprovisioned. **SAFR** — Secure Alarm Frame Relay, the protocol. **Installer / Viewer app** — the
+phone app's offline and online functions. **ALARM / ALERT / TROUBLE / RESTORE** — the four event
+severities (3 / 2 / 1 / 0). **Latch** — an alarm held on the panel until operator RESET.

@@ -1,0 +1,78 @@
+# ── SempreIoT repo-wide .gitignore ──────────────────────────────────────────
+# The Flutter app keeps its own mobile/sempreiot_central_app/.gitignore (Flutter template + .env).
+
+# Secrets — never in history, whatever the folder
+*.pem
+*.key
+*.p12
+.env
+.env.*
+!.env.example
+sempreiot_signing_key*
+# Per-unit factory identity (sticker.csv / .bin / QR carry the unit's `pop` secret).
+# Bench stickers can be re-generated with tools/make_sticker.py; force-add with `git add -f` if you
+# really want a specific dev sticker versioned.
+**/stickers/
+
+# ESP-IDF (firmware/, pocs/, mocked-device/)
+build/
+sdkconfig
+sdkconfig.old
+sdkconfig.*.old
+managed_components/
+dependencies.lock.old
+.cache/
+*.bin
+*.elf
+*.map
+flash_args
+flasher_args.json
+# keep: sdkconfig.defaults, dependencies.lock, partitions_*.csv (all versioned on purpose)
+!sdkconfig.defaults
+!dependencies.lock
+
+# Flutter (belt and braces — the app .gitignore covers these too; 8 GB on disk today)
+.dart_tool/
+.flutter-plugins-dependencies
+
+# Host tests (linux target) and CI artefacts
+firmware/test/host/build/
+*.gcda
+*.gcno
+coverage/
+
+# Node (lambda/, mocked-device-autoconnect/)
+node_modules/
+npm-debug.log*
+*.tgz
+
+# Python (tools/)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+.clangd/
+compile_commands.json
+
+# Scratch and backups
+a.out
+*.bkp
+*.orig
+*.tmp
+
+# build variants of firmware/build.sh (build-4mb, build-4mb-bench, build-8mb-bench)
+build-*/
+.DS_Store
+
+# Separate git repositories with their own history and remotes (not submodules yet):
+#   firmware/                     https://github.com/sempreiotnew/firmware.git
+#   mobile/sempreiot_central_app/ https://github.com/sempreiotnew/sempreiot_central_app.git
+/firmware/
+/mobile/sempreiot_central_app/

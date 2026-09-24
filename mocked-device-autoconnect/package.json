@@ -1,0 +1,12 @@
+{
+  "name": "mocked-device-autoconnect",
+  "version": "1.0.0",
+  "description": "Mock ESP32 (esp-mesh-lite) provisioning SoftAP HTTP server. Simulates the device at 192.168.4.1 during app development.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

@@ -1,0 +1,7 @@
+## IDF Component Manager Manifest File
+dependencies:
+  ## mbedtls_hkdf() and the esp_random.h/esp_mac.h APIs used here assume a
+  ## reasonably current IDF; pocs/patinha (same target) builds against
+  ## v5.5.2 (see pocs/patinha/README.md) -- match that unless told otherwise.
+  idf:
+    version: '>=5.0.0'

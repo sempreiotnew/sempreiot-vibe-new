@@ -1,0 +1,33 @@
+# Target inferred from pocs/autoconnect / pocs/patinha (POC-BRIEF.md §0 is
+# still unfilled by Talles — confirm before flashing real hardware; this
+# assumes the same esp32s3 silicon as the rest of round 1).
+CONFIG_IDF_TARGET="esp32s3"
+
+# Role/model for siot_prov's setup mode (Kconfig.projbuild, "SIOT
+# Provisioning (autoconnect POC)" menu) — the board never joins Mesh-Lite and
+# is the only unit that serves /enroll (POC-BRIEF.md §5).
+CONFIG_SIOT_ROLE_BOARD=y
+CONFIG_SIOT_DEV_MODEL="SIOT-BOARD-01"
+
+# mbedtls_hkdf() (RFC 5869) is NOT compiled in by default — required by
+# siot_prov's provisioning key derivation (POC-BRIEF.md §5).
+CONFIG_MBEDTLS_HKDF_C=y
+
+# Board's tablet-facing link is a raw SAFR byte stream (USB-Serial-JTAG or
+# UART0, POC-BRIEF.md §4.2) — the ESP-IDF console/log output must never touch
+# that peripheral. Nothing on the board's normal-mode path may printf/ESP_LOG
+# after this.
+CONFIG_ESP_CONSOLE_NONE=y
+
+# Tablet link. The product board uses native USB on GPIO19/20 (the Kconfig
+# default, docs/definition-central.md); this bench has no USB connector
+# wired yet, so round 1 runs the link on UART0 (GPIO43/44, the flash/debug
+# port) through the USB-TTL adapter. Switch to
+# CONFIG_SIOT_SERIAL_LINK_USB_SERIAL_JTAG=y once GPIO19/20 are connected.
+# Keep every other text output off both serial peripherals: no secondary
+# console on USB-Serial-JTAG, no 2nd-stage bootloader log on UART0. The
+# ROM's own boot banner still precedes the stream on UART0; the tablet
+# resyncs on SOF.
+CONFIG_SIOT_SERIAL_LINK_UART0=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+CONFIG_BOOTLOADER_LOG_LEVEL_NONE=y

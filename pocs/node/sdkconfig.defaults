@@ -1,0 +1,29 @@
+# Target inferred from pocs/patinha / pocs/autoconnect -- same silicon family
+# assumed for round 1 (POC-BRIEF.md section 0 hardware facts still unfilled).
+# Run `idf.py set-target esp32s3` before the first build, or change this if
+# the real node hardware differs.
+CONFIG_IDF_TARGET="esp32s3"
+
+# mbedtls_hkdf() (RFC 5869) is NOT compiled in by default in ESP-IDF's
+# mbedtls config -- required by siot_prov's provisioning key derivation
+# (pocs/POC-BRIEF.md section 5), which this project also uses for its
+# setup-mode HTTP server before it has an installation.
+CONFIG_MBEDTLS_HKDF_C=y
+
+# This node talks over Wi-Fi (Mesh-Lite) only, never a raw serial link to a
+# host -- unlike pocs/board, the console can stay enabled for ESP_LOG
+# diagnostics (mesh join/level/RSSI, SAFR tx/rx, alarm state).
+
+# Mesh-Lite is OFF by default in espressif/mesh_lite's Kconfig. Without this
+# the component only compiles src/esp_mesh_lite_espnow.c but still links the
+# prebuilt lib/libesp_mesh_lite_esp32s3.a, whose objects call
+# esp_mesh_lite_log_write / esp_mesh_lite_get_ap_record / ... that live in
+# src/esp_mesh_lite{,_log,_port}.c -> "undefined reference" at link time.
+CONFIG_MESH_LITE_ENABLE=y
+
+# Mesh-Lite runs its connect/retry/report timers on the FreeRTOS timer
+# service task; IDF's default 2048-byte stack overflows there ("A stack
+# overflow in task Tmr Svc"). The Mesh-Lite examples set 3072; 4096 leaves
+# margin. esp_timer bumped for the same reason (examples use 4096).
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
+CONFIG_ESP_TIMER_TASK_STACK_SIZE=4096

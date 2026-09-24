@@ -1,0 +1,17 @@
+{
+  "name": "lambda-central",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.mjs",
+  "scripts": {
+    "start": "node run.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity": "^3.0.0",
+    "@aws-sdk/client-cognito-identity-provider": "^3.0.0",
+    "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/client-iot": "^3.0.0",
+    "@aws-sdk/lib-dynamodb": "^3.0.0",
+    "dotenv": "^17.0.0"
+  }
+}

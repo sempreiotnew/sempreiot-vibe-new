@@ -1,0 +1,465 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;font:14px system-ui;background:#fafafa}</style></head><body><title>SempreIoT Mesh Map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #F3F5F7;
+    --paper: #FFFFFF;
+    --ink: #1B2430;
+    --ink-2: #4B5563;
+    --line: #C9D1DA;
+    --fire: #D64B2F;
+    --mesh: #2F6FBF;
+    --leaf: #2E8B57;
+    --board: #6B4EBB;
+    --soft: #E8ECF1;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #131A22; --paper: #1B2430; --ink: #E6EBF1; --ink-2: #A7B1BE; --line: #3A4655;
+      --fire: #F06A4E; --mesh: #6FA3F0; --leaf: #5CC28A; --board: #A88CF0; --soft: #243040;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #131A22; --paper: #1B2430; --ink: #E6EBF1; --ink-2: #A7B1BE; --line: #3A4655;
+    --fire: #F06A4E; --mesh: #6FA3F0; --leaf: #5CC28A; --board: #A88CF0; --soft: #243040;
+  }
+  body { background: var(--ground); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.55; padding-inline: 20px; padding-block: 28px 64px; }
+  main { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 26px; font-weight: 600; margin: 0 0 6px; letter-spacing: -0.01em; text-wrap: balance; }
+  .sub { color: var(--ink-2); margin: 0 0 28px; max-width: 65ch; }
+  h2 { font-size: 17px; font-weight: 600; margin: 40px 0 8px; }
+  p { max-width: 68ch; margin: 0 0 12px; }
+  figure { margin: 14px 0 0; background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 14px; overflow-x: auto; }
+  figure svg { display: block; max-width: 100%; height: auto; color: var(--ink); font-family: var(--sans); }
+  figcaption { font-size: 13px; color: var(--ink-2); margin-top: 10px; max-width: 78ch; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px 22px; font-size: 13px; color: var(--ink-2); margin: 14px 0 0; }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; }
+  .sw { width: 26px; height: 0; border-top: 3px solid; display: inline-block; }
+  .sw.dash { border-top-style: dashed; }
+  code { font-family: var(--mono); font-size: 0.92em; background: var(--soft); padding: 1px 5px; border-radius: 3px; }
+  .steps { counter-reset: s; display: grid; gap: 8px; padding: 0; margin: 0 0 4px; list-style: none; max-width: 72ch; }
+  .steps li { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start; }
+  .steps li::before { counter-increment: s; content: counter(s); font-family: var(--mono); font-size: 12px; color: var(--paper); background: var(--ink); border-radius: 50%; width: 22px; height: 22px; display: grid; place-items: center; margin-top: 2px; }
+  .rule { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; }
+  @media (max-width: 640px) { .rule { grid-template-columns: 1fr; } }
+</style>
+
+<main>
+  <h1>SempreIoT — how the network is set up and how it runs</h1>
+  <p class="sub">Seven pictures, in the order things happen on a site: what the pieces are, how each unit receives the code, every setup case on one map, the states a unit passes through, how the mesh forms by itself, what happens when the root dies, and the path an alarm takes. Vocabulary is the blueprint's: <em>board</em>, <em>AC device</em>, <em>battery detector</em>, <em>the code</em>.</p>
+
+  <h2>1. The pieces and who talks to whom</h2>
+  <figure>
+    <svg viewBox="0 0 900 470" role="img" aria-label="Tablet linked by USB to the board; the board raises the installation Wi-Fi; AC devices form a Mesh-Lite tree under it, one of them being the root; battery detectors talk ESP-NOW to the nearest AC device.">
+      <defs>
+        <marker id="a-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        <marker id="a-mesh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2F6FBF"/></marker>
+        <marker id="a-leaf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2E8B57"/></marker>
+      </defs>
+      <!-- tablet -->
+      <rect x="40" y="40" width="170" height="70" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="125" y="68" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Tablet</text>
+      <text x="125" y="88" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.7">app, CENTRAL mode</text>
+      <!-- usb -->
+      <line x1="210" y1="75" x2="330" y2="75" stroke="currentColor" stroke-width="2" marker-end="url(#a-ink)" marker-start="url(#a-ink)"/>
+      <text x="270" y="66" text-anchor="middle" font-size="11" fill="currentColor">USB · SAFR frames</text>
+      <!-- board -->
+      <rect x="330" y="30" width="240" height="90" rx="6" fill="none" stroke="#6B4EBB" stroke-width="2"/>
+      <text x="450" y="56" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Board</text>
+      <text x="450" y="76" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">the ESP32 attached to the tablet</text>
+      <text x="450" y="96" text-anchor="middle" font-size="11" font-family="IBM Plex Mono, monospace" fill="#6B4EBB">access point SIOT-7F3A</text>
+      <text x="450" y="112" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.6">never a mesh node · never the root</text>
+      <!-- wifi root -->
+      <line x1="450" y1="120" x2="450" y2="190" stroke="#2F6FBF" stroke-width="2" marker-end="url(#a-mesh)" marker-start="url(#a-mesh)"/>
+      <text x="462" y="160" font-size="11" fill="#2F6FBF">Wi-Fi: root connects to the board's access point</text>
+      <!-- root -->
+      <rect x="360" y="190" width="180" height="56" rx="6" fill="none" stroke="#2F6FBF" stroke-width="2"/>
+      <text x="450" y="212" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Sirene 1 · ROOT</text>
+      <text x="450" y="232" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.7">AC device · Mesh-Lite level 1</text>
+      <!-- level 2 nodes -->
+      <line x1="400" y1="246" x2="250" y2="300" stroke="#2F6FBF" stroke-width="2" marker-end="url(#a-mesh)" marker-start="url(#a-mesh)"/>
+      <line x1="500" y1="246" x2="650" y2="300" stroke="#2F6FBF" stroke-width="2" marker-end="url(#a-mesh)" marker-start="url(#a-mesh)"/>
+      <text x="300" y="268" text-anchor="end" font-size="11" fill="#2F6FBF">Wi-Fi (Mesh-Lite)</text>
+      <text x="600" y="268" text-anchor="start" font-size="11" fill="#2F6FBF">Wi-Fi (Mesh-Lite)</text>
+      <rect x="150" y="300" width="180" height="56" rx="6" fill="none" stroke="#2F6FBF" stroke-width="1.5"/>
+      <text x="240" y="322" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Sirene 2</text>
+      <text x="240" y="342" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.7">AC device · level 2</text>
+      <rect x="570" y="300" width="180" height="56" rx="6" fill="none" stroke="#2F6FBF" stroke-width="1.5"/>
+      <text x="660" y="322" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Módulo I/O</text>
+      <text x="660" y="342" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.7">AC device · level 2</text>
+      <!-- detectors -->
+      <g stroke="#2E8B57" stroke-width="1.5" fill="none">
+        <circle cx="90" cy="430" r="22"/><circle cx="200" cy="430" r="22"/><circle cx="310" cy="430" r="22"/>
+        <circle cx="600" cy="430" r="22"/><circle cx="720" cy="430" r="22"/>
+      </g>
+      <g font-size="11" fill="currentColor" text-anchor="middle">
+        <text x="90" y="434">D1</text><text x="200" y="434">D2</text><text x="310" y="434">D3</text><text x="600" y="434">D4</text><text x="720" y="434">D5</text>
+      </g>
+      <g stroke="#2E8B57" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#a-leaf)">
+        <line x1="100" y1="408" x2="215" y2="358"/>
+        <line x1="205" y1="408" x2="235" y2="358"/>
+        <line x1="305" y1="408" x2="262" y2="358"/>
+        <line x1="610" y1="408" x2="650" y2="358"/>
+        <line x1="715" y1="408" x2="675" y2="358"/>
+      </g>
+      <text x="440" y="400" text-anchor="middle" font-size="11" fill="#2E8B57">ESP-NOW · one frame per wake, then sleep</text>
+      <text x="440" y="416" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.7">battery detectors never join Wi-Fi</text>
+      <!-- side note -->
+      <text x="40" y="150" font-size="11" fill="currentColor" opacity="0.7">The tablet never creates Wi-Fi.</text>
+      <text x="40" y="166" font-size="11" fill="currentColor" opacity="0.7">Internet, if any, is only for viewers.</text>
+    </svg>
+    <figcaption>Three radio links, three jobs. USB carries SAFR frames between tablet and board. Mesh-Lite (blue) is ordinary Wi-Fi between AC devices, with the root's station side connected to the board's access point. ESP-NOW (green, dashed) is the walkie-talkie link a sleeping detector uses to reach the nearest AC device.</figcaption>
+  </figure>
+  <div class="legend">
+    <span><i class="sw" style="border-color: var(--board)"></i>board / access point</span>
+    <span><i class="sw" style="border-color: var(--mesh)"></i>Wi-Fi, Mesh-Lite</span>
+    <span><i class="sw dash" style="border-color: var(--leaf)"></i>ESP-NOW</span>
+    <span><i class="sw" style="border-color: var(--ink)"></i>USB</span>
+  </div>
+
+  <h2>2. Configuration — how the code reaches every unit (Case A, installer first)</h2>
+  <p>Every unit, board included, is set up the same way. The phone needs no internet and never opens the Wi-Fi settings screen; it joins the unit's setup network by itself using the sticker secret as the password.</p>
+  <figure>
+    <svg viewBox="0 0 900 560" role="img" aria-label="Sequence: phone creates the code; for each unit the phone joins the unit's setup network, proves the sticker, pushes the encrypted code with name and zone; the board is set up the same way and also receives the enrolled list; the tablet reads the code from the board over USB.">
+      <defs>
+        <marker id="s-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+      </defs>
+      <!-- lane headers -->
+      <g font-size="13" font-weight="600" fill="currentColor" text-anchor="middle">
+        <text x="110" y="34">Phone app</text>
+        <text x="360" y="34">Unit (siren / detector)</text>
+        <text x="610" y="34">Board</text>
+        <text x="820" y="34">Tablet</text>
+      </g>
+      <g font-size="11" fill="currentColor" opacity="0.65" text-anchor="middle">
+        <text x="110" y="50">offline</text>
+        <text x="360" y="50">white blink · SIOT-SETUP-&lt;id&gt;</text>
+        <text x="610" y="50">white blink · SIOT-SETUP-&lt;id&gt;</text>
+        <text x="820" y="50">USB to the board</text>
+      </g>
+      <!-- lifelines -->
+      <g stroke="currentColor" stroke-width="1" stroke-dasharray="3 5" opacity="0.5">
+        <line x1="110" y1="60" x2="110" y2="540"/>
+        <line x1="360" y1="60" x2="360" y2="540"/>
+        <line x1="610" y1="60" x2="610" y2="540"/>
+        <line x1="820" y1="60" x2="820" y2="540"/>
+      </g>
+      <!-- step 1 -->
+      <rect x="30" y="80" width="160" height="40" rx="5" fill="#E8ECF1" stroke="currentColor" stroke-width="1"/>
+      <text x="110" y="97" text-anchor="middle" font-size="12" fill="#1B2430">1 · "New installation"</text>
+      <text x="110" y="112" text-anchor="middle" font-size="11" fill="#1B2430">generates the code</text>
+      <!-- step 2 -->
+      <rect x="30" y="140" width="160" height="40" rx="5" fill="#E8ECF1" stroke="currentColor" stroke-width="1"/>
+      <text x="110" y="157" text-anchor="middle" font-size="12" fill="#1B2430">2 · scan sticker</text>
+      <text x="110" y="172" text-anchor="middle" font-size="11" fill="#1B2430">type name, pick zone</text>
+      <!-- step 3 -->
+      <line x1="118" y1="212" x2="352" y2="212" stroke="currentColor" stroke-width="1.5" marker-end="url(#s-ink)"/>
+      <text x="235" y="204" text-anchor="middle" font-size="11" fill="currentColor">3 · join SIOT-SETUP-&lt;id&gt; (password = pop)</text>
+      <!-- step 4 -->
+      <line x1="352" y1="248" x2="118" y2="248" stroke="currentColor" stroke-width="1.5" marker-end="url(#s-ink)"/>
+      <text x="235" y="240" text-anchor="middle" font-size="11" fill="currentColor">GET /info → nonce</text>
+      <line x1="118" y1="284" x2="352" y2="284" stroke="currentColor" stroke-width="1.5" marker-end="url(#s-ink)"/>
+      <text x="235" y="276" text-anchor="middle" font-size="11" fill="currentColor">4 · POST /identify (proof of sticker)</text>
+      <line x1="118" y1="320" x2="352" y2="320" stroke="currentColor" stroke-width="1.5" marker-end="url(#s-ink)"/>
+      <text x="235" y="312" text-anchor="middle" font-size="11" fill="currentColor">POST /provision {code encrypted, name, zone}</text>
+      <!-- step 5 unit stores -->
+      <rect x="280" y="336" width="160" height="40" rx="5" fill="#E8ECF1" stroke="currentColor" stroke-width="1"/>
+      <text x="360" y="353" text-anchor="middle" font-size="12" fill="#1B2430">5 · stores code + name</text>
+      <text x="360" y="368" text-anchor="middle" font-size="11" fill="#1B2430">green blink · status "stored"</text>
+      <text x="235" y="400" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.7">repeat 2–5 for every siren, module and detector</text>
+      <!-- step 6 board -->
+      <line x1="118" y1="436" x2="602" y2="436" stroke="#6B4EBB" stroke-width="1.5" marker-end="url(#s-ink)"/>
+      <text x="360" y="428" text-anchor="middle" font-size="11" fill="#6B4EBB">6 · same 3–5 for the board, plus POST /enroll [units with names]</text>
+      <rect x="530" y="452" width="160" height="40" rx="5" fill="#E8ECF1" stroke="#6B4EBB" stroke-width="1"/>
+      <text x="610" y="469" text-anchor="middle" font-size="12" fill="#1B2430">board stores code + list</text>
+      <text x="610" y="484" text-anchor="middle" font-size="11" fill="#1B2430">raises SIOT-7F3A on power-up</text>
+      <!-- step 7 usb -->
+      <line x1="618" y1="522" x2="812" y2="522" stroke="currentColor" stroke-width="2" marker-end="url(#s-ink)"/>
+      <text x="715" y="514" text-anchor="middle" font-size="11" fill="currentColor">7 · USB: GET_INSTALLATION</text>
+      <text x="715" y="540" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.7">tablet learns the code from the board — no camera, no internet</text>
+    </svg>
+    <figcaption>The code is created once (step 1) and pushed into each unit through its own setup network (steps 3–5). The board is just one more unit (step 6), and the tablet reads everything from the board over USB (step 7). Case B is the same picture with steps 1 and 7 swapped: the tablet creates the code, sends it to the board, and shows it as a QR for the phone.</figcaption>
+  </figure>
+
+  <h2>2b. Device setup — every case on one map</h2>
+  <p>Whatever the order on site, the per-unit steps are identical. The only decisions are where the code comes from and what happens to the unit after it has the code.</p>
+  <figure>
+    <svg viewBox="0 0 900 640" role="img" aria-label="Flowchart of device setup: whether the installation code exists decides who creates it (phone offline, or tablet with the board); every unit then goes through the same steps; the board additionally receives the enrolled list and hands the code to the tablet over USB; units end up stored or online depending on whether the board's network is up.">
+      <defs>
+        <marker id="k-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+      </defs>
+      <!-- start -->
+      <rect x="360" y="20" width="180" height="34" rx="17" fill="#E8ECF1" stroke="currentColor" stroke-width="1"/>
+      <text x="450" y="42" text-anchor="middle" font-size="12" fill="#1B2430">Installer arrives on site</text>
+      <line x1="450" y1="54" x2="450" y2="80" stroke="currentColor" stroke-width="1.5" marker-end="url(#k-ink)"/>
+      <!-- decision 1 -->
+      <polygon points="450,80 590,120 450,160 310,120" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="450" y="116" text-anchor="middle" font-size="12" fill="currentColor">Does this installation</text>
+      <text x="450" y="132" text-anchor="middle" font-size="12" fill="currentColor">already have a code?</text>
+      <!-- no branch (left) -->
+      <line x1="310" y1="120" x2="240" y2="120" stroke="currentColor" stroke-width="1.5" marker-end="url(#k-ink)"/>
+      <text x="275" y="112" text-anchor="middle" font-size="11" fill="currentColor">no</text>
+      <polygon points="150,80 240,120 150,160 60,120" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="150" y="116" text-anchor="middle" font-size="11" fill="currentColor">Board + tablet</text>
+      <text x="150" y="131" text-anchor="middle" font-size="11" fill="currentColor">already powered?</text>
+      <!-- case A -->
+      <line x1="120" y1="160" x2="120" y2="200" stroke="currentColor" stroke-width="1.5" marker-end="url(#k-ink)"/>
+      <text x="108" y="184" text-anchor="end" font-size="11" fill="currentColor">no</text>
+      <rect x="30" y="200" width="200" height="58" rx="5" fill="#E8ECF1" stroke="currentColor" stroke-width="1"/>
+      <text x="130" y="220" text-anchor="middle" font-size="12" font-weight="600" fill="#1B2430">Case A · phone creates it</text>
+      <text x="130" y="236" text-anchor="middle" font-size="11" fill="#1B2430">offline, "New installation"</text>
+      <text x="130" y="250" text-anchor="middle" font-size="11" fill="#1B2430">stored on the phone</text>
+      <!-- case B -->
+      <line x1="180" y1="160" x2="300" y2="200" stroke="currentColor" stroke-width="1.5" marker-end="url(#k-ink)"/>
+      <text x="250" y="176" text-anchor="middle" font-size="11" fill="currentColor">yes</text>
+      <rect x="250" y="200" width="200" height="58" rx="5" fill="#E8ECF1" stroke="#6B4EBB" stroke-width="1"/>
+      <text x="350" y="220" text-anchor="middle" font-size="12" font-weight="600" fill="#1B2430">Case B · tablet creates it</text>
+      <text x="350" y="236" text-anchor="middle" font-size="11" fill="#1B2430">USB → board raises SIOT-xxxx</text>
+      <text x="350" y="250" text-anchor="middle" font-size="11" fill="#1B2430">tablet shows QR → phone scans</text>
+      <!-- yes branch (right) -->
+      <line x1="590" y1="120" x2="660" y2="120" stroke="currentColor" stroke-width="1.5" marker-end="url(#k-ink)"/>
+      <text x="625" y="112" text-anchor="middle" font-size="11" fill="currentColor">yes</text>
+      <rect x="660" y="90" width="220" height="62" rx="5" fill="#E8ECF1" stroke="currentColor" stroke-width="1"/>
+      <text x="770" y="110" text-anchor="middle" font-size="12" font-weight="600" fill="#1B2430">Case C · adding units later</text>
+      <text x="770" y="126" text-anchor="middle" font-size="11" fill="#1B2430">phone has the code, or scans the</text>
+      <text x="770" y="140" text-anchor="middle" font-size="11" fill="#1B2430">installation QR on the tablet / account</text>
+      <!-- converge to per-unit block -->
+      <line x1="130" y1="258" x2="130" y2="300" stroke="currentColor" stroke-width="1.5"/>
+      <line x1="350" y1="258" x2="350" y2="300" stroke="currentColor" stroke-width="1.5"/>
+      <line x1="770" y1="152" x2="770" y2="300" stroke="currentColor" stroke-width="1.5"/>
+      <line x1="130" y1="300" x2="770" y2="300" stroke="currentColor" stroke-width="1.5"/>
+      <line x1="450" y1="300" x2="450" y2="326" stroke="currentColor" stroke-width="1.5" marker-end="url(#k-ink)"/>
+      <rect x="180" y="326" width="540" height="78" rx="5" fill="none" stroke="currentColor" stroke-width="2"/>
+      <text x="450" y="348" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">For every unit — sirens, modules, detectors, and the board itself</text>
+      <text x="450" y="368" text-anchor="middle" font-size="11" fill="currentColor">power it (white blink) → scan sticker → name + zone → app joins SIOT-SETUP-&lt;id&gt; by itself</text>
+      <text x="450" y="384" text-anchor="middle" font-size="11" fill="currentColor">→ /identify (proof) → /provision (code, name, zone) → unit answers "stored" or "online"</text>
+      <text x="450" y="398" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.65">≈ 20 s per unit · no internet · order does not matter</text>
+      <!-- decision 2 -->
+      <line x1="450" y1="404" x2="450" y2="430" stroke="currentColor" stroke-width="1.5" marker-end="url(#k-ink)"/>
+      <polygon points="450,430 560,464 450,498 340,464" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="450" y="460" text-anchor="middle" font-size="12" fill="currentColor">Is this unit</text>
+      <text x="450" y="476" text-anchor="middle" font-size="12" fill="currentColor">the board?</text>
+      <!-- board path -->
+      <line x1="560" y1="464" x2="620" y2="464" stroke="#6B4EBB" stroke-width="1.5" marker-end="url(#k-ink)"/>
+      <text x="590" y="456" text-anchor="middle" font-size="11" fill="currentColor">yes</text>
+      <rect x="620" y="430" width="260" height="68" rx="5" fill="#E8ECF1" stroke="#6B4EBB" stroke-width="1"/>
+      <text x="750" y="450" text-anchor="middle" font-size="12" font-weight="600" fill="#1B2430">also: POST /enroll (units + names)</text>
+      <text x="750" y="466" text-anchor="middle" font-size="11" fill="#1B2430">mount it, plug the tablet's USB</text>
+      <text x="750" y="482" text-anchor="middle" font-size="11" fill="#1B2430">tablet reads the code: GET_INSTALLATION</text>
+      <text x="750" y="514" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.65">replacing a board later = this same path</text>
+      <!-- non-board path -->
+      <line x1="450" y1="498" x2="450" y2="540" stroke="currentColor" stroke-width="1.5" marker-end="url(#k-ink)"/>
+      <text x="462" y="522" font-size="11" fill="currentColor">no</text>
+      <!-- outcomes -->
+      <rect x="40" y="540" width="380" height="80" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="230" y="562" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Board's network not in the air yet → "stored"</text>
+      <text x="230" y="580" text-anchor="middle" font-size="11" fill="currentColor">unit keeps the code and its name, green blink,</text>
+      <text x="230" y="595" text-anchor="middle" font-size="11" fill="currentColor">joins by itself the moment SIOT-xxxx appears</text>
+      <text x="230" y="611" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.65">detector with no AC device in reach: standalone alarm meanwhile</text>
+      <rect x="480" y="540" width="380" height="80" rx="5" fill="none" stroke="#2E8B57" stroke-width="1.5"/>
+      <text x="670" y="562" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Board's network already up → "online"</text>
+      <text x="670" y="580" text-anchor="middle" font-size="11" fill="currentColor">AC device joins the mesh in seconds; detector binds</text>
+      <text x="670" y="595" text-anchor="middle" font-size="11" fill="currentColor">on its next wake; tablet shows it green, with its name</text>
+      <text x="670" y="611" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.65">"blink it" to confirm which unit it is</text>
+      <line x1="450" y1="540" x2="230" y2="540" stroke="currentColor" stroke-width="1.5"/>
+      <line x1="450" y1="540" x2="670" y2="540" stroke="currentColor" stroke-width="1.5"/>
+    </svg>
+    <figcaption>Three ways to obtain the code (A: phone, offline; B: tablet with a powered board; C: it already exists), one identical procedure per unit, and two possible outcomes that depend only on whether the board's network is already in the air. The board is a unit like any other, with one extra call.</figcaption>
+  </figure>
+
+  <figure>
+    <svg viewBox="0 0 1000 300" role="img" aria-label="State machine of a unit: setup mode, then stored after receiving the code, then joining when the installation network or an AC device is in reach, then online after the board hears its first authenticated frame; missing when silent too long, back to online on any frame; retired when removed by the operator; factory reset returns to setup from any state.">
+      <defs>
+        <marker id="m-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+      </defs>
+      <text x="430" y="28" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.7">a stored detector with nobody in reach works as a standalone alarm and keeps probing</text>
+      <!-- transition labels above the row -->
+      <g font-size="10" fill="currentColor" text-anchor="middle">
+        <text x="190" y="70">code pushed</text>
+        <text x="435" y="58">AC device: sees SIOT-xxxx</text>
+        <text x="435" y="70">detector: an AC device answers its probe</text>
+        <text x="665" y="58">board hears its first</text>
+        <text x="665" y="70">authenticated frame</text>
+      </g>
+      <!-- states -->
+      <g font-size="12" font-weight="600" fill="currentColor" text-anchor="middle">
+        <rect x="20" y="80" width="130" height="50" rx="25" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="85" y="110">Setup mode</text>
+        <rect x="250" y="80" width="130" height="50" rx="25" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="315" y="110">Stored</text>
+        <rect x="480" y="80" width="130" height="50" rx="25" fill="none" stroke="#2F6FBF" stroke-width="1.5"/>
+        <text x="545" y="110">Joining</text>
+        <rect x="710" y="80" width="130" height="50" rx="25" fill="none" stroke="#2E8B57" stroke-width="2"/>
+        <text x="775" y="110">Online</text>
+        <rect x="870" y="80" width="110" height="50" rx="25" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="925" y="110">Retired</text>
+        <rect x="710" y="200" width="130" height="50" rx="25" fill="none" stroke="#D64B2F" stroke-width="1.5"/>
+        <text x="775" y="230">Missing</text>
+      </g>
+      <g font-size="10" fill="currentColor" opacity="0.7" text-anchor="middle">
+        <text x="85" y="148">white blink · SIOT-SETUP-&lt;id&gt;</text>
+        <text x="315" y="148">green blink · has the code</text>
+        <text x="545" y="148">connecting / probing</text>
+        <text x="775" y="148">green solid · named on the tablet</text>
+        <text x="775" y="266">trouble on the tablet</text>
+      </g>
+      <g stroke="currentColor" stroke-width="1.5" marker-end="url(#m-ink)">
+        <line x1="150" y1="105" x2="250" y2="105"/>
+        <line x1="380" y1="105" x2="480" y2="105"/>
+        <line x1="610" y1="105" x2="710" y2="105"/>
+        <line x1="840" y1="105" x2="870" y2="105"/>
+        <line x1="790" y1="130" x2="790" y2="200"/>
+      </g>
+      <path d="M 760 200 C 745 180, 745 150, 760 130" fill="none" stroke="#2E8B57" stroke-width="1.5" marker-end="url(#m-ink)"/>
+      <g font-size="10" fill="currentColor">
+        <text x="800" y="162">silent &gt; 45 s (AC device)</text>
+        <text x="800" y="174">or 3 × interval (detector)</text>
+        <text x="742" y="168" text-anchor="end">any valid frame</text>
+        <text x="855" y="70" text-anchor="middle">operator</text>
+        <text x="855" y="82" text-anchor="middle">removes it</text>
+      </g>
+      <path d="M 740 250 C 740 292, 85 292, 85 130" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#m-ink)"/>
+      <text x="420" y="282" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.8">hold the button 5 s from any state → factory reset → back to setup mode (code erased)</text>
+    </svg>
+    <figcaption>The same states for every unit type; only the "joining" trigger differs — an AC device needs the board's network in the air, a detector needs an AC device that answers. "Online" is declared by the board, never assumed by the app.</figcaption>
+  </figure>
+
+  <h2>3. Power-on — the mesh forms itself</h2>
+  <p>Nobody chooses the root. The board raises the installation Wi-Fi; every AC device that holds the code looks for it; Mesh-Lite keeps the best-placed one as root and hangs the rest under it. Detectors find a parent on their next wake.</p>
+  <figure>
+    <svg viewBox="0 0 900 300" role="img" aria-label="Three moments after power-on: the board raises the access point; both sirens see it and compare signal, the stronger stays as root and the other joins under it; detectors probe and bind to the nearest AC device.">
+      <defs>
+        <marker id="f-mesh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2F6FBF"/></marker>
+        <marker id="f-leaf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2E8B57"/></marker>
+      </defs>
+      <!-- panel titles -->
+      <g font-size="12" font-weight="600" fill="currentColor">
+        <text x="20" y="24">t = 0 s · board powers up</text>
+        <text x="320" y="24">t ≈ 10–30 s · root chosen</text>
+        <text x="620" y="24">t ≈ 60 s · detectors bind</text>
+      </g>
+      <g stroke="currentColor" stroke-width="1" opacity="0.3"><line x1="300" y1="10" x2="300" y2="290"/><line x1="600" y1="10" x2="600" y2="290"/></g>
+      <!-- panel 1 -->
+      <rect x="70" y="50" width="160" height="40" rx="5" fill="none" stroke="#6B4EBB" stroke-width="2"/>
+      <text x="150" y="67" text-anchor="middle" font-size="12" fill="currentColor">Board</text>
+      <text x="150" y="82" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace" fill="#6B4EBB">SIOT-7F3A up</text>
+      <rect x="30" y="150" width="110" height="36" rx="5" fill="none" stroke="#2F6FBF" stroke-width="1.5" stroke-dasharray="4 3"/>
+      <text x="85" y="172" text-anchor="middle" font-size="11" fill="currentColor">Sirene 1</text>
+      <rect x="160" y="150" width="110" height="36" rx="5" fill="none" stroke="#2F6FBF" stroke-width="1.5" stroke-dasharray="4 3"/>
+      <text x="215" y="172" text-anchor="middle" font-size="11" fill="currentColor">Sirene 2</text>
+      <text x="150" y="215" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.7">both hold the code, both scan for SIOT-7F3A</text>
+      <g fill="none" stroke="#2E8B57" stroke-width="1.2"><circle cx="60" cy="260" r="12"/><circle cx="150" cy="260" r="12"/><circle cx="240" cy="260" r="12"/></g>
+      <text x="150" y="288" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.6">detectors asleep</text>
+      <!-- panel 2 -->
+      <rect x="370" y="50" width="160" height="40" rx="5" fill="none" stroke="#6B4EBB" stroke-width="2"/>
+      <text x="450" y="74" text-anchor="middle" font-size="12" fill="currentColor">Board</text>
+      <line x1="450" y1="90" x2="395" y2="150" stroke="#2F6FBF" stroke-width="2" marker-end="url(#f-mesh)"/>
+      <text x="392" y="104" text-anchor="end" font-size="10" fill="#2F6FBF">-52 dBm → root</text>
+      <line x1="450" y1="90" x2="505" y2="150" stroke="#2F6FBF" stroke-width="1" stroke-dasharray="3 3" opacity="0.5"/>
+      <text x="512" y="104" font-size="10" fill="currentColor" opacity="0.6">-71 dBm → steps back</text>
+      <rect x="330" y="150" width="110" height="36" rx="5" fill="none" stroke="#2F6FBF" stroke-width="2"/>
+      <text x="385" y="172" text-anchor="middle" font-size="11" font-weight="600" fill="currentColor">Sirene 1 · L1</text>
+      <rect x="460" y="150" width="110" height="36" rx="5" fill="none" stroke="#2F6FBF" stroke-width="1.5"/>
+      <text x="515" y="172" text-anchor="middle" font-size="11" fill="currentColor">Sirene 2 · L2</text>
+      <line x1="440" y1="168" x2="460" y2="168" stroke="#2F6FBF" stroke-width="2" marker-end="url(#f-mesh)"/>
+      <text x="450" y="215" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.7">Mesh-Lite compares signal to the board and builds the tree</text>
+      <g fill="none" stroke="#2E8B57" stroke-width="1.2"><circle cx="360" cy="260" r="12"/><circle cx="450" cy="260" r="12"/><circle cx="540" cy="260" r="12"/></g>
+      <text x="450" y="288" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.6">heartbeats every 15 s reach the tablet</text>
+      <!-- panel 3 -->
+      <rect x="670" y="50" width="160" height="40" rx="5" fill="none" stroke="#6B4EBB" stroke-width="2"/>
+      <text x="750" y="74" text-anchor="middle" font-size="12" fill="currentColor">Board</text>
+      <line x1="750" y1="90" x2="695" y2="150" stroke="#2F6FBF" stroke-width="2" marker-end="url(#f-mesh)"/>
+      <rect x="630" y="150" width="110" height="36" rx="5" fill="none" stroke="#2F6FBF" stroke-width="2"/>
+      <text x="685" y="172" text-anchor="middle" font-size="11" font-weight="600" fill="currentColor">Sirene 1 · L1</text>
+      <rect x="760" y="150" width="110" height="36" rx="5" fill="none" stroke="#2F6FBF" stroke-width="1.5"/>
+      <text x="815" y="172" text-anchor="middle" font-size="11" fill="currentColor">Sirene 2 · L2</text>
+      <line x1="740" y1="168" x2="760" y2="168" stroke="#2F6FBF" stroke-width="2" marker-end="url(#f-mesh)"/>
+      <g fill="none" stroke="#2E8B57" stroke-width="1.5"><circle cx="660" cy="260" r="12"/><circle cx="750" cy="260" r="12"/><circle cx="840" cy="260" r="12"/></g>
+      <g stroke="#2E8B57" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#f-leaf)">
+        <line x1="665" y1="248" x2="680" y2="188"/>
+        <line x1="748" y1="248" x2="700" y2="188"/>
+        <line x1="836" y1="248" x2="818" y2="188"/>
+      </g>
+      <text x="750" y="288" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.7">wake → "who's here?" → bind to the best reply</text>
+    </svg>
+    <figcaption>What Mesh-Lite does on its own once there is a network above it to connect to: compare signal to the board, keep one AC device as root, hang the others underneath. Detectors are not part of that tree; each one binds to whichever AC device answers its probe with the best signal.</figcaption>
+  </figure>
+
+  <h2>4. The root dies — and nothing has to be done</h2>
+  <figure>
+    <svg viewBox="0 0 900 250" role="img" aria-label="Before: Sirene 1 is root, Sirene 2 under it, detectors bound to both. After Sirene 1 loses power: Sirene 2 connects to the board's access point directly and becomes root; detectors that were bound to Sirene 1 re-bind to Sirene 2; the tablet shows Sirene 1 as missing.">
+      <defs>
+        <marker id="g-mesh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2F6FBF"/></marker>
+        <marker id="g-leaf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2E8B57"/></marker>
+      </defs>
+      <g font-size="12" font-weight="600" fill="currentColor"><text x="20" y="24">before</text><text x="470" y="24">≈ 1 minute after Sirene 1 loses power</text></g>
+      <line x1="450" y1="10" x2="450" y2="240" stroke="currentColor" stroke-width="1" opacity="0.3"/>
+      <!-- before -->
+      <rect x="140" y="40" width="160" height="36" rx="5" fill="none" stroke="#6B4EBB" stroke-width="2"/>
+      <text x="220" y="62" text-anchor="middle" font-size="12" fill="currentColor">Board · SIOT-7F3A</text>
+      <line x1="220" y1="76" x2="150" y2="130" stroke="#2F6FBF" stroke-width="2" marker-end="url(#g-mesh)"/>
+      <rect x="80" y="130" width="130" height="36" rx="5" fill="none" stroke="#2F6FBF" stroke-width="2"/>
+      <text x="145" y="152" text-anchor="middle" font-size="11" font-weight="600" fill="currentColor">Sirene 1 · ROOT</text>
+      <rect x="260" y="130" width="130" height="36" rx="5" fill="none" stroke="#2F6FBF" stroke-width="1.5"/>
+      <text x="325" y="152" text-anchor="middle" font-size="11" fill="currentColor">Sirene 2 · L2</text>
+      <line x1="210" y1="148" x2="260" y2="148" stroke="#2F6FBF" stroke-width="2" marker-end="url(#g-mesh)"/>
+      <g fill="none" stroke="#2E8B57" stroke-width="1.5"><circle cx="100" cy="220" r="12"/><circle cx="190" cy="220" r="12"/><circle cx="330" cy="220" r="12"/></g>
+      <g stroke="#2E8B57" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#g-leaf)">
+        <line x1="105" y1="208" x2="130" y2="168"/><line x1="186" y1="208" x2="160" y2="168"/><line x1="330" y1="208" x2="326" y2="168"/>
+      </g>
+      <!-- after -->
+      <rect x="590" y="40" width="160" height="36" rx="5" fill="none" stroke="#6B4EBB" stroke-width="2"/>
+      <text x="670" y="62" text-anchor="middle" font-size="12" fill="currentColor">Board · SIOT-7F3A</text>
+      <!-- dead siren -->
+      <rect x="530" y="130" width="130" height="36" rx="5" fill="none" stroke="#D64B2F" stroke-width="1.5" stroke-dasharray="4 3"/>
+      <text x="595" y="152" text-anchor="middle" font-size="11" fill="#D64B2F">Sirene 1 · missing</text>
+      <!-- new root -->
+      <line x1="670" y1="76" x2="760" y2="130" stroke="#2F6FBF" stroke-width="2" marker-end="url(#g-mesh)"/>
+      <text x="740" y="98" font-size="10" fill="#2F6FBF">reconnects to the board</text>
+      <rect x="710" y="130" width="130" height="36" rx="5" fill="none" stroke="#2F6FBF" stroke-width="2"/>
+      <text x="775" y="152" text-anchor="middle" font-size="11" font-weight="600" fill="currentColor">Sirene 2 · ROOT</text>
+      <g fill="none" stroke="#2E8B57" stroke-width="1.5"><circle cx="550" cy="220" r="12"/><circle cx="640" cy="220" r="12"/><circle cx="780" cy="220" r="12"/></g>
+      <g stroke="#2E8B57" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#g-leaf)">
+        <line x1="560" y1="210" x2="725" y2="168"/><line x1="650" y1="210" x2="745" y2="168"/><line x1="780" y1="208" x2="776" y2="168"/>
+      </g>
+      <text x="600" y="242" text-anchor="middle" font-size="10" fill="#2E8B57">"who's here?" → re-bind</text>
+      <text x="575" y="112" text-anchor="middle" font-size="10" fill="#D64B2F">tablet: TROUBLE "Sirene 1 missing" after 45 s</text>
+    </svg>
+    <figcaption>The board's access point is still there, so the surviving AC device connects to it and becomes root by Mesh-Lite's own rule. Detectors that lose their parent's acknowledgement ask "who's here?" and bind to whoever answers. The board raises a trouble for the missing unit; when it returns, it rejoins wherever it fits.</figcaption>
+  </figure>
+
+  <h2>5. An alarm, hop by hop</h2>
+  <figure>
+    <svg viewBox="0 0 900 150" role="img" aria-label="Alarm path: detector to its AC device by ESP-NOW, up the mesh to the root, root to board over Wi-Fi, board to tablet over USB; the board also commands sirens down the mesh; the board acknowledges the detector end to end.">
+      <defs>
+        <marker id="h-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#D64B2F"/></marker>
+      </defs>
+      <g font-size="12" font-weight="600" fill="currentColor" text-anchor="middle">
+        <text x="80" y="60">Detector D4</text><text x="270" y="60">Sirene 2 · L2</text><text x="460" y="60">Sirene 1 · ROOT</text><text x="650" y="60">Board</text><text x="830" y="60">Tablet</text>
+      </g>
+      <g font-size="10" fill="currentColor" opacity="0.65" text-anchor="middle">
+        <text x="80" y="76">smoke → wakes</text><text x="270" y="76">stores &amp; forwards</text><text x="460" y="76">forwards</text><text x="650" y="76">latches · journal · sirens</text><text x="830" y="76">shows "ALARM — D4"</text>
+      </g>
+      <g stroke="#D64B2F" stroke-width="2.5" marker-end="url(#h-ink)">
+        <line x1="130" y1="100" x2="210" y2="100"/><line x1="330" y1="100" x2="400" y2="100"/><line x1="520" y1="100" x2="595" y2="100"/><line x1="705" y1="100" x2="780" y2="100"/>
+      </g>
+      <g font-size="10" fill="currentColor" text-anchor="middle">
+        <text x="170" y="118">ESP-NOW</text><text x="365" y="118">Mesh-Lite</text><text x="557" y="118">Wi-Fi</text><text x="742" y="118">USB</text>
+      </g>
+      <text x="450" y="140" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.75">ACK travels back the same way; the board also sends "SOUND" down the mesh to the sirens · budget ≤ 10 s, expected ≪ 1 s</text>
+      <text x="450" y="34" text-anchor="middle" font-size="11" fill="#D64B2F">the detector stays awake and repeats the alarm every 60 s until RESET</text>
+    </svg>
+    <figcaption>Same SAFR frame on every hop; the radios only carry it. No relay understands or needs the alarm key — the board does.</figcaption>
+  </figure>
+
+  <h2>What never changes</h2>
+  <div class="rule">
+    <p>The board raises the installation Wi-Fi; the tablet never does. The board is never the root.</p>
+    <p>Root-capable means "on AC". Battery detectors are always the ones whispering, never relaying.</p>
+    <p>Every unit — board included — gets the code the same way: sticker, phone joins its setup network, code pushed.</p>
+    <p>The tablet learns the code from the board over USB; no camera, no internet, no customer router anywhere in the fire path.</p>
+  </div>
+</main>
+</body></html>
