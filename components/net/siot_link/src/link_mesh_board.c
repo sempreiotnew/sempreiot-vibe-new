@@ -28,6 +28,25 @@ static siot_installation_t s_code;
 static volatile int s_client_fd = -1; /* -1 = no root connected */
 static TaskHandle_t s_task;
 
+static esp_err_t ap_apply(const char *ssid, const char *pass, uint8_t channel, uint8_t max_sta)
+{
+    wifi_config_t ap_cfg = {
+        .ap = {
+            .authmode = WIFI_AUTH_WPA2_PSK,
+            .max_connection = max_sta,
+            .channel = channel,
+            .ssid_hidden = 0,
+        },
+    };
+    strlcpy((char *)ap_cfg.ap.ssid, ssid, sizeof(ap_cfg.ap.ssid));
+    ap_cfg.ap.ssid_len = (uint8_t)strlen(ssid);
+    strlcpy((char *)ap_cfg.ap.password, pass, sizeof(ap_cfg.ap.password));
+    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_AP);
+    if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_AP, &ap_cfg);
+    if (err == ESP_OK) err = esp_wifi_start();
+    return err;
+}
+
 static esp_err_t ap_start(void)
 {
     esp_err_t err = esp_netif_init();
@@ -40,25 +59,31 @@ static esp_err_t ap_start(void)
     err = esp_wifi_init(&init_cfg);
     if (err != ESP_OK) return err;
 
-    wifi_config_t ap_cfg = {
-        .ap = {
-            .authmode = WIFI_AUTH_WPA2_PSK,
-            .max_connection = BOARD_MAX_CHILDREN,
-            .channel = s_code.channel,
-            .ssid_hidden = 0,
-        },
-    };
-    strlcpy((char *)ap_cfg.ap.ssid, s_code.net_ssid, sizeof(ap_cfg.ap.ssid));
-    ap_cfg.ap.ssid_len = (uint8_t)strlen(s_code.net_ssid);
-    strlcpy((char *)ap_cfg.ap.password, s_code.net_psk, sizeof(ap_cfg.ap.password));
-
-    err = esp_wifi_set_mode(WIFI_MODE_AP);
-    if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_AP, &ap_cfg);
-    if (err == ESP_OK) err = esp_wifi_start();
+    err = ap_apply(s_code.net_ssid, s_code.net_psk, s_code.channel, BOARD_MAX_CHILDREN);
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "installation AP up: %s ch=%u (192.168.4.1)", s_code.net_ssid, s_code.channel);
     }
     return err; /* esp_netif's default AP config hands out 192.168.4.1 + DHCP */
+}
+
+/* Admin window (lifecycle §11): the one SoftAP becomes the setup network for
+ * a few minutes; the root loses the board meanwhile and rejoins on resume. */
+esp_err_t siot_link_mesh_board_suspend(const char *ssid, const char *pass, uint8_t channel)
+{
+    esp_err_t err = esp_wifi_stop();
+    if (err != ESP_OK) return err;
+    err = ap_apply(ssid, pass, channel, 4);
+    if (err == ESP_OK) ESP_LOGW(TAG, "installation AP suspended: setup network %s up", ssid);
+    return err;
+}
+
+esp_err_t siot_link_mesh_board_resume(void)
+{
+    esp_err_t err = esp_wifi_stop();
+    if (err != ESP_OK) return err;
+    err = ap_apply(s_code.net_ssid, s_code.net_psk, s_code.channel, BOARD_MAX_CHILDREN);
+    if (err == ESP_OK) ESP_LOGI(TAG, "installation AP resumed: %s ch=%u", s_code.net_ssid, s_code.channel);
+    return err;
 }
 
 static void drop_client(int *client)

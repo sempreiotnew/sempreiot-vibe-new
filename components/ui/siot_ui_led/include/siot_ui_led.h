@@ -15,6 +15,11 @@
  *   DEGRADED               keeps the role colour (no pattern defined yet)
  *   ALARM_SET              red solid until ALARM_CLEARED
  *   IDENTIFY               blue blink, 1 s period, for N s (default 3)
+ *   SURVEY_HEARD           passive unit: 1 s solid in the colour of the RSSI it
+ *                          heard the probe at (green ≥ −75, yellow ≥ −85, red)
+ *   SURVEY_ANSWER          emitter: one 400 ms pulse per answering unit, colour
+ *                          of that link's RSSI; SURVEY_RESULT with count 0 =
+ *                          one red pulse (lifecycle §6 range test)
  *
  * Traffic (decided 2026-09-23, docs/sempreiot-system-reference.md §3.7 row
  * 7.7) — pulses only when THIS unit transmits (SIOT_EVT_SAFR_TX: its own
@@ -47,7 +52,7 @@ extern "C" {
 typedef enum {
     SIOT_LED_OFF = 0,
     SIOT_LED_WHITE_BLINK,     /* setup mode */
-    SIOT_LED_WHITE_SOLID,     /* finding the network */
+    SIOT_LED_WHITE_SOLID,     /* factory-reset armed (button held); console */
     SIOT_LED_GREEN_BLINK,     /* root node: 250 ms flash every 5 s */
     SIOT_LED_GREEN_SOLID,     /* installed cue (blueprint, not wired) */
     SIOT_LED_MAGENTA_SOLID,   /* (console only) */
@@ -57,7 +62,14 @@ typedef enum {
     SIOT_LED_BLUE_BLINK,      /* IDENTIFY (1 s period) */
     SIOT_LED_BLUE_SOLID,      /* pulse: background tick / outgoing message */
     SIOT_LED_CYAN_SOLID,      /* pulse: own event confirmed by the tablet */
+    SIOT_LED_YELLOW_SOLID,    /* survey: only weak answers (lifecycle §6) */
+    SIOT_LED_WHITE_BREATHE,   /* configured, finding the network: slow dim fade, never a blink */
 } siot_led_pattern_t;
+
+#define SIOT_LED_SURVEY_HEARD_MS  1000  /* passive unit: solid colour of the probe it heard */
+#define SIOT_LED_SURVEY_ANSWER_MS  400  /* emitter: one pulse per unit that answered */
+#define SIOT_LED_SURVEY_GOOD_DBM   (-75) /* green at or above */
+#define SIOT_LED_SURVEY_WEAK_DBM   (-85) /* yellow at or above, red below */
 
 #define SIOT_LED_TICK_MS            100  /* background traffic */
 #define SIOT_LED_MSG_MS             500  /* EVENT / ACK / COMMAND / TIME_SYNC */

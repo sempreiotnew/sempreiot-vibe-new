@@ -19,6 +19,7 @@
 #include "siot_netcore.h"
 #include "siot_provisioning.h"
 #include "siot_safr.h"
+#include "siot_survey.h"
 #include "siot_ui_button.h"
 #include "siot_ui_led.h"
 #include "siot_version.h"
@@ -86,8 +87,16 @@ void app_main(void)
     siot_safr_set_level(0);
 
     /* 10: node → Mesh-Lite link + netcore (JOINING until Mesh-Lite gives a level). */
+    /* Mesh-Lite and the Wi-Fi driver narrate every scan and every failed
+     * connect ("Disconnect reason : 201" = no AP found: the board is off).
+     * Keep their errors, drop the play-by-play; ours stay at INFO. */
+    esp_log_level_set("[vendor_ie]", ESP_LOG_ERROR);
+    esp_log_level_set("[ESP_Mesh_Lite_Comm]", ESP_LOG_ERROR);
+    esp_log_level_set("bridge_wifi", ESP_LOG_WARN);
+    esp_log_level_set("wifi", ESP_LOG_ERROR);
     ESP_ERROR_CHECK(siot_link_mesh_node_init(code));
     ESP_ERROR_CHECK(siot_netcore_start());
+    if (siot_survey_init(0xFF) != ESP_OK) ESP_LOGW(TAG, "survey mode unavailable (ESP-NOW init failed)");
     ESP_LOGI(TAG, "normal mode: system_id=0x%04X ssid=%s name=%s",
              code->system_id, code->net_ssid, code->name);
 }

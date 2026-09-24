@@ -78,3 +78,29 @@ TEST_CASE("prov: AES-128-CCM envelope from the app decrypts to code_json", "[pro
     TEST_ASSERT_NOT_EQUAL(0, siot_prov_decrypt_envelope(key, raw, 20, ID, plain, sizeof(plain),
                                                         &plain_len)); /* too short */
 }
+
+/* Admin window (lifecycle §11): the board encrypts the code with the same
+ * construction the phone uses for /provision, so with the vector's nonce2
+ * it must reproduce the pinned base64 byte for byte. */
+TEST_CASE("prov: encrypt_envelope reproduces the app vector (GET /code direction)", "[prov]")
+{
+    uint8_t nonce[16], key[16], nonce2[12];
+    nonce16(nonce);
+    for (int i = 0; i < 12; i++) nonce2[i] = (uint8_t)(100 + i);
+    siot_prov_derive_key(POP, nonce, sizeof(nonce), key);
+
+    uint8_t raw[256];
+    size_t raw_len = 0;
+    TEST_ASSERT_EQUAL(0, siot_prov_encrypt_envelope(key, ID, (const uint8_t *)CODE_JSON, strlen(CODE_JSON),
+                                                    nonce2, raw, sizeof(raw), &raw_len));
+    unsigned char b64[512];
+    size_t b64_len = 0;
+    TEST_ASSERT_EQUAL(0, mbedtls_base64_encode(b64, sizeof(b64), &b64_len, raw, raw_len));
+    TEST_ASSERT_EQUAL_STRING(ENVELOPE_B64, (const char *)b64);
+
+    uint8_t plain[256];
+    size_t plain_len = 0;
+    TEST_ASSERT_EQUAL(0, siot_prov_decrypt_envelope(key, raw, raw_len, ID, plain, sizeof(plain), &plain_len));
+    TEST_ASSERT_EQUAL(strlen(CODE_JSON), plain_len);
+    TEST_ASSERT_EQUAL_MEMORY(CODE_JSON, plain, plain_len);
+}

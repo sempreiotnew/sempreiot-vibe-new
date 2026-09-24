@@ -61,21 +61,16 @@ static void nonce_from_header(const uint8_t *hdr, uint8_t nonce[SAFR_NONCE_LEN])
     memcpy(&nonce[6], &hdr[24], 6);  /* BOOT_CTR ‖ MSG_CTR */
 }
 
-size_t siot_safr_build_frame(uint8_t *out,
-                             uint8_t msg_type,
-                             uint16_t msg_id,
-                             const uint8_t src_mac[6],
-                             const uint8_t dst_mac[6],
-                             uint8_t ttl,
-                             uint8_t hops,
-                             uint8_t flags,
-                             uint16_t boot_ctr,
-                             uint32_t msg_ctr,
-                             const uint8_t *payload,
-                             size_t payload_len)
+/* Shared bodies: `ccm` is the installed context (s_ccm) or a temporary one
+ * for the setup channel (spec §3.1); `lock` is NULL for a private context. */
+static size_t build_with_ctx(mbedtls_ccm_context *ccm, safr_lock_t *lock, uint16_t system_id,
+                             uint8_t *out, uint8_t msg_type, uint16_t msg_id,
+                             const uint8_t src_mac[6], const uint8_t dst_mac[6],
+                             uint8_t ttl, uint8_t hops, uint8_t flags,
+                             uint16_t boot_ctr, uint32_t msg_ctr,
+                             const uint8_t *payload, size_t payload_len)
 {
     if (payload_len > SAFR_MAX_PAYLOAD) return 0;
-    if (!s_ccm_ready) return 0;
 
     flags |= SAFR_F_ENC;
     const size_t total =
@@ -88,8 +83,8 @@ size_t siot_safr_build_frame(uint8_t *out,
     out[4] = msg_type;
     out[5] = (uint8_t)(msg_id >> 8);
     out[6] = (uint8_t)(msg_id & 0xFF);
-    out[7] = (uint8_t)(s_system_id >> 8);
-    out[8] = (uint8_t)(s_system_id & 0xFF);
+    out[7] = (uint8_t)(system_id >> 8);
+    out[8] = (uint8_t)(system_id & 0xFF);
     memcpy(&out[9], src_mac, 6);
     memcpy(&out[15], dst_mac, 6);
     out[21] = ttl;
@@ -105,9 +100,9 @@ size_t siot_safr_build_frame(uint8_t *out,
     uint8_t nonce[SAFR_NONCE_LEN];
     nonce_from_header(out, nonce);
 
-    safr_lock(&s_ccm_lock);
+    if (lock) safr_lock(lock);
     int rc = mbedtls_ccm_encrypt_and_tag(
-        &s_ccm,
+        ccm,
         payload_len,
         nonce, SAFR_NONCE_LEN,
         out, SAFR_HDR_LEN,              /* AAD = full header */
@@ -115,7 +110,7 @@ size_t siot_safr_build_frame(uint8_t *out,
         &out[SAFR_HDR_LEN],             /* ciphertext */
         &out[SAFR_HDR_LEN + payload_len],
         SAFR_TAG_LEN);
-    safr_unlock(&s_ccm_lock);
+    if (lock) safr_unlock(lock);
     if (rc != 0) return 0;
 
     const uint16_t crc = siot_safr_crc16(out, total - SAFR_CRC_LEN);
@@ -124,7 +119,9 @@ size_t siot_safr_build_frame(uint8_t *out,
     return total;
 }
 
-siot_safr_parse_result_t siot_safr_parse_frame(const uint8_t *buf, size_t len,
+static siot_safr_parse_result_t parse_with_ctx(mbedtls_ccm_context *ccm, safr_lock_t *lock,
+                                               bool ccm_ready, uint16_t system_id,
+                                               const uint8_t *buf, size_t len,
                                                siot_safr_frame_t *rx)
 {
     if (len < SAFR_MIN_FRAME || buf[0] != SAFR_SOF || buf[1] != SAFR_VER) {
@@ -150,7 +147,7 @@ siot_safr_parse_result_t siot_safr_parse_frame(const uint8_t *buf, size_t len,
 
     /* Site separation (spec §3.1): frames from another installation are
      * dropped before any decryption attempt. */
-    if (rx->system_id != s_system_id) return SIOT_SAFR_PARSE_FOREIGN;
+    if (rx->system_id != system_id) return SIOT_SAFR_PARSE_FOREIGN;
 
     const bool enc = (rx->flags & SAFR_F_ENC) != 0;
     const size_t body_len = total - SAFR_HDR_LEN - SAFR_CRC_LEN;
@@ -159,13 +156,13 @@ siot_safr_parse_result_t siot_safr_parse_frame(const uint8_t *buf, size_t len,
         if (body_len < SAFR_TAG_LEN) return SIOT_SAFR_PARSE_BAD_FRAME;
         rx->payload_len = body_len - SAFR_TAG_LEN;
         if (rx->payload_len > SAFR_MAX_PAYLOAD) return SIOT_SAFR_PARSE_BAD_FRAME;
-        if (!s_ccm_ready) return SIOT_SAFR_PARSE_AUTH_FAILED;
+        if (!ccm_ready) return SIOT_SAFR_PARSE_AUTH_FAILED;
 
         uint8_t nonce[SAFR_NONCE_LEN];
         nonce_from_header(buf, nonce);
-        safr_lock(&s_ccm_lock);
+        if (lock) safr_lock(lock);
         int rc = mbedtls_ccm_auth_decrypt(
-            &s_ccm,
+            ccm,
             rx->payload_len,
             nonce, SAFR_NONCE_LEN,
             buf, SAFR_HDR_LEN,
@@ -173,7 +170,7 @@ siot_safr_parse_result_t siot_safr_parse_frame(const uint8_t *buf, size_t len,
             rx->payload,
             &buf[SAFR_HDR_LEN + rx->payload_len],
             SAFR_TAG_LEN);
-        safr_unlock(&s_ccm_lock);
+        if (lock) safr_unlock(lock);
         return rc == 0 ? SIOT_SAFR_PARSE_OK : SIOT_SAFR_PARSE_AUTH_FAILED;
     }
 
@@ -181,4 +178,61 @@ siot_safr_parse_result_t siot_safr_parse_frame(const uint8_t *buf, size_t len,
     if (rx->payload_len > SAFR_MAX_PAYLOAD) return SIOT_SAFR_PARSE_BAD_FRAME;
     memcpy(rx->payload, &buf[SAFR_HDR_LEN], rx->payload_len);
     return SIOT_SAFR_PARSE_OK;
+}
+
+size_t siot_safr_build_frame(uint8_t *out,
+                             uint8_t msg_type,
+                             uint16_t msg_id,
+                             const uint8_t src_mac[6],
+                             const uint8_t dst_mac[6],
+                             uint8_t ttl,
+                             uint8_t hops,
+                             uint8_t flags,
+                             uint16_t boot_ctr,
+                             uint32_t msg_ctr,
+                             const uint8_t *payload,
+                             size_t payload_len)
+{
+    if (!s_ccm_ready) return 0;
+    return build_with_ctx(&s_ccm, &s_ccm_lock, s_system_id, out, msg_type, msg_id, src_mac, dst_mac,
+                          ttl, hops, flags, boot_ctr, msg_ctr, payload, payload_len);
+}
+
+siot_safr_parse_result_t siot_safr_parse_frame(const uint8_t *buf, size_t len,
+                                               siot_safr_frame_t *rx)
+{
+    return parse_with_ctx(&s_ccm, &s_ccm_lock, s_ccm_ready, s_system_id, buf, len, rx);
+}
+
+/* ---- explicit-key variants (setup channel, spec §3.1 v3.2) ------------- */
+
+size_t siot_safr_build_frame_with(uint16_t system_id, const uint8_t key[16], uint8_t *out,
+                                  uint8_t msg_type, uint16_t msg_id,
+                                  const uint8_t src_mac[6], const uint8_t dst_mac[6],
+                                  uint8_t ttl, uint8_t hops, uint8_t flags,
+                                  uint16_t boot_ctr, uint32_t msg_ctr,
+                                  const uint8_t *payload, size_t payload_len)
+{
+    mbedtls_ccm_context ccm;
+    mbedtls_ccm_init(&ccm);
+    if (mbedtls_ccm_setkey(&ccm, MBEDTLS_CIPHER_ID_AES, key, 128) != 0) {
+        mbedtls_ccm_free(&ccm);
+        return 0;
+    }
+    const size_t n = build_with_ctx(&ccm, NULL, system_id, out, msg_type, msg_id, src_mac, dst_mac,
+                                    ttl, hops, flags, boot_ctr, msg_ctr, payload, payload_len);
+    mbedtls_ccm_free(&ccm);
+    return n;
+}
+
+siot_safr_parse_result_t siot_safr_parse_frame_with(uint16_t system_id, const uint8_t key[16],
+                                                    const uint8_t *buf, size_t len,
+                                                    siot_safr_frame_t *rx)
+{
+    mbedtls_ccm_context ccm;
+    mbedtls_ccm_init(&ccm);
+    const bool ready = mbedtls_ccm_setkey(&ccm, MBEDTLS_CIPHER_ID_AES, key, 128) == 0;
+    const siot_safr_parse_result_t r = parse_with_ctx(&ccm, NULL, ready, system_id, buf, len, rx);
+    mbedtls_ccm_free(&ccm);
+    return r;
 }

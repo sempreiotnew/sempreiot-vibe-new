@@ -171,6 +171,13 @@ esp_err_t siot_config_factory_reset(void)
         memset(&s_code, 0, sizeof(s_code));
         s_has_code = false;
     }
+    /* The board's device table (siot_devtab, lifecycle §3) lives in its own
+     * namespace; a factory reset wipes it too. Absent on nodes: not an error. */
+    nvs_handle_t d;
+    if (nvs_open("siot_devtab", NVS_READWRITE, &d) == ESP_OK) {
+        if (nvs_erase_all(d) == ESP_OK) nvs_commit(d);
+        nvs_close(d);
+    }
     ESP_LOGW(TAG, "factory reset: %s erased (%s)", NVS_NS_INST, esp_err_to_name(err));
     return err;
 }

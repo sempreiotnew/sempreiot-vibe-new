@@ -36,6 +36,11 @@ extern "C" {
  * both links and the 250 ms tick task. */
 esp_err_t siot_coordinator_start(void);
 
+/* Board in SETUP (no code): listen on USB for the tablet's SET_INSTALLATION
+ * on the setup channel (spec §3.1, Case B). Requires siot_identity. The
+ * board reboots into normal mode once the code is stored. */
+esp_err_t siot_coordinator_setup_channel_start(void);
+
 #ifdef __cplusplus
 }
 #endif

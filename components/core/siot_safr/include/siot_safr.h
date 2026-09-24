@@ -52,6 +52,10 @@ extern "C" {
 #define SAFR_MSG_EVENT_LOG_DATA 0x08
 #define SAFR_MSG_INSTALLATION   0x09 /* v3.1, POC round 1 -- spec §7.10 */
 #define SAFR_MSG_NAME_ANNOUNCE  0x0A /* v3.1, POC round 1 -- spec §7.11 */
+#define SAFR_MSG_DEVICE_TABLE   0x0B /* v3.2 -- spec §7.12 (board → central, paged) */
+#define SAFR_MSG_CODE           0x0C /* v3.2 -- spec §7.13 (setup channel only) */
+#define SAFR_MSG_PARENT_PROBE   0x0D /* v3.2 -- spec §7.14 (ESP-NOW) */
+#define SAFR_MSG_PARENT_OFFER   0x0E /* v3.2 -- spec §7.15 (ESP-NOW) */
 
 /* FLAGS */
 #define SAFR_F_ENC      0x01
@@ -115,12 +119,33 @@ extern "C" {
 #define SAFR_CMD_IDENTIFY   0x04
 #define SAFR_CMD_RESET      0x05 /* operator reset — only alarm-latch clear */
 #define SAFR_CMD_GET_INSTALLATION 0x10 /* v3.1, POC round 1 -- spec §7.6 */
-#define SAFR_CMD_SET_INSTALLATION 0x11 /* v3.1, Case B only -- ARGS undefined (brief §14 item 1) */
+#define SAFR_CMD_SET_INSTALLATION 0x11 /* v3.2, Case B: setup channel only -- spec §7.6 */
+#define SAFR_CMD_SET_DEVICE       0x12 /* v3.2 -- mac ‖ name ‖ zone */
+#define SAFR_CMD_RETIRE_DEVICE    0x13 /* v3.2 -- board only */
+#define SAFR_CMD_UNRETIRE_DEVICE  0x14 /* v3.2 -- board only */
+#define SAFR_CMD_REPLACE_DEVICE   0x15 /* v3.2 -- board only: old_mac ‖ new_mac */
+#define SAFR_CMD_DECOMMISSION     0x16 /* v3.2 -- remote factory reset, never broadcast */
+#define SAFR_CMD_FORGET_DEVICE    0x17 /* v3.2 -- board only, retired entries */
+#define SAFR_CMD_GET_DEVICE_TABLE 0x18 /* v3.2 -- board only: page u8 (0 = all) */
+#define SAFR_CMD_GET_CODE         0x19 /* v3.2 -- setup channel only, provisioned board */
+
+/* PARENT_PROBE / PARENT_OFFER purpose (spec §7.14) */
+#define SAFR_PROBE_PARENT 0x00
+#define SAFR_PROBE_SURVEY 0x01
 
 /* ACK STATUS */
 #define SAFR_ACK_OK          0x00
 #define SAFR_ACK_ERROR       0x01
 #define SAFR_ACK_UNKNOWN_DST 0x02
+
+/* ACK DETAIL, byte 3 (spec §7.5 v3.2) */
+#define SAFR_ACK_D_NONE           0x00
+#define SAFR_ACK_D_UNKNOWN_MAC    0x01
+#define SAFR_ACK_D_TABLE_FULL     0x02
+#define SAFR_ACK_D_NOT_RETIRED    0x03
+#define SAFR_ACK_D_BAD_ARGS       0x04
+#define SAFR_ACK_D_REFUSED        0x05
+#define SAFR_ACK_D_NOT_SETUP_MODE 0x06
 
 /* Sentinels */
 #define SAFR_NA_U8   0xFF
@@ -186,6 +211,21 @@ typedef enum {
  * plaintext policy, replay check or dedupe — that is siot_safr_rx(). */
 siot_safr_parse_result_t siot_safr_parse_frame(const uint8_t *buf, size_t len,
                                                siot_safr_frame_t *rx);
+
+/* Same codec with an explicit (SYSTEM_ID, key) instead of the installed one:
+ * the setup channel of spec §3.1 (SYSTEM_ID 0x0000, key from the board
+ * sticker) on the USB link. A temporary CCM context per call; never used on
+ * the mesh. The caller owns BOOT_CTR / MSG_CTR uniqueness for that key. */
+size_t siot_safr_build_frame_with(uint16_t system_id, const uint8_t key[16], uint8_t *out,
+                                  uint8_t msg_type, uint16_t msg_id,
+                                  const uint8_t src_mac[6], const uint8_t dst_mac[6],
+                                  uint8_t ttl, uint8_t hops, uint8_t flags,
+                                  uint16_t boot_ctr, uint32_t msg_ctr,
+                                  const uint8_t *payload, size_t payload_len);
+
+siot_safr_parse_result_t siot_safr_parse_frame_with(uint16_t system_id, const uint8_t key[16],
+                                                    const uint8_t *buf, size_t len,
+                                                    siot_safr_frame_t *rx);
 
 /* =========================================================================
  * Device-side state: identity, counters, TX

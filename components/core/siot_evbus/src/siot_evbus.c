@@ -32,6 +32,9 @@ static const char *const EVT_NAMES[SIOT_EVT_MAX] = {
     [SIOT_EVT_ACK_RECEIVED]      = "ACK_RECEIVED",
     [SIOT_EVT_ACK_TIMEOUT]       = "ACK_TIMEOUT",
     [SIOT_EVT_TIME_SYNCED]       = "TIME_SYNCED",
+    [SIOT_EVT_SURVEY_RESULT]     = "SURVEY_RESULT",
+    [SIOT_EVT_SURVEY_HEARD]      = "SURVEY_HEARD",
+    [SIOT_EVT_SURVEY_ANSWER]     = "SURVEY_ANSWER",
 };
 
 /* esp_event -> typed handler. `handler_arg` is our subscription record. */

@@ -1,11 +1,11 @@
-/* From pocs/board/main/installation_msg.c. */
+/* From pocs/board/main/installation_msg.c; v3.2: source is the device table. */
 #include <string.h>
 
 #include "coord_internal.h"
 #include "siot_safr.h"
 
 size_t coord_installation_encode(const siot_installation_t *code,
-                                 const siot_enrolled_entry_t *enrolled, size_t enrolled_n,
+                                 const siot_devtab_entry_t *entries, size_t n,
                                  uint8_t *out)
 {
     size_t off = 0;
@@ -25,8 +25,9 @@ size_t coord_installation_encode(const siot_installation_t *code,
 
     const size_t count_off = off++;
     uint8_t count = 0;
-    for (size_t i = 0; i < enrolled_n; i++) {
-        const siot_enrolled_entry_t *e = &enrolled[i];
+    for (size_t i = 0; i < n; i++) {
+        const siot_devtab_entry_t *e = &entries[i];
+        if (e->state == SIOT_DEV_RETIRED) continue; /* legacy view: members only */
         const size_t n_len = strnlen(e->name, SIOT_NAME_MAX_LEN);
         const size_t z_len = strnlen(e->zone, SIOT_ZONE_MAX_LEN);
         if (off + 6 + 1 + n_len + 1 + z_len > SAFR_MAX_PAYLOAD) break; /* stop cleanly, never overflow */

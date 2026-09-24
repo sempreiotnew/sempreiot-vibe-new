@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -13,6 +14,7 @@
 #include "siot_identity.h"
 #include "siot_link.h"
 #include "siot_safr.h"
+#include "siot_survey.h"
 #include "siot_util.h"
 
 static const char *TAG = "siot_netcore";
@@ -49,9 +51,38 @@ static uint8_t  s_pending_attempts;
 static int64_t  s_pending_next_ms;
 
 static bool s_name_announced;
+static esp_timer_handle_t s_decommission_timer;
+
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 static uint32_t now_epoch(int64_t t) { return s_epoch_base + (uint32_t)((t - s_epoch_ref_ms) / 1000); }
+
+/* When a downlink frame last came through (TIME_SYNC / LINK_CHECK from the
+ * tablet every 30 s, ACKs and commands from the board). Two nodes can form a
+ * mesh among themselves with no board at all (Mesh-Lite picks a root
+ * anyway), so "level > 0" never meant "the board is there". */
+static int64_t s_last_downlink_ms = -1;
+#define BOARD_SILENCE_MS 90000 /* 3 × the tablet's LINK_CHECK period (spec §9.3) */
+
+static bool board_reachable(int64_t t)
+{
+    if (siot_link_mesh_level() == 1 && siot_link_mesh_board_up()) return true;
+    return s_last_downlink_ms >= 0 && t - s_last_downlink_ms < BOARD_SILENCE_MS;
+}
+
+/* Runs in the link rx task for every downlink frame (before for_me). */
+static void note_downlink(void)
+{
+    const int64_t t = now_ms();
+    const bool was = board_reachable(t);
+    s_last_downlink_ms = t;
+    if (!was) {
+        ESP_LOGI(TAG, "board reachable: re-announcing name");
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        s_name_announced = false; /* the announce sent into a board-less mesh was lost */
+        xSemaphoreGive(s_lock);
+    }
+}
 
 static void post_state(siot_state_t next)
 {
@@ -68,15 +99,23 @@ static void post_state(siot_state_t next)
 static void tx_sink(const uint8_t *frame, size_t len, const uint8_t dst_mac[6], void *ctx)
 {
     (void)ctx;
+    if (siot_survey_tx(frame, len, dst_mac)) return; /* PARENT_PROBE/OFFER: ESP-NOW, not the mesh */
     const esp_err_t err = siot_link_send(SIOT_LINK_MESH, dst_mac, frame, len);
+    const bool reachable = board_reachable(now_ms());
     if (err == ESP_OK) {
-        const siot_evt_frame_t ev = {.msg_type = frame[4]};
-        siot_evbus_post(SIOT_EVT_SAFR_TX, &ev, sizeof(ev));
+        /* Blue traffic tick only when the frame can actually reach the tablet;
+         * inside a board-less mesh it would just be noise on the LED. */
+        if (reachable) {
+            const siot_evt_frame_t ev = {.msg_type = frame[4]};
+            siot_evbus_post(SIOT_EVT_SAFR_TX, &ev, sizeof(ev));
+        }
         ESP_LOGD(TAG, "tx type 0x%02X id %u", frame[4], siot_get_u16(&frame[5]));
-    } else {
+    } else if (reachable) {
         ESP_LOGW(TAG, "tx type 0x%02X id %u NOT sent: %s (level %u, board %s)", frame[4],
                  siot_get_u16(&frame[5]), esp_err_to_name(err), siot_link_mesh_level(),
                  siot_link_mesh_board_up() ? "up" : "down");
+    } else {
+        ESP_LOGD(TAG, "tx type 0x%02X dropped: no path to the board yet", frame[4]);
     }
 }
 
@@ -190,7 +229,7 @@ static void emit_topology(int64_t t)
 static bool emit_name_announce(void)
 {
     const siot_installation_t *code = siot_config_code();
-    uint8_t p[1 + SIOT_NAME_MAX_LEN + 1 + SIOT_ZONE_MAX_LEN];
+    uint8_t p[1 + SIOT_NAME_MAX_LEN + 1 + SIOT_ZONE_MAX_LEN + 1];
     const uint8_t name_len = (uint8_t)strnlen(code->name, SIOT_NAME_MAX_LEN);
     const uint8_t zone_len = (uint8_t)strnlen(code->zone, SIOT_ZONE_MAX_LEN);
     size_t off = 0;
@@ -198,6 +237,7 @@ static bool emit_name_announce(void)
     memcpy(&p[off], code->name, name_len); off += name_len;
     p[off++] = zone_len;
     memcpy(&p[off], code->zone, zone_len); off += zone_len;
+    p[off++] = siot_link_mesh_level() == 1 ? SAFR_ROLE_ROOT : SAFR_ROLE_NODE; /* v3.2 ROLE */
     return send_uplink(SAFR_MSG_NAME_ANNOUNCE, siot_safr_next_msg_id(), 0, p, off) == ESP_OK;
 }
 
@@ -218,6 +258,7 @@ static void relay_down(const uint8_t *raw, size_t raw_len, bool duplicate)
 static void on_ack(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len, bool dup, void *ctx)
 {
     (void)ctx;
+    note_downlink();
     relay_down(raw, raw_len, dup);
     if (!for_me(f) || f->payload_len < 4) return;
     const uint16_t acked = siot_get_u16(&f->payload[0]);
@@ -238,6 +279,7 @@ static void on_ack(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_le
 static void on_time_sync(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len, bool dup, void *ctx)
 {
     (void)ctx;
+    note_downlink();
     relay_down(raw, raw_len, dup);
     if (!for_me(f) || f->payload_len < 5) return;
     if (!dup) {
@@ -251,15 +293,68 @@ static void on_time_sync(const siot_safr_frame_t *f, const uint8_t *raw, size_t 
     if (f->flags & SAFR_F_ACK_REQ) send_ack(f->msg_id, SAFR_ACK_OK, f->src_mac); /* every time */
 }
 
+/* DECOMMISSION (spec §7.6 v3.2): the ACK went out first; now wipe the code
+ * and come back in setup mode. Runs in the esp_timer task, not the rx path. */
+static void decommission_cb(void *arg)
+{
+    (void)arg;
+    ESP_LOGW(TAG, "DECOMMISSION: erasing the code, back to setup mode");
+    siot_evbus_post(SIOT_EVT_FACTORY_RESET, NULL, 0);
+    siot_config_factory_reset();
+    vTaskDelay(pdMS_TO_TICKS(200)); /* let the LED/log settle */
+    esp_restart();
+}
+
+/* SET_DEVICE ARGS: mac[6] ‖ name_len ‖ name ‖ zone_len ‖ zone; must name us. */
+static bool apply_set_device(const uint8_t *a, size_t alen)
+{
+    if (alen < 8 || !siot_mac_eq(a, siot_identity_get()->mac)) return false;
+    const size_t n = a[6];
+    if (n > SIOT_NAME_MAX_LEN || 7 + n >= alen) return false;
+    const size_t z = a[7 + n];
+    if (z > SIOT_ZONE_MAX_LEN || 8 + n + z != alen) return false;
+    siot_installation_t inst = *siot_config_code();
+    memset(inst.name, 0, sizeof(inst.name));
+    memset(inst.zone, 0, sizeof(inst.zone));
+    memcpy(inst.name, &a[7], n);
+    memcpy(inst.zone, &a[8 + n], z);
+    if (siot_config_save_code(&inst) != ESP_OK) return false;
+    ESP_LOGW(TAG, "SET_DEVICE: now \"%s\" / \"%s\" — re-announcing", inst.name, inst.zone);
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_name_announced = false;
+    xSemaphoreGive(s_lock);
+    return true;
+}
+
 static void on_command(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len, bool dup, void *ctx)
 {
     (void)ctx;
+    note_downlink();
     relay_down(raw, raw_len, dup);
     if (!for_me(f) || f->payload_len < 2) return;
     const uint8_t cmd = f->payload[0];
+    const size_t alen = f->payload[1];
+    const uint8_t *args = &f->payload[2];
+    if (f->payload_len < 2 + alen) return;
+    uint8_t status = SAFR_ACK_OK;
     if (!dup) { /* process once */
         switch (cmd) {
         case SAFR_CMD_LINK_CHECK: /* board-level supervision no-op (spec §9.3) */
+            break;
+        case SAFR_CMD_SET_DEVICE: /* v3.2: rename / re-zone (lifecycle §5 H) */
+            if (!apply_set_device(args, alen)) status = SAFR_ACK_ERROR;
+            break;
+        case SAFR_CMD_DECOMMISSION: /* v3.2: remote factory reset (lifecycle §5 G) */
+            if (alen != 6 || siot_mac_is_bcast(f->dst_mac) ||
+                !siot_mac_eq(f->dst_mac, siot_identity_get()->mac) || !siot_mac_eq(args, f->dst_mac)) {
+                status = SAFR_ACK_ERROR; /* never broadcast, ARGS must equal DST == us */
+                break;
+            }
+            if (s_decommission_timer == NULL) {
+                const esp_timer_create_args_t targs = {.callback = decommission_cb, .name = "decommission"};
+                esp_timer_create(&targs, &s_decommission_timer);
+            }
+            if (s_decommission_timer) esp_timer_start_once(s_decommission_timer, 300 * 1000);
             break;
         case SAFR_CMD_IDENTIFY: {
             const siot_evt_identify_t ev = {.seconds = f->payload_len >= 3 ? f->payload[2] : 0};
@@ -284,7 +379,7 @@ static void on_command(const siot_safr_frame_t *f, const uint8_t *raw, size_t ra
             break; /* no sounder / relay in Phase 1 */
         }
     }
-    if (f->flags & SAFR_F_ACK_REQ) send_ack(f->msg_id, SAFR_ACK_OK, f->src_mac); /* ACK every time */
+    if (f->flags & SAFR_F_ACK_REQ) send_ack(f->msg_id, status, f->src_mac); /* ACK every time */
 }
 
 /* Link rx (mesh_tcp_task or Mesh-Lite's task) → the SAFR pipeline. */
@@ -322,6 +417,14 @@ static void on_link_rx(siot_link_kind_t kind, const uint8_t *frame, size_t len, 
 static void on_button(siot_evt_id_t id, const void *data, void *ctx)
 {
     (void)data; (void)ctx;
+    if (id == SIOT_EVT_BUTTON_TAP && !board_reachable(now_ms())) {
+        /* No path to the board (no mesh, or a board-less mesh between nodes):
+         * TEST is the range survey (lifecycle §6), not a walk test. */
+        ESP_LOGW(TAG, "TEST tap with no board reachable (level %u) -> survey probe", siot_link_mesh_level());
+        const esp_err_t err = siot_survey_probe();
+        if (err != ESP_OK) ESP_LOGW(TAG, "survey: %s", esp_err_to_name(err));
+        return;
+    }
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (id == SIOT_EVT_BUTTON_TAP) {
         ESP_LOGW(TAG, "TEST tap (level %u) -> MANUAL_TEST", siot_link_mesh_level());
@@ -344,6 +447,7 @@ static bool update_state(void)
     const bool level_changed = level != s_level_seen;
     if (level_changed) {
         s_level_seen = level;
+        siot_survey_set_layer(level == 0 ? 0xFF : level);
         const siot_evt_level_t ev = {.level = level};
         siot_evbus_post(SIOT_EVT_MESH_LEVEL, &ev, sizeof(ev));
         if (level == 0) ESP_LOGI(TAG, "role: not joined (looking for the network)");
@@ -351,13 +455,19 @@ static bool update_state(void)
         else ESP_LOGW(TAG, "role: NODE (child, level %u)", level);
     }
     siot_state_t next;
+    const bool reachable = board_reachable(now_ms());
     if (level == 0) {
         next = s_state == SIOT_STATE_JOINING ? SIOT_STATE_JOINING : SIOT_STATE_OFFLINE;
-    } else if ((level == 1 && !siot_link_mesh_board_up()) || s_comm_fault) {
+    } else if (!reachable) {
+        /* A mesh among nodes with no board behind it (lifecycle §6): still
+         * "finding the network" for the operator — white solid, not green. */
+        next = SIOT_STATE_JOINING;
+    } else if (s_comm_fault) {
         next = SIOT_STATE_DEGRADED;
     } else {
         next = SIOT_STATE_ONLINE;
     }
+    siot_survey_set_online(next == SIOT_STATE_ONLINE);
     post_state(next);
     return level_changed;
 }
@@ -380,7 +490,8 @@ static void netcore_task(void *arg)
         if (level_changed) { next_hb_ms = t; next_topo_ms = t; }
 
         /* NAME_ANNOUNCE once after boot — keep trying until a live transport takes it. */
-        if (!s_name_announced && siot_link_mesh_level() > 0 && siot_link_is_up(SIOT_LINK_MESH)) {
+        if (!s_name_announced && siot_link_mesh_level() > 0 && siot_link_is_up(SIOT_LINK_MESH) &&
+            board_reachable(t)) {
             s_name_announced = emit_name_announce();
             if (s_name_announced) ESP_LOGI(TAG, "NAME_ANNOUNCE sent: %s / %s",
                                            siot_config_code()->name, siot_config_code()->zone);
@@ -433,6 +544,10 @@ esp_err_t siot_netcore_start(void)
     if ((err = siot_evbus_subscribe(SIOT_EVT_BUTTON_DOUBLE_TAP, on_button, NULL, NULL)) != ESP_OK) return err;
 
     if ((err = siot_link_start(SIOT_LINK_MESH)) != ESP_OK) return err;
+    /* Announce the starting state unconditionally: the LED boots assuming
+     * SETUP and post_state() skips no-op transitions, so a node that stays
+     * JOINING (no board on site) would otherwise blink white forever. */
+    s_state = SIOT_STATE_SETUP;
     post_state(SIOT_STATE_JOINING);
 
     if (xTaskCreatePinnedToCore(netcore_task, "netcore_task", 4096, NULL, 15, &s_task, 1) != pdPASS) {

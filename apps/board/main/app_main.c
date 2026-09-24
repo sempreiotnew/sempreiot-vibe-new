@@ -14,11 +14,13 @@
 #include "siot_board_def.h"
 #include "siot_config.h"
 #include "siot_coordinator.h"
+#include "siot_devtab.h"
 #include "siot_evbus.h"
 #include "siot_identity.h"
 #include "siot_link.h"
 #include "siot_provisioning.h"
 #include "siot_safr.h"
+#include "siot_survey.h"
 #include "siot_ui_button.h"
 #include "siot_ui_led.h"
 #include "siot_version.h"
@@ -48,6 +50,13 @@ static void set_state(siot_state_t prev, siot_state_t next)
     siot_evbus_post(SIOT_EVT_STATE_CHANGED, &ev, sizeof(ev));
 }
 
+/* /enroll during setup: the phone's work log becomes "expected" hints in the
+ * device table (lifecycle §3.2), no cap of 8. */
+static esp_err_t enroll_hint(const uint8_t mac[6], const char *name, const char *zone)
+{
+    return siot_devtab_hint(mac, name, zone);
+}
+
 void app_main(void)
 {
     ESP_LOGI(TAG, "sempreiot-board fw %s", siot_version_full());
@@ -62,6 +71,7 @@ void app_main(void)
     ESP_ERROR_CHECK(siot_ui_led_init(IS_BOARD));                    /* 4-5 */
     ESP_ERROR_CHECK(siot_ui_button_init());                         /* 5: factory-reset hold armed */
     ESP_ERROR_CHECK(siot_config_init());                            /* 7 */
+    ESP_ERROR_CHECK(siot_devtab_init());                            /* 7b: the device table (lifecycle §3) */
 
     if (!has_identity) {
         set_state(SIOT_STATE_SETUP, SIOT_STATE_UNPROVISIONED_FACTORY);
@@ -70,7 +80,9 @@ void app_main(void)
     }
     if (!siot_config_has_code()) {                                  /* 10: no code → setup */
         set_state(SIOT_STATE_SETUP, SIOT_STATE_SETUP);
+        siot_provisioning_set_enroll_sink(enroll_hint);
         ESP_ERROR_CHECK(siot_provisioning_start(IS_BOARD));
+        ESP_ERROR_CHECK(siot_coordinator_setup_channel_start()); /* Case B over USB (lifecycle §5 B) */
         return;
     }
 
@@ -89,6 +101,7 @@ void app_main(void)
     ESP_ERROR_CHECK(siot_link_serial_init());
     ESP_ERROR_CHECK(siot_link_mesh_board_init(code));
     ESP_ERROR_CHECK(siot_coordinator_start());
+    if (siot_survey_init(0) == ESP_OK) siot_survey_set_online(true); /* answers survey probes (lifecycle §6) */
     ESP_LOGI(TAG, "normal mode: system_id=0x%04X ssid=%s name=%s",
              code->system_id, code->net_ssid, code->name);
 }

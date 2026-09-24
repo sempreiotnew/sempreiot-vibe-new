@@ -57,6 +57,9 @@ typedef enum {
     SIOT_EVT_ACK_RECEIVED,      /* siot_evt_ack_t          ACK for one of our MSG_IDs */
     SIOT_EVT_ACK_TIMEOUT,       /* siot_evt_ack_t          fast phase exhausted (COMM_FAULT) */
     SIOT_EVT_TIME_SYNCED,       /* siot_evt_time_t         TIME_SYNC adopted */
+    SIOT_EVT_SURVEY_RESULT,     /* siot_evt_survey_t       lifecycle §6: end of the window (count 0 = nobody) */
+    SIOT_EVT_SURVEY_HEARD,      /* siot_evt_rssi_t         passive unit: a probe arrived at this RSSI */
+    SIOT_EVT_SURVEY_ANSWER,     /* siot_evt_rssi_t         emitter: one unit answered, link RSSI */
     SIOT_EVT_MAX
 } siot_evt_id_t;
 
@@ -70,6 +73,8 @@ typedef struct { uint8_t seconds; } siot_evt_identify_t;
 typedef struct { uint8_t msg_type; uint8_t src_mac[6]; } siot_evt_frame_t;
 typedef struct { uint16_t msg_id; uint8_t status; } siot_evt_ack_t;    /* status: SAFR ACK STATUS */
 typedef struct { uint32_t epoch; int8_t tz_offset_qh; } siot_evt_time_t;
+typedef struct { uint8_t count; int8_t best_rssi; } siot_evt_survey_t; /* count 0 = nobody answered */
+typedef struct { int8_t rssi; } siot_evt_rssi_t;                       /* dBm */
 
 typedef void (*siot_evbus_handler_t)(siot_evt_id_t id, const void *data, void *ctx);
 

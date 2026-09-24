@@ -97,6 +97,11 @@ esp_err_t siot_link_mesh_board_init(const siot_installation_t *code);
 /* Board: the tablet link over siot_hal_serial. */
 esp_err_t siot_link_serial_init(void);
 
+/* Board admin window (lifecycle §11): swap the one SoftAP to the setup
+ * network (SSID/password/channel given) and back to the installation AP. */
+esp_err_t siot_link_mesh_board_suspend(const char *ssid, const char *pass, uint8_t channel);
+esp_err_t siot_link_mesh_board_resume(void);
+
 /* ---- mesh queries (node backend; 0 / false on the board) --------------- */
 
 uint8_t siot_link_mesh_level(void);                       /* 0 = not joined, 1 = root */
