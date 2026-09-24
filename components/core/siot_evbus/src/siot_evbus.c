@@ -35,6 +35,7 @@ static const char *const EVT_NAMES[SIOT_EVT_MAX] = {
     [SIOT_EVT_SURVEY_RESULT]     = "SURVEY_RESULT",
     [SIOT_EVT_SURVEY_HEARD]      = "SURVEY_HEARD",
     [SIOT_EVT_SURVEY_ANSWER]     = "SURVEY_ANSWER",
+    [SIOT_EVT_SURVEY_START]      = "SURVEY_START",
 };
 
 /* esp_event -> typed handler. `handler_arg` is our subscription record. */

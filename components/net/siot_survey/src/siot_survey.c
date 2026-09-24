@@ -207,12 +207,10 @@ esp_err_t siot_survey_probe(void)
 {
     if (!s_ready) return ESP_ERR_INVALID_STATE;
     if (s_probing) {
-        /* A press inside the window restarts the survey: the blinks end long
-         * before the window does, so "ignored" reads as "broken" (bench 2026-09-24). */
-        ESP_LOGW(TAG, "survey restarted by a new press (previous: %u answer(s))", s_offers);
-        esp_timer_stop(s_repeat_timer);
-        esp_timer_stop(s_collect_timer);
-        s_probing = false;
+        /* Locked: the LED is dark for the whole window; it breathes again
+         * when a new press is accepted (lifecycle §6, decided 2026-09-24). */
+        ESP_LOGW(TAG, "TEST locked: survey running (%u answer(s) so far) — wait for the breathe", s_offers);
+        return ESP_ERR_INVALID_STATE;
     }
     s_offers = 0;
     s_best_rssi = -128;
@@ -227,6 +225,7 @@ esp_err_t siot_survey_probe(void)
     ESP_LOGW(TAG, "survey msg_id %u: probe copy 1/%d sent (x%d over %d ms); collecting for %d ms",
              s_probe_msg_id, PROBE_REPEATS, PROBE_REPEATS, PROBE_SPACING_MS * (PROBE_REPEATS - 1),
              SIOT_SURVEY_COLLECT_MS);
+    siot_evbus_post(SIOT_EVT_SURVEY_START, NULL, 0); /* LED dark = locked */
     esp_timer_start_once(s_repeat_timer, (uint64_t)PROBE_SPACING_MS * 1000);
     return esp_timer_start_once(s_collect_timer, (uint64_t)SIOT_SURVEY_COLLECT_MS * 1000);
 }

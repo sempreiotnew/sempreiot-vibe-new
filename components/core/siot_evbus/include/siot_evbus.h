@@ -60,6 +60,7 @@ typedef enum {
     SIOT_EVT_SURVEY_RESULT,     /* siot_evt_survey_t       lifecycle §6: end of the window (count 0 = nobody) */
     SIOT_EVT_SURVEY_HEARD,      /* siot_evt_rssi_t         passive unit: a probe arrived at this RSSI */
     SIOT_EVT_SURVEY_ANSWER,     /* siot_evt_rssi_t         emitter: one unit answered, link RSSI */
+    SIOT_EVT_SURVEY_START,      /* -                       emitter: window open, TEST locked, LED dark */
     SIOT_EVT_MAX
 } siot_evt_id_t;
 

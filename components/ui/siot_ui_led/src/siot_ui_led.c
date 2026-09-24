@@ -40,6 +40,7 @@ static bool     s_is_board;
 static uint8_t  s_state = SIOT_STATE_SETUP;
 static uint8_t  s_level;
 static bool     s_alarm;
+static bool     s_survey;            /* window open: TEST locked, base pattern dark */
 
 static void led_set_rgb(bool r, bool g, bool b, uint8_t duty)
 {
@@ -213,6 +214,7 @@ static void on_tx(uint8_t msg_type)
 static siot_led_pattern_t pattern_for_state(void)
 {
     if (s_alarm) return SIOT_LED_RED_SOLID;
+    if (s_survey) return SIOT_LED_OFF; /* lifecycle §6: dark = survey running, button locked */
     switch (s_state) {
     case SIOT_STATE_UNPROVISIONED_FACTORY: return SIOT_LED_RED_BLINK;
     case SIOT_STATE_SETUP:                 return SIOT_LED_WHITE_BLINK; /* the ONLY white blink */
@@ -283,9 +285,15 @@ static void on_event(siot_evt_id_t id, const void *data, void *ctx)
         siot_ui_led_pulse(rssi_pattern(((const siot_evt_rssi_t *)data)->rssi), SIOT_LED_SURVEY_ANSWER_MS, false);
         siot_ui_led_pulse(SIOT_LED_OFF, SIOT_LED_SURVEY_ANSWER_MS / 2, false); /* gap between blinks */
         break;
-    case SIOT_EVT_SURVEY_RESULT: { /* end of the window: nobody answered = one red pulse */
+    case SIOT_EVT_SURVEY_START: /* window open: go dark, the answer pulses play over it */
+        s_survey = true;
+        apply_state();
+        break;
+    case SIOT_EVT_SURVEY_RESULT: { /* window closed: nobody = one red pulse; breathe back = unlocked */
         const siot_evt_survey_t *r = data;
         if (r->count == 0) siot_ui_led_pulse(SIOT_LED_RED_SOLID, SIOT_LED_SURVEY_ANSWER_MS, false);
+        s_survey = false;
+        apply_state();
         break;
     }
     default:

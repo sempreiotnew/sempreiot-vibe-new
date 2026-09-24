@@ -17,9 +17,10 @@
  *   IDENTIFY               blue blink, 1 s period, for N s (default 3)
  *   SURVEY_HEARD           passive unit: 1 s solid in the colour of the RSSI it
  *                          heard the probe at (green ≥ −75, yellow ≥ −85, red)
- *   SURVEY_ANSWER          emitter: one 400 ms pulse per answering unit, colour
- *                          of that link's RSSI; SURVEY_RESULT with count 0 =
- *                          one red pulse (lifecycle §6 range test)
+ *   SURVEY_START/RESULT    emitter: dark for the whole window (TEST locked),
+ *                          one 400 ms pulse per answering unit in that link's
+ *                          colour (SURVEY_ANSWER), one red pulse if nobody,
+ *                          then the base pattern returns = unlocked (lifecycle §6)
  *
  * Traffic (decided 2026-09-23, docs/sempreiot-system-reference.md §3.7 row
  * 7.7) — pulses only when THIS unit transmits (SIOT_EVT_SAFR_TX: its own

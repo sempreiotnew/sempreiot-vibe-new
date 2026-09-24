@@ -422,8 +422,8 @@ static void on_button(siot_evt_id_t id, const void *data, void *ctx)
          * TEST is the range survey (lifecycle §6), not a walk test. */
         ESP_LOGW(TAG, "TEST tap with no board reachable (level %u) -> survey probe", siot_link_mesh_level());
         const esp_err_t err = siot_survey_probe();
-        if (err != ESP_OK) ESP_LOGW(TAG, "survey: %s", esp_err_to_name(err));
-        return;
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) ESP_LOGW(TAG, "survey: %s", esp_err_to_name(err));
+        return; /* INVALID_STATE = locked, already logged by siot_survey */
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (id == SIOT_EVT_BUTTON_TAP) {
