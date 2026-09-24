@@ -18,6 +18,9 @@ class TopologyNode {
     required this.alarmLatched,
     this.alarmLatchedAt,
     this.name,
+    this.zone,
+    this.boardState,
+    this.boardFlags = 0,
   });
 
   final String mac;
@@ -33,6 +36,20 @@ class TopologyNode {
   final bool alarmLatched;
   final DateTime? alarmLatchedAt;
   final String? name;
+  final String? zone;
+
+  /// The board's own view of this MAC (spec §7.12 DEVICE_TABLE), null until
+  /// the first table sync.
+  final SafrDeviceState? boardState;
+  final int boardFlags;
+
+  bool get retired => boardState == SafrDeviceState.retired;
+  bool get expected => boardState == SafrDeviceState.expected;
+  bool get pendingRename => boardFlags & SafrDeviceFlags.pendingRename != 0;
+  bool get pendingDecommission =>
+      boardFlags & SafrDeviceFlags.pendingDecommission != 0;
+  bool get heardWhileRetired =>
+      boardFlags & SafrDeviceFlags.heardWhileRetired != 0;
 
   /// Leaves sleep between wakes: online but silent for a while.
   bool get sleeping =>
@@ -83,6 +100,11 @@ final topologyProvider = Provider<List<TopologyNode>>((ref) {
         alarmLatched: s.device.alarmLatched == 1,
         alarmLatchedAt: s.device.alarmLatchedAt,
         name: s.device.name,
+        zone: s.device.zone,
+        boardState: s.device.boardState == null
+            ? null
+            : SafrDeviceState.fromWire(s.device.boardState!),
+        boardFlags: s.device.boardFlags,
       ),
   ]..sort((a, b) {
       final byLayer = a.layer.compareTo(b.layer);

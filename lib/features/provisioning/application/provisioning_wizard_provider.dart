@@ -19,6 +19,10 @@ class ProvisioningWizardState {
   final String? deviceZone;
   final String? error;
 
+  /// Non-fatal note shown on the result screen (e.g. the board did not take
+  /// the `/enroll` hints). The unit itself is provisioned.
+  final String? warning;
+
   const ProvisioningWizardState({
     this.step = ProvisioningStep.scan,
     this.sticker,
@@ -26,6 +30,7 @@ class ProvisioningWizardState {
     this.deviceName,
     this.deviceZone,
     this.error,
+    this.warning,
   });
 
   ProvisioningWizardState copyWith({
@@ -35,6 +40,7 @@ class ProvisioningWizardState {
     String? deviceName,
     String? deviceZone,
     String? error,
+    String? warning,
     bool clearError = false,
   }) =>
       ProvisioningWizardState(
@@ -44,6 +50,7 @@ class ProvisioningWizardState {
         deviceName: deviceName ?? this.deviceName,
         deviceZone: deviceZone ?? this.deviceZone,
         error: clearError ? null : (error ?? this.error),
+        warning: warning ?? this.warning,
       );
 }
 
@@ -201,7 +208,11 @@ class ProvisioningWizardNotifier
           _infoTimer = null;
           state = state.copyWith(
             error: 'Não foi possível encontrar o dispositivo. Verifique se '
-                'o telefone está conectado a $ssidHint e tente novamente.',
+                'o telefone está conectado a $ssidHint e tente novamente.\n\n'
+                'Se a rede $ssidHint não aparece, este dispositivo já foi '
+                'configurado (talvez por outro instalador). Para reconfigurar, '
+                'segure o botão dele por 5 s até o LED piscar branco '
+                '(lifecycle §5.1).',
           );
         }
       } finally {
@@ -288,31 +299,46 @@ class ProvisioningWizardNotifier
         zone: zone,
       );
 
-      // Board sticker: also hand it the already-provisioned nodes so it can
-      // answer INSTALLATION's enrolled list (spec §7.10).
+      // Board sticker: also hand it this phone's work log as "expected"
+      // hints (lifecycle §3.2). Non-fatal: the board discovers every unit
+      // from traffic anyway; names arrive by NAME_ANNOUNCE.
       if (info.model.toUpperCase().startsWith('SIOT-BOARD') &&
           installation.devices.isNotEmpty) {
-        try {
-          await DeviceApService.enroll([
-            for (final d in installation.devices)
-              (mac: d.mac, id: d.id, name: d.name, zone: d.zone),
-          ]);
-        } catch (e) {
-          // Non-fatal: the board is still provisioned; the enrolled list
-          // can be resent later once GET_INSTALLATION/enroll retry exists.
-          debugPrint('[Provisioning] /enroll failed (non-fatal): $e');
+        final hints = [
+          for (final d in installation.devices)
+            (mac: d.mac, id: d.id, name: d.name, zone: d.zone),
+        ];
+        var enrolled = false;
+        for (var attempt = 0; attempt < 2 && !enrolled; attempt++) {
+          try {
+            await DeviceApService.enroll(hints);
+            enrolled = true;
+          } catch (e) {
+            debugPrint('[Provisioning] /enroll attempt ${attempt + 1} failed: $e');
+          }
+        }
+        if (!enrolled && mounted) {
+          state = state.copyWith(
+            warning: 'A placa foi configurada, mas não recebeu a lista de '
+                'nomes deste telefone. Sem problema: os dispositivos aparecem '
+                'na central com seus nomes assim que entram na rede.',
+          );
         }
       }
 
-      await _ref.read(installationListProvider.notifier).addProvisionedDevice(
-            installationId,
-            ProvisionedDevice(
-              mac: sticker.mac,
-              id: sticker.id,
-              name: name,
-              zone: zone,
-            ),
-          );
+      final list = _ref.read(installationListProvider.notifier);
+      await list.addProvisionedDevice(
+        installationId,
+        ProvisionedDevice(
+          mac: sticker.mac,
+          id: sticker.id,
+          name: name,
+          zone: zone,
+          provisionedAt: DateTime.now().toUtc(),
+        ),
+      );
+      // A zone typed in the wizard becomes a suggestion for the next unit.
+      await list.addZone(installationId, zone);
     } catch (e) {
       if (!mounted) return;
       debugPrint('[Provisioning] provision error: $e');

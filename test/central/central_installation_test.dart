@@ -10,6 +10,7 @@ import 'package:sempreiot_central_app/features/central/domain/safr/safr_encoder.
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_identity.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_frame.dart';
 import 'package:sempreiot_central_app/features/installation/domain/entities/installation.dart';
+import 'package:sempreiot_central_app/features/installation/domain/services/installation_backup_codec.dart';
 
 /// The JSON the installer phone shows as "Backup da instalação".
 Map<String, dynamic> _backupJson({
@@ -40,11 +41,30 @@ Uint8List _heartbeatPayload({int layer = 1}) => Uint8List.fromList([
 
 void main() {
   group('parseInstallationBackup', () {
-    test('accepts the phone backup JSON and keeps the key', () {
-      final inst = parseInstallationBackup(jsonEncode(_backupJson()));
+    test('accepts the legacy plaintext JSON, flagged as legacy', () {
+      final parsed = parseInstallationBackup(jsonEncode(_backupJson()));
+      expect(parsed.legacyPlaintext, isTrue);
+      final inst = parsed.installation;
       expect(inst.systemId, 1220);
       expect(inst.devices.single.name, 'Sirene 1');
       expect(SafrIdentity.keyFromHex(inst.safrPskHex), isNotNull);
+    });
+
+    test('accepts the v2 encrypted share with its passphrase', () {
+      final original = Installation.fromJson(_backupJson());
+      final envelope =
+          InstallationBackupCodec.encode(original, 'senha-forte-1');
+      expect(() => parseInstallationBackup(envelope),
+          throwsA(isA<PassphraseRequired>()));
+      expect(() => parseInstallationBackup(envelope, passphrase: 'errada!!'),
+          throwsA(isA<FormatException>()));
+      final parsed = parseInstallationBackup(envelope, passphrase: 'senha-forte-1');
+      expect(parsed.legacyPlaintext, isFalse);
+      expect(parsed.installation.systemId, 1220);
+      expect(parsed.installation.safrPskHex, original.safrPskHex);
+      // The share carries the code and zones, never the phone's work log.
+      expect(parsed.installation.devices, isEmpty);
+      expect(parsed.installation.zones, ['Térreo']);
     });
 
     test('rejects garbage, sticker QRs and bad keys', () {

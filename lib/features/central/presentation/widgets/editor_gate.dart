@@ -122,3 +122,36 @@ class _EditorGateState extends ConsumerState<EditorGate> {
     );
   }
 }
+
+/// Pushes a full-screen [EditorGate] and returns the role that unlocked it,
+/// or null if the operator backed out. For one-off gated actions (a rename,
+/// a retire) where wrapping the whole screen would be overkill.
+Future<EditorRole?> requestEditorRole(
+  BuildContext context, {
+  required String subtitle,
+}) {
+  return Navigator.of(context).push<EditorRole>(
+    MaterialPageRoute<EditorRole>(
+      builder: (ctx) => Scaffold(
+        backgroundColor: ctx.bgColor,
+        appBar: AppBar(
+          backgroundColor: ctx.bgColor,
+          elevation: 0,
+          iconTheme: IconThemeData(color: ctx.textPrimary),
+          title: Text(
+            'Acesso restrito',
+            style: TextStyle(
+              color: ctx.textPrimary,
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        body: EditorGate(
+          subtitle: subtitle,
+          onUnlocked: (role) => Navigator.of(ctx).pop(role),
+        ),
+      ),
+    ),
+  );
+}

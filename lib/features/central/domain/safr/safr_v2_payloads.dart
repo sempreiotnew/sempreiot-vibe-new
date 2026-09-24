@@ -101,10 +101,54 @@ enum SafrCommand {
 
   /// v3.1, POC round 1 (spec §7.6/§7.10): serial-link-only, board replies
   /// with INSTALLATION. Never relayed into the mesh.
-  getInstallation(0x10);
+  getInstallation(0x10),
+
+  // ── v3.2 installation lifecycle (spec §7.6, lifecycle §5) ──────────────
+
+  /// Case B: tablet writes the code into a board in SETUP. Setup channel
+  /// only (SYSTEM_ID 0x0000, pop-derived key).
+  setInstallation(0x11),
+
+  /// Rename / re-zone a unit; board updates its table and relays.
+  setDevice(0x12),
+
+  /// Board-only: mark a MAC retired (its frames are dropped from now on).
+  retireDevice(0x13),
+
+  /// Board-only: undo retire.
+  unretireDevice(0x14),
+
+  /// Board-only: copy name/zone old → new, retire old, decommission if online.
+  replaceDevice(0x15),
+
+  /// Remote factory reset of one unit. Never broadcast.
+  decommission(0x16),
+
+  /// Board-only: delete a retired entry.
+  forgetDevice(0x17),
+
+  /// Board-only: reply with DEVICE_TABLE pages.
+  getDeviceTable(0x18),
+
+  /// Setup channel only, provisioned board: reply with CODE.
+  getCode(0x19);
 
   const SafrCommand(this.wire);
   final int wire;
+
+  /// Commands the board answers itself and never relays into the mesh.
+  bool get isBoardOnly => switch (this) {
+        SafrCommand.getInstallation ||
+        SafrCommand.setInstallation ||
+        SafrCommand.retireDevice ||
+        SafrCommand.unretireDevice ||
+        SafrCommand.replaceDevice ||
+        SafrCommand.forgetDevice ||
+        SafrCommand.getDeviceTable ||
+        SafrCommand.getCode =>
+          true,
+        _ => false,
+      };
 }
 
 enum SafrAckStatus {
@@ -120,6 +164,63 @@ enum SafrAckStatus {
         (e) => e.wire == v,
         orElse: () => SafrAckStatus.unknown,
       );
+}
+
+/// ACK byte 3 (spec §7.5, v3.2 `DETAIL`) — why a v3.2 command was refused.
+enum SafrAckDetail {
+  none(0x00),
+  unknownMac(0x01),
+  tableFull(0x02),
+  notRetired(0x03),
+  badArgs(0x04),
+  refused(0x05),
+  notInSetupMode(0x06),
+  unknown(0xFF);
+
+  const SafrAckDetail(this.wire);
+  final int wire;
+
+  static SafrAckDetail fromWire(int v) => values.firstWhere(
+        (e) => e.wire == v,
+        orElse: () => SafrAckDetail.unknown,
+      );
+
+  String get label => switch (this) {
+        SafrAckDetail.none => '',
+        SafrAckDetail.unknownMac => 'dispositivo desconhecido na placa',
+        SafrAckDetail.tableFull => 'tabela de dispositivos da placa cheia',
+        SafrAckDetail.notRetired => 'o dispositivo não está aposentado',
+        SafrAckDetail.badArgs => 'argumentos inválidos',
+        SafrAckDetail.refused => 'recusado pela placa',
+        SafrAckDetail.notInSetupMode => 'a placa já está configurada',
+        SafrAckDetail.unknown => 'motivo desconhecido',
+      };
+}
+
+/// Device-table entry state (spec §7.12, lifecycle §3.2).
+enum SafrDeviceState {
+  expected(0),
+  online(1),
+  missing(2),
+  retired(3),
+  unknown(0xFF);
+
+  const SafrDeviceState(this.wire);
+  final int wire;
+
+  static SafrDeviceState fromWire(int v) => values.firstWhere(
+        (e) => e.wire == v,
+        orElse: () => SafrDeviceState.unknown,
+      );
+}
+
+/// Device-table entry flags (spec §7.12).
+abstract final class SafrDeviceFlags {
+  static const seenEver = 0x01;
+  static const annotated = 0x02;
+  static const pendingRename = 0x04;
+  static const heardWhileRetired = 0x08;
+  static const pendingDecommission = 0x10;
 }
 
 // ── Payload models ───────────────────────────────────────────────
@@ -290,28 +391,39 @@ class SafrTopologyPayload extends SafrV2Payload {
 }
 
 class SafrAckPayload extends SafrV2Payload {
-  const SafrAckPayload({required this.ackedMsgId, required this.status});
+  const SafrAckPayload({
+    required this.ackedMsgId,
+    required this.status,
+    this.detail = SafrAckDetail.none,
+  });
 
   static const wireLength = 4;
 
   final int ackedMsgId;
   final SafrAckStatus status;
 
+  /// Byte 3 (spec §7.5 v3.2 `DETAIL`); always `none` from pre-v3.2 senders.
+  final SafrAckDetail detail;
+
   static SafrAckPayload? parse(Uint8List p) {
     if (p.length < wireLength) return null;
     return SafrAckPayload(
       ackedMsgId: (p[0] << 8) | p[1],
       status: SafrAckStatus.fromWire(p[2]),
+      detail: SafrAckDetail.fromWire(p[3]),
     );
   }
 
-  static Uint8List build(
-      {required int ackedMsgId, SafrAckStatus status = SafrAckStatus.ok}) {
+  static Uint8List build({
+    required int ackedMsgId,
+    SafrAckStatus status = SafrAckStatus.ok,
+    SafrAckDetail detail = SafrAckDetail.none,
+  }) {
     return Uint8List.fromList([
       (ackedMsgId >> 8) & 0xFF,
       ackedMsgId & 0xFF,
       status.wire,
-      0x00,
+      detail.wire,
     ]);
   }
 }
@@ -580,10 +692,17 @@ class SafrInstallationPayload extends SafrV2Payload {
 /// Sent once by a node after boot, forwarded like any other frame (spec
 /// §7.11, v3.1 POC round 1). `SRC_MAC` (header) identifies the device.
 class SafrNameAnnouncePayload extends SafrV2Payload {
-  const SafrNameAnnouncePayload({required this.name, required this.zone});
+  const SafrNameAnnouncePayload({
+    required this.name,
+    required this.zone,
+    this.role = SafrNodeRole.unknown,
+  });
 
   final String name;
   final String zone;
+
+  /// v3.2 optional trailing ROLE byte (spec §7.11); `unknown` when absent.
+  final SafrNodeRole role;
 
   static SafrNameAnnouncePayload? parse(Uint8List p) {
     if (p.isEmpty) return null;
@@ -599,7 +718,10 @@ class SafrNameAnnouncePayload extends SafrV2Payload {
       off += 1;
       if (zoneLen > 16 || off + zoneLen > p.length) return null;
       final zone = utf8.decode(p.sublist(off, off + zoneLen));
-      return SafrNameAnnouncePayload(name: name, zone: zone);
+      off += zoneLen;
+      final role =
+          off < p.length ? SafrNodeRole.fromWire(p[off]) : SafrNodeRole.unknown;
+      return SafrNameAnnouncePayload(name: name, zone: zone, role: role);
     } on RangeError {
       return null;
     } on FormatException {
@@ -607,7 +729,11 @@ class SafrNameAnnouncePayload extends SafrV2Payload {
     }
   }
 
-  static Uint8List build({required String name, required String zone}) {
+  static Uint8List build({
+    required String name,
+    required String zone,
+    SafrNodeRole? role,
+  }) {
     final nameBytes = utf8.encode(name);
     final zoneBytes = utf8.encode(zone);
     assert(nameBytes.length <= 32);
@@ -617,8 +743,327 @@ class SafrNameAnnouncePayload extends SafrV2Payload {
       ...nameBytes,
       zoneBytes.length,
       ...zoneBytes,
+      if (role != null) role.wire,
     ]);
   }
+}
+
+// ── v3.2 installation lifecycle payloads (spec §7.6, §7.12–§7.15) ──────────
+
+/// Shared length-prefixed string reader for the v3.2 layouts.
+class _Reader {
+  _Reader(this.p);
+  final Uint8List p;
+  int off = 0;
+
+  int u8() {
+    if (off >= p.length) throw const FormatException('truncated');
+    return p[off++];
+  }
+
+  int u16() => (u8() << 8) | u8();
+
+  Uint8List bytes(int n) {
+    if (off + n > p.length) throw const FormatException('truncated');
+    final out = p.sublist(off, off + n);
+    off += n;
+    return out;
+  }
+
+  String str(int maxLen) {
+    final len = u8();
+    if (len > maxLen) throw const FormatException('bad length prefix');
+    return utf8.decode(bytes(len));
+  }
+
+  bool get atEnd => off >= p.length;
+}
+
+List<int> _str(String s, int maxLen) {
+  final b = utf8.encode(s);
+  if (b.length > maxLen) {
+    throw ArgumentError('string longer than $maxLen bytes: "$s"');
+  }
+  return [b.length, ...b];
+}
+
+/// The installation code as carried by `SET_INSTALLATION` ARGS (CMD 0x11)
+/// and by the `CODE` reply (0x0C): `system_id u16 ‖ channel u8 ‖ mesh_id u8 ‖
+/// ssid ‖ psk ‖ safr_psk[16] ‖ name` (spec §7.6/§7.13). Setup channel only.
+class SafrInstallationCode {
+  const SafrInstallationCode({
+    required this.systemId,
+    required this.channel,
+    required this.meshId,
+    required this.netSsid,
+    required this.netPsk,
+    required this.safrPsk,
+    required this.name,
+  });
+
+  final int systemId;
+  final int channel;
+  final int meshId;
+  final String netSsid;
+  final String netPsk;
+  final Uint8List safrPsk; // 16 bytes
+  final String name;
+
+  static SafrInstallationCode? parse(Uint8List p) {
+    try {
+      final r = _Reader(p);
+      final systemId = r.u16();
+      final channel = r.u8();
+      final meshId = r.u8();
+      final ssid = r.str(31);
+      final psk = r.str(31);
+      final key = r.bytes(16);
+      final name = r.str(32);
+      return SafrInstallationCode(
+        systemId: systemId,
+        channel: channel,
+        meshId: meshId,
+        netSsid: ssid,
+        netPsk: psk,
+        safrPsk: key,
+        name: name,
+      );
+    } on FormatException {
+      return null;
+    } on RangeError {
+      return null;
+    }
+  }
+
+  Uint8List build() {
+    assert(safrPsk.length == 16);
+    assert(systemId > 0 && systemId <= 0xFFFF);
+    return Uint8List.fromList([
+      (systemId >> 8) & 0xFF,
+      systemId & 0xFF,
+      channel & 0xFF,
+      meshId & 0xFF,
+      ..._str(netSsid, 31),
+      ..._str(netPsk, 31),
+      ...safrPsk,
+      ..._str(name, 32),
+    ]);
+  }
+}
+
+/// `CODE` (0x0C): the board's reply to GET_CODE on the setup channel.
+class SafrCodePayload extends SafrV2Payload {
+  const SafrCodePayload(this.code);
+  final SafrInstallationCode code;
+
+  static SafrCodePayload? parse(Uint8List p) {
+    final c = SafrInstallationCode.parse(p);
+    return c == null ? null : SafrCodePayload(c);
+  }
+}
+
+/// `SET_DEVICE` ARGS (CMD 0x12): `mac[6] ‖ name ‖ zone`.
+class SafrSetDeviceArgs {
+  const SafrSetDeviceArgs(
+      {required this.mac, required this.name, required this.zone});
+  final String mac;
+  final String name;
+  final String zone;
+
+  static SafrSetDeviceArgs? parse(Uint8List p) {
+    try {
+      final r = _Reader(p);
+      final mac = safrMacToString(r.bytes(6));
+      return SafrSetDeviceArgs(mac: mac, name: r.str(32), zone: r.str(16));
+    } on FormatException {
+      return null;
+    } on RangeError {
+      return null;
+    }
+  }
+
+  Uint8List build() => Uint8List.fromList([
+        ...safrMacToBytes(mac),
+        ..._str(name, 32),
+        ..._str(zone, 16),
+      ]);
+}
+
+/// ARGS for the single-MAC board commands: RETIRE (0x13), UNRETIRE (0x14),
+/// DECOMMISSION (0x16), FORGET (0x17).
+abstract final class SafrMacArgs {
+  static Uint8List build(String mac) => safrMacToBytes(mac);
+
+  static String? parse(Uint8List p) =>
+      p.length == 6 ? safrMacToString(p) : null;
+}
+
+/// `REPLACE_DEVICE` ARGS (CMD 0x15): `old_mac[6] ‖ new_mac[6]`.
+abstract final class SafrReplaceDeviceArgs {
+  static Uint8List build({required String oldMac, required String newMac}) =>
+      Uint8List.fromList([...safrMacToBytes(oldMac), ...safrMacToBytes(newMac)]);
+
+  static ({String oldMac, String newMac})? parse(Uint8List p) => p.length == 12
+      ? (
+          oldMac: safrMacToString(p.sublist(0, 6)),
+          newMac: safrMacToString(p.sublist(6, 12)),
+        )
+      : null;
+}
+
+/// One entry of `DEVICE_TABLE` (spec §7.12).
+class SafrDeviceTableEntry {
+  const SafrDeviceTableEntry({
+    required this.mac,
+    required this.role,
+    required this.state,
+    required this.flags,
+    required this.lastSeenAgeS,
+    required this.name,
+    required this.zone,
+  });
+
+  final String mac;
+  final SafrNodeRole role;
+  final SafrDeviceState state;
+  final int flags;
+
+  /// Seconds since the board last heard it; null = never (`0xFFFF`).
+  final int? lastSeenAgeS;
+  final String name;
+  final String zone;
+
+  bool get seenEver => flags & SafrDeviceFlags.seenEver != 0;
+  bool get annotated => flags & SafrDeviceFlags.annotated != 0;
+  bool get pendingRename => flags & SafrDeviceFlags.pendingRename != 0;
+  bool get heardWhileRetired =>
+      flags & SafrDeviceFlags.heardWhileRetired != 0;
+  bool get pendingDecommission =>
+      flags & SafrDeviceFlags.pendingDecommission != 0;
+}
+
+/// `DEVICE_TABLE` (0x0B): one page of the board's device table (spec §7.12).
+class SafrDeviceTablePayload extends SafrV2Payload {
+  const SafrDeviceTablePayload({
+    required this.page,
+    required this.pageCount,
+    required this.total,
+    required this.entries,
+  });
+
+  final int page; // 1-based
+  final int pageCount;
+  final int total;
+  final List<SafrDeviceTableEntry> entries;
+
+  bool get isLastPage => page >= pageCount;
+
+  static SafrDeviceTablePayload? parse(Uint8List p) {
+    try {
+      final r = _Reader(p);
+      final page = r.u8();
+      final pageCount = r.u8();
+      final total = r.u16();
+      final count = r.u8();
+      final entries = <SafrDeviceTableEntry>[];
+      for (var i = 0; i < count; i++) {
+        final mac = safrMacToString(r.bytes(6));
+        final role = SafrNodeRole.fromWire(r.u8());
+        final state = SafrDeviceState.fromWire(r.u8());
+        final flags = r.u8();
+        final age = r.u16();
+        final name = r.str(32);
+        final zone = r.str(16);
+        entries.add(SafrDeviceTableEntry(
+          mac: mac,
+          role: role,
+          state: state,
+          flags: flags,
+          lastSeenAgeS: age == 0xFFFF ? null : age,
+          name: name,
+          zone: zone,
+        ));
+      }
+      return SafrDeviceTablePayload(
+        page: page,
+        pageCount: pageCount,
+        total: total,
+        entries: entries,
+      );
+    } on FormatException {
+      return null;
+    } on RangeError {
+      return null;
+    }
+  }
+
+  static Uint8List build({
+    required int page,
+    required int pageCount,
+    required int total,
+    required List<SafrDeviceTableEntry> entries,
+  }) {
+    final out = <int>[
+      page & 0xFF,
+      pageCount & 0xFF,
+      (total >> 8) & 0xFF,
+      total & 0xFF,
+      entries.length,
+    ];
+    for (final e in entries) {
+      final age = e.lastSeenAgeS ?? 0xFFFF;
+      out
+        ..addAll(safrMacToBytes(e.mac))
+        ..add(e.role.wire)
+        ..add(e.state.wire)
+        ..add(e.flags & 0xFF)
+        ..add((age >> 8) & 0xFF)
+        ..add(age & 0xFF)
+        ..addAll(_str(e.name, 32))
+        ..addAll(_str(e.zone, 16));
+    }
+    return Uint8List.fromList(out);
+  }
+}
+
+/// `PARENT_PROBE` (0x0D, spec §7.14): 1 byte, `purpose` 0 = parent
+/// discovery, 1 = survey. ESP-NOW only; decoded here for diagnostics.
+class SafrParentProbePayload extends SafrV2Payload {
+  const SafrParentProbePayload({required this.purpose});
+  final int purpose;
+  bool get isSurvey => purpose == 1;
+
+  static SafrParentProbePayload? parse(Uint8List p) =>
+      p.isEmpty ? null : SafrParentProbePayload(purpose: p[0]);
+
+  static Uint8List build({required int purpose}) =>
+      Uint8List.fromList([purpose & 0xFF]);
+}
+
+/// `PARENT_OFFER` (0x0E, spec §7.15): `purpose ‖ rssi_seen int8 ‖ layer`.
+class SafrParentOfferPayload extends SafrV2Payload {
+  const SafrParentOfferPayload({
+    required this.purpose,
+    required this.rssiSeen,
+    required this.layer,
+  });
+  final int purpose;
+  final int rssiSeen;
+
+  /// null = answering unit is not on a mesh (`0xFF`).
+  final int? layer;
+
+  static SafrParentOfferPayload? parse(Uint8List p) => p.length < 3
+      ? null
+      : SafrParentOfferPayload(
+          purpose: p[0],
+          rssiSeen: p[1].toSigned(8),
+          layer: p[2] == 0xFF ? null : p[2],
+        );
+
+  static Uint8List build(
+          {required int purpose, required int rssiSeen, int? layer}) =>
+      Uint8List.fromList([purpose & 0xFF, rssiSeen & 0xFF, layer ?? 0xFF]);
 }
 
 /// Raw payload kept when the MSG_TYPE is unknown or the layout mismatches.

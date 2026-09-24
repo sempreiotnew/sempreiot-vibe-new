@@ -24,6 +24,8 @@ import 'widgets/dot_matrix_display.dart';
 import 'widgets/main_app_bar.dart';
 import 'widgets/main_bottom_nav.dart';
 import 'widgets/main_drawer.dart';
+import '../../../features/central/application/safr_ingest_provider.dart';
+import '../../../features/central/application/central_installation_provider.dart';
 
 class MainScreen extends ConsumerStatefulWidget {
   const MainScreen({super.key, this.centralId});
@@ -320,6 +322,7 @@ class _CentralDashboard extends ConsumerWidget {
           // Local registry only: a viewer's phone has no copy of the
           // central's latches (row 6.7 of the system reference is open).
           if (centralId == null) const LatchedAlarmBanner(),
+          if (centralId == null) const _ForeignSystemBanner(),
           _CentralStatusSection(color: statusColor, label: statusLabel),
           const SizedBox(height: 10),
           _OfflineDim(
@@ -420,6 +423,47 @@ class _CentralDashboard extends ConsumerWidget {
 /// Greys out and disables a subtree — used in USER mode when the viewed
 /// central is offline: everything stays readable but desaturated, slightly
 /// faded and non-interactive.
+/// "A placa pertence a outra instalação": frames arrive with a SYSTEM_ID that
+/// is not the imported one (lifecycle §7). Either the board was provisioned
+/// for another site or the wrong share was imported on this tablet.
+class _ForeignSystemBanner extends ConsumerWidget {
+  const _ForeignSystemBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final foreign = ref.watch(foreignSystemIdProvider);
+    if (foreign == null) return const SizedBox.shrink();
+    final ours = ref.watch(safrIdentityProvider);
+    String hex(int v) =>
+        '0x${v.toRadixString(16).padLeft(4, '0').toUpperCase()}';
+    final oursLabel = ours.isDev ? 'nenhuma (bancada)' : hex(ours.systemId);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.warning.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.warning.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.hub_outlined, color: AppColors.warning, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'A placa pertence a outra instalação (${hex(foreign)}); a '
+              'vinculada nesta central é $oursLabel. Vincule a instalação '
+              'certa em Instalação, ou reconfigure a placa.',
+              style: TextStyle(color: context.textPrimary, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _OfflineDim extends StatelessWidget {
   const _OfflineDim({required this.dimmed, required this.child});
 

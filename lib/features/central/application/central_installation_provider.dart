@@ -4,13 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../installation/domain/entities/installation.dart';
+import '../../installation/domain/services/installation_backup_codec.dart';
 import '../domain/safr/safr_identity.dart';
 
-/// CENTRAL mode: the one installation this tablet belongs to. Imported from
-/// the phone's "Backup da instalação" QR (the JSON of [Installation]), which
-/// is the only way the SYSTEM_ID and SAFR_PSK reach the central — the board
-/// never sends keys over USB (POC-BRIEF §4.2). Stored encrypted at rest like
-/// the phone side does (POC-BRIEF §6.1).
+/// CENTRAL mode: the one installation this tablet belongs to (the code:
+/// SYSTEM_ID + SAFR key + Wi-Fi). It reaches the tablet by importing an
+/// installer's encrypted backup (lifecycle §2) or, once the board supports
+/// it, by GET_CODE over USB (lifecycle §4.1). Stored encrypted at rest.
 class CentralInstallationStore {
   CentralInstallationStore({FlutterSecureStorage? storage})
       : _storage = storage ?? const FlutterSecureStorage();
@@ -40,27 +40,55 @@ final centralInstallationStoreProvider = Provider<CentralInstallationStore>(
   (ref) => CentralInstallationStore(),
 );
 
-/// Decodes the phone's installation QR / pasted JSON. Throws
-/// [FormatException] with an operator-readable message on anything that is
-/// not a complete installation with a valid 16-byte SAFR key.
-Installation parseInstallationBackup(String raw) {
+/// What [parseInstallationBackup] found.
+class ParsedBackup {
+  const ParsedBackup(this.installation, {required this.legacyPlaintext});
+  final Installation installation;
+
+  /// True when the input was the pre-lifecycle plaintext JSON (keys in
+  /// clear). Accepted, but the operator is warned.
+  final bool legacyPlaintext;
+}
+
+/// Thrown by [parseInstallationBackup] when the input is a v2 envelope and
+/// no [passphrase] was given: the caller must ask for one and retry.
+class PassphraseRequired implements Exception {
+  const PassphraseRequired();
+}
+
+/// Decodes an installation backup: the v2 encrypted envelope (needs
+/// [passphrase]) or the legacy plaintext JSON. Throws [FormatException] with
+/// an operator-readable message on anything that is not a complete
+/// installation with a valid 16-byte SAFR key, [PassphraseRequired] when a
+/// passphrase is needed and missing.
+ParsedBackup parseInstallationBackup(String raw, {String? passphrase}) {
   final text = raw.trim();
-  Map<String, dynamic> map;
-  try {
-    final decoded = jsonDecode(text);
-    if (decoded is! Map<String, dynamic>) {
-      throw const FormatException('não é um JSON de instalação');
-    }
-    map = decoded;
-  } on FormatException {
-    throw const FormatException(
-        'QR inválido: use o "Backup da instalação" do app do instalador.');
-  }
+  final format = InstallationBackupCodec.detectFormat(text);
   Installation installation;
-  try {
-    installation = Installation.fromJson(map);
-  } on TypeError {
-    throw const FormatException('JSON de instalação incompleto.');
+  var legacy = false;
+  switch (format) {
+    case BackupFormat.encryptedV2:
+      if (passphrase == null || passphrase.isEmpty) {
+        throw const PassphraseRequired();
+      }
+      try {
+        installation = InstallationBackupCodec.decode(text, passphrase);
+      } on BackupDecodeException catch (e) {
+        throw FormatException(e.message);
+      }
+    case BackupFormat.legacyPlaintext:
+      legacy = true;
+      try {
+        installation = Installation.fromJson(
+            jsonDecode(text) as Map<String, dynamic>);
+      } on TypeError {
+        throw const FormatException('JSON de instalação incompleto.');
+      } on FormatException {
+        throw const FormatException('JSON de instalação inválido.');
+      }
+    case BackupFormat.unknown:
+      throw const FormatException(
+          'QR inválido: use "Compartilhar" no app do instalador.');
   }
   if (installation.systemId <= 0 || installation.systemId > 0xFFFF) {
     throw const FormatException('SYSTEM_ID fora da faixa.');
@@ -68,7 +96,7 @@ Installation parseInstallationBackup(String raw) {
   if (SafrIdentity.keyFromHex(installation.safrPskHex) == null) {
     throw const FormatException('Chave SAFR inválida (esperado 32 hex).');
   }
-  return installation;
+  return ParsedBackup(installation, legacyPlaintext: legacy);
 }
 
 class CentralInstallationNotifier
@@ -87,13 +115,32 @@ class CentralInstallationNotifier
     }
   }
 
-  /// Imports from the phone's backup QR / pasted JSON. Returns the parsed
-  /// installation; throws [FormatException] on bad input.
-  Future<Installation> import(String raw) async {
-    final installation = parseInstallationBackup(raw);
+  /// Imports a backup (QR or pasted text). Throws [FormatException] on bad
+  /// input and [PassphraseRequired] when a v2 envelope needs a passphrase.
+  Future<ParsedBackup> import(String raw, {String? passphrase}) async {
+    final parsed = parseInstallationBackup(raw, passphrase: passphrase);
+    // The tablet keeps the code and zones; the installer's work log is not
+    // the roster (lifecycle §1) and is dropped here.
+    final kept = parsed.installation.copyWith(devices: const []);
+    await _store.save(kept);
+    state = AsyncValue.data(kept);
+    return ParsedBackup(kept, legacyPlaintext: parsed.legacyPlaintext);
+  }
+
+  /// Stores a code received from the board (lifecycle §4.1, GET_CODE) or
+  /// generated here (Case B).
+  Future<void> adopt(Installation installation) async {
     await _store.save(installation);
     state = AsyncValue.data(installation);
-    return installation;
+  }
+
+  /// The encrypted envelope to show as a QR for a phone (lifecycle §5 D/I).
+  String exportEncrypted(String passphrase) {
+    final installation = state.valueOrNull;
+    if (installation == null) {
+      throw StateError('no installation to export');
+    }
+    return InstallationBackupCodec.encode(installation, passphrase);
   }
 
   Future<void> clear() async {

@@ -24,6 +24,8 @@ class ResultStep extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final notifier =
         ref.read(provisioningWizardProvider(installationId).notifier);
+    final warning = ref.watch(
+        provisioningWizardProvider(installationId).select((s) => s.warning));
     final visual = _VisualFor(step);
 
     return Center(
@@ -59,6 +61,31 @@ class ResultStep extends ConsumerWidget {
                 style: TextStyle(color: context.textSecondary, fontSize: 13),
               ),
             ),
+            if (warning != null && step != ProvisioningStep.resultFailed) ...[
+              const SizedBox(height: 18),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                      color: AppColors.warning.withValues(alpha: 0.4)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.info_outline_rounded,
+                        color: AppColors.warning, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(warning,
+                          style: TextStyle(
+                              color: context.textPrimary, fontSize: 12)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 36),
             if (step == ProvisioningStep.resultFailed) ...[
               WizardPrimaryButton(

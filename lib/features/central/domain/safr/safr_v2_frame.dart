@@ -46,6 +46,17 @@ enum SafrMsgType {
   eventLogData(0x08),
   installation(0x09),
   nameAnnounce(0x0A),
+
+  /// v3.2 (spec §7.12): paged board device table, serial only.
+  deviceTable(0x0B),
+
+  /// v3.2 (spec §7.13): reply to GET_CODE on the setup channel, serial only.
+  code(0x0C),
+
+  /// v3.2 (spec §7.14/§7.15): ESP-NOW leaf discovery / survey — never seen
+  /// on the serial link, listed so the parser names them in diagnostics.
+  parentProbe(0x0D),
+  parentOffer(0x0E),
   unknown(0x00);
 
   const SafrMsgType(this.wire);
@@ -259,6 +270,10 @@ SafrWireFrame parseSafrWireFrame(
     SafrMsgType.eventLogData => SafrEventLogDataPayload.parse(plaintext),
     SafrMsgType.installation => SafrInstallationPayload.parse(plaintext),
     SafrMsgType.nameAnnounce => SafrNameAnnouncePayload.parse(plaintext),
+    SafrMsgType.deviceTable => SafrDeviceTablePayload.parse(plaintext),
+    SafrMsgType.code => SafrCodePayload.parse(plaintext),
+    SafrMsgType.parentProbe => SafrParentProbePayload.parse(plaintext),
+    SafrMsgType.parentOffer => SafrParentOfferPayload.parse(plaintext),
     SafrMsgType.unknown => SafrUnknownPayload(plaintext),
   };
 

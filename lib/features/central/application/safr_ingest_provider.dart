@@ -38,6 +38,9 @@ class SafrIngestService {
     this.onAckReceived,
     this.onJournalData,
     this.onTraffic,
+    this.onForeignSystem,
+    this.setupIdentity,
+    this.onCode,
   });
 
   final AppDatabase db;
@@ -55,6 +58,19 @@ class SafrIngestService {
   /// the JRN_SEQ high-water mark and paginates with further EVENT_LOG_REQs.
   final void Function(SafrEventLogDataPayload log)? onJournalData;
   final void Function(String mac, int severity)? onTraffic;
+
+  /// A frame whose header SYSTEM_ID is not ours (spec §3.1 "neighbouring
+  /// system"). Null = ours again (a valid frame arrived). Feeds the
+  /// "A placa pertence a outra instalação" banner (lifecycle §7).
+  final void Function(int? foreignSystemId)? onForeignSystem;
+
+  /// Setup channel (spec §3.1 v3.2): while the tablet talks to the board
+  /// under SYSTEM_ID 0x0000 with the sticker-derived key, frames that fail
+  /// the installation key are re-parsed with this identity. Null = closed.
+  final SafrIdentity? Function()? setupIdentity;
+
+  /// CODE (spec §7.13) received on the setup channel.
+  final void Function(SafrInstallationCode code)? onCode;
 
   /// Recent (SRC_MAC, MSG_ID) pairs → dedupes fast retransmissions of
   /// non-EVENT frames (same MSG_ID, fresh MSG_CTR — spec §9.1). EVENTs are
@@ -79,7 +95,14 @@ class SafrIngestService {
     final now = DateTime.now().toUtc();
 
     if (frame.error != null) {
+      if (frame.error == SafrWireError.foreignSystem && frame.systemId == 0) {
+        final setup = setupIdentity?.call();
+        if (setup != null && await _handleSetupChannel(bytes, setup)) return;
+      }
       onInvalidFrame?.call();
+      if (frame.error == SafrWireError.foreignSystem) {
+        onForeignSystem?.call(frame.systemId);
+      }
       await _insertDiagnostic(frame, packetId, now);
       return;
     }
@@ -94,6 +117,7 @@ class SafrIngestService {
     }
 
     onValidFrame?.call();
+    onForeignSystem?.call(null);
 
     final severity = frame.payload is SafrEventPayload
         ? (frame.payload as SafrEventPayload).eventType.severity
@@ -115,6 +139,12 @@ class SafrIngestService {
     if (frame.msgType == SafrMsgType.installation &&
         frame.payload is SafrInstallationPayload) {
       await _handleInstallation(frame.payload as SafrInstallationPayload, now);
+    }
+
+    if (frame.msgType == SafrMsgType.deviceTable &&
+        frame.payload is SafrDeviceTablePayload) {
+      await _handleDeviceTable(frame.payload as SafrDeviceTablePayload, now);
+      return; // the board's own reply: not a device to register
     }
 
     final accepted = await _updateTrustedState(frame, packetId, now);
@@ -396,6 +426,75 @@ class SafrIngestService {
     }
   }
 
+  /// Setup channel (spec §3.1): only ACK and CODE are accepted there.
+  Future<bool> _handleSetupChannel(Uint8List bytes, SafrIdentity setup) async {
+    final result = parseSafr(bytes, key: setup.key, expectedSystemId: 0);
+    if (result is! SafrWireResult) return false;
+    final frame = result.frame;
+    if (frame.error != null || !frame.isEncrypted) return false;
+    if (frame.msgType == SafrMsgType.ack && frame.payload is SafrAckPayload) {
+      onAckReceived?.call(frame.payload as SafrAckPayload);
+      return true;
+    }
+    if (frame.msgType == SafrMsgType.code && frame.payload is SafrCodePayload) {
+      onCode?.call((frame.payload as SafrCodePayload).code);
+      return true;
+    }
+    return false;
+  }
+
+  /// v3.2 DEVICE_TABLE (spec §7.12, lifecycle §3): mirror the board's table
+  /// into the registry. Rows the board lists get its state/flags/name/zone
+  /// (the board's annotation wins over what this tablet guessed); after the
+  /// last page, rows the board no longer lists and that were only ever
+  /// board-sourced are pruned.
+  final _tableSeen = <String>{};
+
+  Future<void> _handleDeviceTable(SafrDeviceTablePayload page, DateTime now) async {
+    if (page.page == 1) _tableSeen.clear();
+    for (final e in page.entries) {
+      _tableSeen.add(e.mac);
+      final existing = await (db.select(db.meshDevices)
+            ..where((t) => t.mac.equals(e.mac)))
+          .getSingleOrNull();
+      final live = existing != null && existing.registryState != 'enrolled';
+      await db.into(db.meshDevices).insertOnConflictUpdate(
+            MeshDevicesCompanion(
+              mac: Value(e.mac),
+              role: Value(e.role == SafrNodeRole.unknown
+                  ? (existing?.role ?? SafrNodeRole.unknown.wire)
+                  : e.role.wire),
+              layer: Value(existing?.layer ?? 0),
+              parentMac: Value(existing?.parentMac),
+              lastRssi: Value(existing?.lastRssi),
+              batteryPct: Value(existing?.batteryPct),
+              firstSeenAt: Value(existing?.firstSeenAt ?? now),
+              lastSeenAt: Value(existing?.lastSeenAt ??
+                  (e.lastSeenAgeS == null
+                      ? now
+                      : now.subtract(Duration(seconds: e.lastSeenAgeS!)))),
+              lastHeartbeatAt: Value(existing?.lastHeartbeatAt),
+              lastBootCtr: Value(existing?.lastBootCtr ?? 0),
+              lastMsgCtr: Value(existing?.lastMsgCtr ?? 0),
+              supervisionState: Value(existing?.supervisionState ?? 0),
+              name: Value(e.name.isNotEmpty ? e.name : existing?.name),
+              zone: Value(e.zone.isNotEmpty ? e.zone : existing?.zone),
+              registryState: Value(live ? null : 'enrolled'),
+              lastDevSeq: Value(existing?.lastDevSeq ?? 0),
+              alarmLatched: Value(existing?.alarmLatched ?? 0),
+              alarmLatchedAt: Value(existing?.alarmLatchedAt),
+              boardState: Value(e.state.wire),
+              boardFlags: Value(e.flags),
+              tableSyncedAt: Value(now),
+            ),
+          );
+    }
+    if (page.isLastPage) {
+      await db.pruneUnlistedBoardRows(Set.of(_tableSeen));
+      _tableSeen.clear();
+    }
+  }
+
   Future<int> _insertEvent({
     required String srcMac,
     required int msgId,
@@ -486,6 +585,12 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
   final service = SafrIngestService(
     db: ref.watch(appDatabaseProvider),
     identity: () => ref.read(safrIdentityProvider),
+    onForeignSystem: (sid) {
+      final notifier = ref.read(foreignSystemIdProvider.notifier);
+      if (notifier.state != sid) notifier.state = sid;
+    },
+    setupIdentity: () => ref.read(setupChannelProvider),
+    onCode: downlink.handleCode,
     onValidFrame: link.reportValidFrame,
     onInvalidFrame: link.reportInvalidFrame,
     onAckRequired: downlink.sendAck,
@@ -504,3 +609,13 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
   ref.onDispose(sub.cancel);
   return service;
 });
+
+/// SYSTEM_ID seen in the header of the last frame the board sent that was
+/// NOT ours (null once a frame authenticates). The tablet shows a banner:
+/// the board belongs to another installation, or the wrong backup was
+/// imported here (lifecycle §7).
+final foreignSystemIdProvider = StateProvider<int?>((_) => null);
+
+/// The setup-channel identity (SYSTEM_ID 0x0000, key from the board sticker)
+/// while a SET_INSTALLATION / GET_CODE exchange is in flight; null otherwise.
+final setupChannelProvider = StateProvider<SafrIdentity?>((_) => null);

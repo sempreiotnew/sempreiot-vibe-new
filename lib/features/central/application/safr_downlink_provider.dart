@@ -10,6 +10,7 @@ import '../domain/safr/safr_identity.dart';
 import 'central_installation_provider.dart';
 import '../domain/safr/safr_v2_frame.dart';
 import '../domain/safr/safr_v2_payloads.dart';
+import 'safr_ingest_provider.dart' show setupChannelProvider;
 import 'safr_traffic_provider.dart';
 import 'serial_link_provider.dart';
 import 'serial_provider.dart';
@@ -75,6 +76,157 @@ class SafrDownlink {
     await sendTimeSync();
     await requestJournalBackfill();
     await sendGetInstallation();
+    await sendGetDeviceTable();
+  }
+
+  /// v3.2 (spec §7.6 0x18): asks the board for its device table; the pages
+  /// come back as DEVICE_TABLE frames routed by ingest. No ACK expected.
+  Future<void> sendGetDeviceTable({int page = 0}) async {
+    final frame = _encoder.encode(
+      msgType: SafrMsgType.command,
+      payload: SafrCommandPayload.build(
+          cmd: SafrCommand.getDeviceTable, args: [page & 0xFF]),
+      dstMac: safrBroadcastMacBytes,
+    );
+    await _write(frame);
+  }
+
+  // ── v3.2 lifecycle commands (spec §7.6, lifecycle §5) ─────────────
+
+  /// Result of a lifecycle command: `ok` from the board's ACK, `detail`
+  /// explains a refusal, null detail = no ACK at all (timeout).
+  Future<LifecycleResult> _lifecycle({
+    required SafrCommand cmd,
+    required Uint8List args,
+    required Uint8List dstMac,
+    required String description,
+    String? targetMac,
+  }) async {
+    final ack = await _sendTrackedAck(
+      msgType: SafrMsgType.command,
+      payload: SafrCommandPayload.build(cmd: cmd, args: args),
+      dstMac: dstMac,
+      description: description,
+      targetMac: targetMac,
+    );
+    if (ack == null) return const LifecycleResult(false, null);
+    return LifecycleResult(ack.status == SafrAckStatus.ok, ack.detail);
+  }
+
+  Future<LifecycleResult> sendSetDevice(String mac, String name, String zone) =>
+      _lifecycle(
+        cmd: SafrCommand.setDevice,
+        args: SafrSetDeviceArgs(mac: mac, name: name, zone: zone).build(),
+        dstMac: safrMacToBytes(mac),
+        description: 'renomear dispositivo',
+        targetMac: mac,
+      );
+
+  Future<LifecycleResult> sendRetireDevice(String mac) => _lifecycle(
+        cmd: SafrCommand.retireDevice,
+        args: SafrMacArgs.build(mac),
+        dstMac: safrBroadcastMacBytes,
+        description: 'aposentar dispositivo',
+        targetMac: mac,
+      );
+
+  Future<LifecycleResult> sendUnretireDevice(String mac) => _lifecycle(
+        cmd: SafrCommand.unretireDevice,
+        args: SafrMacArgs.build(mac),
+        dstMac: safrBroadcastMacBytes,
+        description: 'reativar dispositivo',
+        targetMac: mac,
+      );
+
+  Future<LifecycleResult> sendReplaceDevice(String oldMac, String newMac) =>
+      _lifecycle(
+        cmd: SafrCommand.replaceDevice,
+        args: SafrReplaceDeviceArgs.build(oldMac: oldMac, newMac: newMac),
+        dstMac: safrBroadcastMacBytes,
+        description: 'substituir dispositivo',
+        targetMac: oldMac,
+      );
+
+  /// Remote factory reset: DST must be the unit itself (never broadcast).
+  Future<LifecycleResult> sendDecommission(String mac) => _lifecycle(
+        cmd: SafrCommand.decommission,
+        args: SafrMacArgs.build(mac),
+        dstMac: safrMacToBytes(mac),
+        description: 'apagar dispositivo da placa',
+        targetMac: mac,
+      );
+
+  Future<LifecycleResult> sendForgetDevice(String mac) => _lifecycle(
+        cmd: SafrCommand.forgetDevice,
+        args: SafrMacArgs.build(mac),
+        dstMac: safrBroadcastMacBytes,
+        description: 'esquecer dispositivo',
+        targetMac: mac,
+      );
+
+  // ── Setup channel (spec §3.1 v3.2, lifecycle §4.1 / §5 B) ─────────
+
+  /// Runs [body] with the setup-channel identity open: frames from the
+  /// board under SYSTEM_ID 0x0000 are then accepted by ingest.
+  Future<T> _withSetupChannel<T>(
+      Uint8List setupKey, Future<T> Function(SafrEncoder enc) body) async {
+    final identity = SafrIdentity(systemId: 0, key: setupKey);
+    _ref.read(setupChannelProvider.notifier).state = identity;
+    final enc = SafrEncoder(systemId: 0, key: setupKey);
+    try {
+      return await body(enc);
+    } finally {
+      _ref.read(setupChannelProvider.notifier).state = null;
+    }
+  }
+
+  /// Case B: writes [code] into a board in SETUP. The board ACKs then reboots.
+  Future<LifecycleResult> sendSetInstallation(
+      Uint8List setupKey, SafrInstallationCode code, String boardMac) {
+    return _withSetupChannel(setupKey, (enc) async {
+      final ack = await _sendTrackedAck(
+        msgType: SafrMsgType.command,
+        payload: SafrCommandPayload.build(
+            cmd: SafrCommand.setInstallation, args: code.build()),
+        dstMac: safrMacToBytes(boardMac),
+        description: 'gravar instalação na placa',
+        encoder: enc,
+      );
+      if (ack == null) return const LifecycleResult(false, null);
+      return LifecycleResult(ack.status == SafrAckStatus.ok, ack.detail);
+    });
+  }
+
+  Completer<SafrInstallationCode>? _codeWaiter;
+
+  /// Called by ingest for a CODE frame on the setup channel.
+  void handleCode(SafrInstallationCode code) {
+    final w = _codeWaiter;
+    if (w != null && !w.isCompleted) w.complete(code);
+  }
+
+  /// "Ler código da placa": proves the board sticker and pulls the code over
+  /// USB (lifecycle §4.1). Null on timeout (wrong pop, board in setup, or
+  /// firmware without v3.2).
+  Future<SafrInstallationCode?> sendGetCode(Uint8List setupKey) {
+    return _withSetupChannel(setupKey, (enc) async {
+      final waiter = _codeWaiter = Completer<SafrInstallationCode>();
+      for (var attempt = 0; attempt < _retryMax; attempt++) {
+        final frame = enc.encode(
+          msgType: SafrMsgType.command,
+          payload: SafrCommandPayload.build(cmd: SafrCommand.getCode),
+          dstMac: safrBroadcastMacBytes,
+        );
+        await _write(frame);
+        try {
+          return await waiter.future.timeout(_retryBackoff);
+        } on TimeoutException {
+          continue;
+        }
+      }
+      _codeWaiter = null;
+      return null;
+    });
   }
 
   /// v3.1 (spec §7.6): asks the board for its installation identity and
@@ -113,9 +265,7 @@ class SafrDownlink {
     final pending = _pending.remove(ack.ackedMsgId);
     if (pending == null) return;
     pending.retryTimer?.cancel();
-    if (!pending.completer.isCompleted) {
-      pending.completer.complete(ack.status == SafrAckStatus.ok);
-    }
+    if (!pending.completer.isCompleted) pending.completer.complete(ack);
   }
 
   Future<void> sendTimeSync() async {
@@ -241,13 +391,37 @@ class SafrDownlink {
     String? targetMac,
     bool notifyOnFail = true,
   }) async {
-    final frame = _encoder.encode(
+    final ack = await _sendTrackedAck(
+      msgType: msgType,
+      payload: payload,
+      dstMac: dstMac,
+      description: description,
+      targetMac: targetMac,
+      notifyOnFail: notifyOnFail,
+    );
+    return ack != null && ack.status == SafrAckStatus.ok;
+  }
+
+  /// Like [_sendTracked] but hands back the ACK itself (status + v3.2
+  /// DETAIL), or null when the root never confirmed. [encoder] overrides the
+  /// installation encoder for the setup channel.
+  Future<SafrAckPayload?> _sendTrackedAck({
+    required SafrMsgType msgType,
+    required Uint8List payload,
+    required Uint8List dstMac,
+    required String description,
+    String? targetMac,
+    bool notifyOnFail = true,
+    SafrEncoder? encoder,
+  }) async {
+    final enc = encoder ?? _encoder;
+    final frame = enc.encode(
       msgType: msgType,
       payload: payload,
       dstMac: dstMac,
       ackRequired: true,
     );
-    final msgId = _encoder.lastMsgId;
+    final msgId = enc.lastMsgId;
 
     final pending = _PendingTx(
       msgType: msgType,
@@ -256,6 +430,7 @@ class SafrDownlink {
       description: description,
       targetMac: targetMac,
       notifyOnFail: notifyOnFail,
+      encoder: enc,
     );
     _pending[msgId] = pending;
     _scheduleRetry(msgId);
@@ -264,7 +439,7 @@ class SafrDownlink {
     _emitTick(targetMac);
     if (!sent) {
       _giveUp(msgId, notify: false);
-      return false;
+      return null;
     }
     return pending.completer.future;
   }
@@ -281,7 +456,7 @@ class SafrDownlink {
       }
       p.attempts++;
       // Same MSG_ID (receiver dedupes), fresh MSG_CTR (nonce never reused).
-      final frame = _encoder.encode(
+      final frame = p.encoder.encode(
         msgType: p.msgType,
         payload: p.payload,
         dstMac: p.dstMac,
@@ -298,7 +473,7 @@ class SafrDownlink {
     final pending = _pending.remove(msgId);
     if (pending == null) return;
     pending.retryTimer?.cancel();
-    if (!pending.completer.isCompleted) pending.completer.complete(false);
+    if (!pending.completer.isCompleted) pending.completer.complete(null);
     if (!notify) return;
 
     debugPrint('[SAFR] downlink $msgId (${pending.description}) sem ACK');
@@ -344,10 +519,27 @@ class SafrDownlink {
     _linkCheck?.cancel();
     for (final p in _pending.values) {
       p.retryTimer?.cancel();
-      if (!p.completer.isCompleted) p.completer.complete(false);
+      if (!p.completer.isCompleted) p.completer.complete(null);
     }
     _pending.clear();
   }
+}
+
+/// Outcome of a v3.2 lifecycle command (spec §7.5 DETAIL).
+class LifecycleResult {
+  const LifecycleResult(this.ok, this.detail);
+  final bool ok;
+
+  /// Null = the root never ACKed (timeout).
+  final SafrAckDetail? detail;
+
+  String get message => ok
+      ? 'Confirmado pela placa.'
+      : detail == null
+          ? 'A placa não confirmou. Verifique o cabo USB.'
+          : detail == SafrAckDetail.none
+              ? 'Recusado pela placa.'
+              : 'Recusado: ${detail!.label}.';
 }
 
 class _PendingTx {
@@ -356,6 +548,7 @@ class _PendingTx {
     required this.payload,
     required this.dstMac,
     required this.description,
+    required this.encoder,
     this.targetMac,
     this.notifyOnFail = true,
   });
@@ -364,9 +557,10 @@ class _PendingTx {
   final Uint8List payload;
   final Uint8List dstMac;
   final String description;
+  final SafrEncoder encoder;
   final String? targetMac;
   final bool notifyOnFail;
-  final completer = Completer<bool>();
+  final completer = Completer<SafrAckPayload?>();
   Timer? retryTimer;
   int attempts = 1;
 }

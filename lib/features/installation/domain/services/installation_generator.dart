@@ -13,6 +13,17 @@ class InstallationGenerator {
   /// 2.4 GHz non-overlapping channels — matches board/node Kconfig defaults.
   static const _channels = [1, 6, 11];
 
+  /// `NET_SSID = "SIOT-<SYSTEM_ID hex4>"` — blueprint §0, closed as lifecycle
+  /// §8 (the SSID is derived from SYSTEM_ID, never random).
+  static String netSsidFor(int systemId) =>
+      'SIOT-${systemId.toRadixString(16).padLeft(4, '0').toUpperCase()}';
+
+  /// A fresh per-phone identifier (never on the wire).
+  static String newLocalId() {
+    final rng = Random.secure();
+    return List.generate(16, (_) => '0123456789abcdef'[rng.nextInt(16)]).join();
+  }
+
   static Installation generate({
     required String displayName,
     List<String> zones = const [],
@@ -23,11 +34,6 @@ class InstallationGenerator {
     while (systemId == 0) {
       systemId = rng.nextInt(0x10000);
     }
-
-    final ssidSuffix = List.generate(
-      4,
-      (_) => '0123456789ABCDEF'[rng.nextInt(16)],
-    ).join();
 
     final netPsk = List.generate(16, (_) => _alnum[rng.nextInt(_alnum.length)])
         .join();
@@ -42,13 +48,10 @@ class InstallationGenerator {
     final meshId = (systemId & 0xFF) == 0 ? 1 : (systemId & 0xFF);
 
     return Installation(
-      localId: List.generate(
-        16,
-        (_) => '0123456789abcdef'[rng.nextInt(16)],
-      ).join(),
+      localId: newLocalId(),
       displayName: displayName,
       systemId: systemId,
-      netSsid: 'SIOT-$ssidSuffix',
+      netSsid: netSsidFor(systemId),
       netPsk: netPsk,
       safrPskHex: safrPskHex,
       channel: _channels[rng.nextInt(_channels.length)],

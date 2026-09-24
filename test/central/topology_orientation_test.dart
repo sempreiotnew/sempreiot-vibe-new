@@ -328,7 +328,7 @@ void main() {
   testWidgets('clear button sits in the status strip, apart from zoom',
       (tester) async {
     await pump(tester, const Size(640, 300));
-    final clear = tester.getRect(find.byTooltip('Limpar dispositivos'));
+    final clear = tester.getRect(find.byTooltip('Ressincronizar com a placa'));
     for (final tip in ['Aproximar', 'Afastar', 'Ajustar à tela']) {
       final zoom = tester.getRect(find.byTooltip(tip));
       expect(clear.overlaps(zoom), isFalse, reason: 'clear vs $tip');

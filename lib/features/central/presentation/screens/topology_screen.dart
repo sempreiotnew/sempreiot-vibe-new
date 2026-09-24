@@ -14,6 +14,8 @@ import '../../application/safr_downlink_provider.dart';
 import '../../application/safr_traffic_provider.dart';
 import '../../application/topology_provider.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
+import '../widgets/editor_gate.dart';
+import '../../application/credentials_admin_provider.dart';
 
 /// Rede — live map of the fire-alarm mesh. Central on top, root marked,
 /// curved glowing links, and dots with trails traveling along the real path
@@ -364,11 +366,11 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Limpar dispositivos'),
+        title: const Text('Ressincronizar com a placa'),
         content: const Text(
-            'Remove todos os dispositivos do mapa da rede, inclusive os '
-            'inativos. Os que estiverem ativos reaparecem no próximo '
-            'heartbeat; o histórico de logs é mantido.'),
+            'Limpa o mapa da rede e pede à placa a tabela de dispositivos de '
+            'novo. Os que estiverem ativos reaparecem no próximo heartbeat; '
+            'o histórico de logs é mantido.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -376,13 +378,15 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Limpar'),
+            child: const Text('Ressincronizar'),
           ),
         ],
       ),
     );
     if (ok == true) {
       await ref.read(appDatabaseProvider).clearMeshDevices();
+      await ref.read(safrDownlinkProvider).sendGetInstallation();
+      await ref.read(safrDownlinkProvider).sendGetDeviceTable();
     }
   }
 
@@ -491,7 +495,7 @@ class _MeshStatusBar extends StatelessWidget {
             ),
           const SizedBox(width: 10),
           IconButton(
-            tooltip: 'Limpar dispositivos',
+            tooltip: 'Ressincronizar com a placa',
             // M3 pads the tap target to 48 px, which alone made the strip
             // two lines tall; the strip stays one compact line.
             style: IconButton.styleFrom(
@@ -1422,6 +1426,28 @@ class _NodeDetailSheetState extends ConsumerState<_NodeDetailSheet> {
             if (node.rssi != null) _fact(context, 'Sinal', '${node.rssi} dBm'),
             if (node.batteryPct != null)
               _fact(context, 'Bateria', '${node.batteryPct}%'),
+            if (node.zone?.isNotEmpty == true) _fact(context, 'Zona', node.zone!),
+            if (node.boardState != null)
+              _fact(
+                context,
+                'Na placa',
+                switch (node.boardState!) {
+                  SafrDeviceState.expected => 'esperado (nunca ouvido)',
+                  SafrDeviceState.online => 'online',
+                  SafrDeviceState.missing => 'sem comunicação',
+                  SafrDeviceState.retired => node.heardWhileRetired
+                      ? 'aposentado — mas transmitindo'
+                      : 'aposentado',
+                  _ => '?',
+                },
+                valueColor: node.retired ? AppColors.trouble : null,
+              ),
+            if (node.pendingRename)
+              _fact(context, 'Pendente', 'novo nome/zona: aplica quando o dispositivo falar',
+                  valueColor: AppColors.warning),
+            if (node.pendingDecommission)
+              _fact(context, 'Pendente', 'apagar da placa: aplica quando o dispositivo falar',
+                  valueColor: AppColors.warning),
             _fact(context, 'Última comunicação', relativeTime(node.lastSeenAt)),
             if (node.alarmLatched)
               _fact(
@@ -1492,6 +1518,39 @@ class _NodeDetailSheetState extends ConsumerState<_NodeDetailSheet> {
                 Icons.restart_alt_rounded,
                 requiresOnline: false,
               ),
+            const SizedBox(height: 16),
+            Text(
+              'GERENCIAR — PIN MASTER / NÍVEL 4',
+              style: TextStyle(
+                color: context.textSecondary,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.1,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Alterações na tabela de dispositivos da placa '
+              '(installation-lifecycle-v1.md §5).',
+              style: TextStyle(color: context.textSecondary, fontSize: 11),
+            ),
+            const SizedBox(height: 8),
+            if (node.layer > 0 || node.boardState != null) ...[
+              if (!node.retired)
+                _manageRow('Aposentar', 'A placa passa a ignorar este dispositivo',
+                    Icons.person_off_outlined, _retire),
+              if (node.retired)
+                _manageRow('Reativar', 'Volta a aceitar este dispositivo',
+                    Icons.person_add_alt_1_outlined, _unretire),
+              _manageRow('Substituir por…', 'Move nome e zona para um dispositivo novo',
+                  Icons.swap_horiz_rounded, _replace),
+              _manageRow('Apagar da placa', 'Reset de fábrica remoto (digite o nome para confirmar)',
+                  Icons.delete_forever_outlined, _decommission,
+                  destructive: true),
+              if (node.retired)
+                _manageRow('Esquecer', 'Remove o registro aposentado da placa',
+                    Icons.playlist_remove_rounded, _forget),
+            ],
             // Inline result: never a SnackBar fighting the sheet for space.
             if (_feedback != null) ...[
               const SizedBox(height: 10),
@@ -1542,22 +1601,52 @@ class _NodeDetailSheetState extends ConsumerState<_NodeDetailSheet> {
     );
   }
 
+  Future<EditorRole?> _gate(String what) => requestEditorRole(
+        context,
+        subtitle: 'Digite o PIN Master ou o PIN de Nível 4\npara $what.',
+      );
+
+  void _show(String message, bool ok) {
+    if (!mounted) return;
+    setState(() {
+      _feedback = message;
+      _feedbackOk = ok;
+    });
+  }
+
   Future<void> _rename(BuildContext context) async {
-    final controller = TextEditingController(text: widget.node.name ?? '');
-    final name = await showDialog<String>(
+    // Lifecycle §5 H: SET_DEVICE to the board (which relays to the unit and
+    // keeps it pending while the unit is away). Without a v3.2 board the row
+    // is edited on this tablet only.
+    final role = await _gate('renomear este dispositivo');
+    if (role == null || !context.mounted) return;
+    final nameCtrl = TextEditingController(text: widget.node.name ?? '');
+    final zoneCtrl = TextEditingController(text: widget.node.zone ?? '');
+    final ok = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: dialogContext.surfaceColor,
-        title: const Text('Nome do dispositivo'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLength: 24,
-          decoration: InputDecoration(
-            hintText: 'ex.: Sala de máquinas',
-            helperText: widget.node.mac,
-          ),
-          onSubmitted: (v) => Navigator.pop(dialogContext, v),
+        title: const Text('Nome e zona'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameCtrl,
+              autofocus: true,
+              maxLength: 32,
+              decoration: InputDecoration(
+                labelText: 'Nome',
+                hintText: 'ex.: Sala de máquinas',
+                helperText: widget.node.mac,
+              ),
+            ),
+            TextField(
+              controller: zoneCtrl,
+              maxLength: 16,
+              decoration: const InputDecoration(labelText: 'Zona', hintText: 'ex.: Térreo'),
+              onSubmitted: (_) => Navigator.pop(dialogContext, true),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -1565,18 +1654,165 @@ class _NodeDetailSheetState extends ConsumerState<_NodeDetailSheet> {
             child: const Text('Cancelar'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            onPressed: () => Navigator.pop(dialogContext, true),
             child: const Text('Salvar'),
           ),
         ],
       ),
     );
-    if (name == null) return;
+    if (ok != true) return;
+    final name = nameCtrl.text.trim();
+    final zone = zoneCtrl.text.trim();
+    if (name.isEmpty) return;
     final db = ref.read(appDatabaseProvider);
+    final result = await ref
+        .read(safrDownlinkProvider)
+        .sendSetDevice(widget.node.mac, name, zone);
     await (db.update(db.meshDevices)
           ..where((t) => t.mac.equals(widget.node.mac)))
-        .write(MeshDevicesCompanion(name: Value(name.trim())));
-    if (mounted) Navigator.pop(this.context);
+        .write(MeshDevicesCompanion(name: Value(name), zone: Value(zone)));
+    await db.addAudit(role.auditName, result.ok ? 'device_rename' : 'device_rename_local',
+        {'mac': widget.node.mac, 'name': name, 'zone': zone, 'board_ok': result.ok});
+    _show(result.ok
+        ? 'Nome enviado à placa.'
+        : 'Salvo só neste tablet — ${result.message}', result.ok);
+  }
+
+  Future<void> _retire() async {
+    final role = await _gate('aposentar este dispositivo');
+    if (role == null) return;
+    final r = await ref.read(safrDownlinkProvider).sendRetireDevice(widget.node.mac);
+    await ref.read(appDatabaseProvider).addAudit(role.auditName, 'device_retire',
+        {'mac': widget.node.mac, 'ok': r.ok});
+    if (r.ok) ref.read(safrDownlinkProvider).sendGetDeviceTable();
+    _show(r.message, r.ok);
+  }
+
+  Future<void> _unretire() async {
+    final role = await _gate('reativar este dispositivo');
+    if (role == null) return;
+    final r = await ref.read(safrDownlinkProvider).sendUnretireDevice(widget.node.mac);
+    await ref.read(appDatabaseProvider).addAudit(role.auditName, 'device_unretire',
+        {'mac': widget.node.mac, 'ok': r.ok});
+    if (r.ok) ref.read(safrDownlinkProvider).sendGetDeviceTable();
+    _show(r.message, r.ok);
+  }
+
+  Future<void> _forget() async {
+    final role = await _gate('esquecer este dispositivo');
+    if (role == null) return;
+    final r = await ref.read(safrDownlinkProvider).sendForgetDevice(widget.node.mac);
+    await ref.read(appDatabaseProvider).addAudit(role.auditName, 'device_forget',
+        {'mac': widget.node.mac, 'ok': r.ok});
+    if (r.ok) {
+      final db = ref.read(appDatabaseProvider);
+      await (db.delete(db.meshDevices)..where((t) => t.mac.equals(widget.node.mac))).go();
+      if (mounted) Navigator.pop(context);
+      return;
+    }
+    _show(r.message, r.ok);
+  }
+
+  Future<void> _replace() async {
+    final role = await _gate('substituir este dispositivo');
+    if (role == null || !mounted) return;
+    final candidates = ref
+        .read(topologyProvider)
+        .where((n) => n.mac != widget.node.mac && !n.retired && n.layer > 0)
+        .toList();
+    if (!mounted) return;
+    final chosen = await showDialog<TopologyNode>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        backgroundColor: ctx.surfaceColor,
+        title: Text('Substituir "${widget.node.name ?? widget.node.mac}" por…'),
+        children: candidates.isEmpty
+            ? [
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text(
+                    'Nenhum dispositivo novo visto ainda. Configure a unidade nova '
+                    'pelo telefone e aguarde ela aparecer na rede.',
+                    style: TextStyle(color: ctx.textSecondary, fontSize: 13),
+                  ),
+                ),
+              ]
+            : [
+                for (final c in candidates)
+                  SimpleDialogOption(
+                    onPressed: () => Navigator.pop(ctx, c),
+                    child: Text('${c.name?.isNotEmpty == true ? c.name : c.mac} · '
+                        '${c.online ? "online" : "sem comunicação"}'),
+                  ),
+              ],
+      ),
+    );
+    if (chosen == null) return;
+    final r = await ref
+        .read(safrDownlinkProvider)
+        .sendReplaceDevice(widget.node.mac, chosen.mac);
+    await ref.read(appDatabaseProvider).addAudit(role.auditName, 'device_replace',
+        {'old': widget.node.mac, 'new': chosen.mac, 'ok': r.ok});
+    if (r.ok) ref.read(safrDownlinkProvider).sendGetDeviceTable();
+    _show(r.ok ? 'Substituído. O antigo foi aposentado.' : r.message, r.ok);
+  }
+
+  Future<void> _decommission() async {
+    final role = await _gate('apagar este dispositivo da placa');
+    if (role == null || !mounted) return;
+    final expected = widget.node.name?.isNotEmpty == true ? widget.node.name! : widget.node.mac;
+    final ctrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ctx.surfaceColor,
+        title: const Text('Apagar da placa?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'O dispositivo apaga a própria configuração e volta ao modo de '
+              'instalação (LED branco piscando). Para confirmar, digite '
+              'exatamente: $expected',
+              style: TextStyle(color: ctx.textSecondary, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(controller: ctrl, autofocus: true),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim() == expected),
+            child: const Text('Apagar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) {
+      if (ok == false && ctrl.text.isNotEmpty) _show('Nome não confere. Nada foi feito.', false);
+      return;
+    }
+    final r = await ref.read(safrDownlinkProvider).sendDecommission(widget.node.mac);
+    await ref.read(appDatabaseProvider).addAudit(role.auditName, 'device_decommission',
+        {'mac': widget.node.mac, 'ok': r.ok});
+    if (r.ok) ref.read(safrDownlinkProvider).sendGetDeviceTable();
+    _show(r.ok ? 'Enviado. A unidade será apagada (ou ao acordar).' : r.message, r.ok);
+  }
+
+  Widget _manageRow(String label, String hint, IconData icon, Future<void> Function() action,
+      {bool destructive = false}) {
+    final color = destructive ? AppColors.error : context.textPrimary;
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      leading: Icon(icon, color: color, size: 20),
+      title: Text(label, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w600)),
+      subtitle: Text(hint, style: TextStyle(color: context.textSecondary, fontSize: 11)),
+      onTap: action,
+    );
   }
 
   Widget _fact(BuildContext context, String label, String value,

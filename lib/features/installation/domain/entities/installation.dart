@@ -1,12 +1,14 @@
-/// A device already provisioned into an installation — tracked locally so
-/// that, when the board is provisioned, its sticker can be sent the
-/// `/enroll` list (POC-BRIEF.md §5/§6.2: `[{mac, id, name, zone}]`).
+/// A device this phone provisioned into an installation — a **work log**
+/// entry (lifecycle §1 principle 3), never the roster. Used for the board's
+/// `/enroll` hints (`[{mac, id, name, zone}]`, POC-BRIEF §5) and for the
+/// installer's own list on the detail screen.
 class ProvisionedDevice {
   const ProvisionedDevice({
     required this.mac,
     required this.id,
     required this.name,
     required this.zone,
+    this.provisionedAt,
   });
 
   final String mac;
@@ -14,8 +16,18 @@ class ProvisionedDevice {
   final String name;
   final String zone;
 
-  Map<String, dynamic> toJson() =>
-      {'mac': mac, 'id': id, 'name': name, 'zone': zone};
+  /// When this phone provisioned it (UTC). Null for entries written before
+  /// lifecycle Phase 1.
+  final DateTime? provisionedAt;
+
+  Map<String, dynamic> toJson() => {
+        'mac': mac,
+        'id': id,
+        'name': name,
+        'zone': zone,
+        if (provisionedAt != null)
+          'provisionedAt': provisionedAt!.toIso8601String(),
+      };
 
   factory ProvisionedDevice.fromJson(Map<String, dynamic> json) =>
       ProvisionedDevice(
@@ -23,10 +35,13 @@ class ProvisionedDevice {
         id: json['id'] as String,
         name: json['name'] as String,
         zone: json['zone'] as String,
+        provisionedAt: json['provisionedAt'] is String
+            ? DateTime.tryParse(json['provisionedAt'] as String)
+            : null,
       );
 }
 
-/// An installation code (POC-BRIEF.md §6.1): the SoftAP/mesh identity the
+/// An installation code (blueprint §0): the SoftAP/mesh identity the
 /// phone hands to every device provisioned into this installation via
 /// POST /provision's `code_json` (POC-BRIEF §5).
 class Installation {
@@ -42,7 +57,12 @@ class Installation {
     required this.zones,
     required this.createdAt,
     this.devices = const [],
+    this.formatVersion = currentFormatVersion,
   });
+
+  /// JSON format of [toJson]. 1 = pre-lifecycle (no version field);
+  /// 2 = lifecycle Phase 1 (optional `provisionedAt` per device).
+  static const currentFormatVersion = 2;
 
   /// Local identifier for this installation on this phone only — never sent
   /// over the wire (not to be confused with SYSTEM_ID).
@@ -63,17 +83,19 @@ class Installation {
   final List<String> zones;
   final DateTime createdAt;
 
-  /// Devices already provisioned into this installation (nodes provisioned
-  /// before the board, per POC-BRIEF §7 step 2's order).
+  /// Devices this phone provisioned into this installation (work log).
   final List<ProvisionedDevice> devices;
 
+  final int formatVersion;
+
   Installation copyWith({
+    String? localId,
     String? displayName,
     List<String>? zones,
     List<ProvisionedDevice>? devices,
   }) =>
       Installation(
-        localId: localId,
+        localId: localId ?? this.localId,
         displayName: displayName ?? this.displayName,
         systemId: systemId,
         netSsid: netSsid,
@@ -96,7 +118,10 @@ class Installation {
         'mesh_id': meshId,
       };
 
+  /// Full local record (secrets included). Never shown or exported in clear:
+  /// backups go through `InstallationBackupCodec`.
   Map<String, dynamic> toJson() => {
+        'v': currentFormatVersion,
         'localId': localId,
         'displayName': displayName,
         'systemId': systemId,
@@ -110,6 +135,24 @@ class Installation {
         'devices': devices.map((d) => d.toJson()).toList(),
       };
 
+  /// What another phone or the tablet receives when the installation is
+  /// shared: the code, the name and the zones — never this phone's work log.
+  Map<String, dynamic> toShareJson() => {
+        'v': currentFormatVersion,
+        'localId': localId,
+        'displayName': displayName,
+        'systemId': systemId,
+        'netSsid': netSsid,
+        'netPsk': netPsk,
+        'safrPskHex': safrPskHex,
+        'channel': channel,
+        'meshId': meshId,
+        'zones': zones,
+        'createdAt': createdAt.toIso8601String(),
+        'devices': const <Map<String, dynamic>>[],
+      };
+
+  /// Accepts both format 1 (no `v`) and 2.
   factory Installation.fromJson(Map<String, dynamic> json) => Installation(
         localId: json['localId'] as String,
         displayName: json['displayName'] as String,
@@ -125,5 +168,6 @@ class Installation {
             .cast<Map<String, dynamic>>()
             .map(ProvisionedDevice.fromJson)
             .toList(),
+        formatVersion: json['v'] is int ? json['v'] as int : 1,
       );
 }

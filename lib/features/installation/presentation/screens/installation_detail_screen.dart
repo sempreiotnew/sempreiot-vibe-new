@@ -1,18 +1,17 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
+import '../../../../shared/widgets/encrypted_share_dialog.dart';
+import '../../../../shared/widgets/passphrase_dialog.dart';
 import '../../../provisioning/presentation/screens/provisioning_wizard_screen.dart';
 import '../../application/installation_provider.dart';
 import '../../domain/entities/installation.dart';
+import '../../domain/services/installation_backup_codec.dart';
 
-/// Shows an installation's QR (for backup / handing to another installer
-/// phone) and manages its zones list (POC-BRIEF.md §6.1).
+/// One installation on this phone: share it (encrypted QR, lifecycle §2),
+/// manage its zones, provision units, and see this phone's work log.
 class InstallationDetailScreen extends ConsumerWidget {
   const InstallationDetailScreen({super.key, required this.installationId});
   final String installationId;
@@ -21,21 +20,23 @@ class InstallationDetailScreen extends ConsumerWidget {
     final ctrl = TextEditingController();
     final zone = await showDialog<String>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ctx.surfaceColor,
         title: const Text('Nova zona'),
         content: TextField(
           controller: ctrl,
           autofocus: true,
+          maxLength: 16,
           decoration: const InputDecoration(hintText: 'ex: Térreo'),
-          onSubmitted: (v) => Navigator.of(context).pop(v),
+          onSubmitted: (v) => Navigator.of(ctx).pop(v),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () => Navigator.of(ctx).pop(),
             child: const Text('Cancelar'),
           ),
           FilledButton(
-            onPressed: () => Navigator.of(context).pop(ctrl.text),
+            onPressed: () => Navigator.of(ctx).pop(ctrl.text),
             child: const Text('Adicionar'),
           ),
         ],
@@ -45,6 +46,117 @@ class InstallationDetailScreen extends ConsumerWidget {
     await ref
         .read(installationListProvider.notifier)
         .addZone(installationId, zone.trim());
+  }
+
+  Future<void> _share(
+      BuildContext context, WidgetRef ref, Installation installation) async {
+    final passphrase = await showPassphraseDialog(
+      context,
+      title: 'Compartilhar instalação',
+      message: 'Defina uma senha e diga-a ao outro instalador (ou ao operador '
+          'da central). O QR só abre com ela.',
+      confirm: true,
+      actionLabel: 'Gerar QR',
+    );
+    if (!context.mounted || passphrase == null) return;
+    final envelope = InstallationBackupCodec.encode(installation, passphrase);
+    await showEncryptedShareDialog(
+      context,
+      title: 'Compartilhar "${installation.displayName}"',
+      envelope: envelope,
+    );
+  }
+
+  Future<void> _rename(
+      BuildContext context, WidgetRef ref, Installation installation) async {
+    final ctrl = TextEditingController(text: installation.displayName);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ctx.surfaceColor,
+        title: const Text('Renomear instalação'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          maxLength: 32,
+          onSubmitted: (v) => Navigator.of(ctx).pop(v),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(ctrl.text),
+            child: const Text('Salvar'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.trim().isEmpty) return;
+    await ref
+        .read(installationListProvider.notifier)
+        .rename(installationId, name.trim());
+  }
+
+  Future<void> _delete(
+      BuildContext context, WidgetRef ref, Installation installation) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ctx.surfaceColor,
+        title: const Text('Excluir deste telefone?'),
+        content: Text(
+          'A instalação "${installation.displayName}" some só deste telefone. '
+          'Os dispositivos e a central continuam funcionando. Se nenhum outro '
+          'telefone ou a central tiver o código, ele não pode ser recuperado '
+          'daqui.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    await ref.read(installationListProvider.notifier).delete(installationId);
+    if (context.mounted) Navigator.of(context).pop();
+  }
+
+  Future<void> _removeFromLog(
+      BuildContext context, WidgetRef ref, ProvisionedDevice d) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ctx.surfaceColor,
+        title: const Text('Remover do meu registro?'),
+        content: Text(
+          '"${d.name}" sai só da lista deste telefone. O dispositivo continua '
+          'configurado; para aposentá-lo de verdade use a central.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Remover'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await ref
+        .read(installationListProvider.notifier)
+        .removeProvisionedDevice(installationId, d.mac);
   }
 
   @override
@@ -68,139 +180,146 @@ class InstallationDetailScreen extends ConsumerWidget {
         elevation: 0,
         title: Text(installation?.displayName ?? '...',
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        actions: [
+          if (installation != null)
+            PopupMenuButton<String>(
+              onSelected: (v) {
+                switch (v) {
+                  case 'rename':
+                    _rename(context, ref, installation!);
+                  case 'delete':
+                    _delete(context, ref, installation!);
+                }
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: 'rename', child: Text('Renomear')),
+                PopupMenuItem(
+                    value: 'delete', child: Text('Excluir deste telefone')),
+              ],
+            ),
+        ],
       ),
       body: installation == null
           ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
+          : SafeArea(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: SingleChildScrollView(
                     padding: const EdgeInsets.all(20),
-                    child: QrImageView(
-                      data: jsonEncode(installation.toJson()),
-                      version: QrVersions.auto,
-                      size: 220,
-                      eyeStyle: const QrEyeStyle(
-                        eyeShape: QrEyeShape.square,
-                        color: AppColors.primary,
-                      ),
-                      dataModuleStyle: const QrDataModuleStyle(
-                        dataModuleShape: QrDataModuleShape.square,
-                        color: AppColors.primary,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Backup da instalação — não é o QR do dispositivo',
-                    style: TextStyle(color: context.textSecondary, fontSize: 12),
-                  ),
-                  const SizedBox(height: 10),
-                  // Same payload as the QR, for a central without a camera:
-                  // paste it into "Instalação > Colar JSON" on the tablet.
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      await Clipboard.setData(
-                          ClipboardData(text: jsonEncode(installation!.toJson())));
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text('Código da instalação copiado (contém as chaves — '
-                            'envie só para a central).'),
-                      ));
-                    },
-                    icon: const Icon(Icons.copy_rounded, size: 18),
-                    label: const Text('Copiar código para a central'),
-                  ),
-                  const SizedBox(height: 24),
-                  _InfoRow(label: 'SYSTEM_ID', value: '0x${installation.systemId.toRadixString(16).padLeft(4, '0').toUpperCase()}'),
-                  _InfoRow(label: 'NET_SSID', value: installation.netSsid),
-                  _InfoRow(label: 'CHANNEL', value: '${installation.channel}'),
-                  _InfoRow(label: 'MESH_ID', value: '${installation.meshId}'),
-                  const SizedBox(height: 24),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'ZONAS',
-                      style: TextStyle(
-                        color: context.textSecondary,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  if (installation.zones.isEmpty)
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Nenhuma zona ainda.',
-                          style: TextStyle(color: context.textSecondary)),
-                    )
-                  else
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        for (final z in installation.zones)
-                          Chip(label: Text(z)),
-                      ],
-                    ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: () => _addZone(context, ref),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Adicionar zona'),
-                  ),
-                  const SizedBox(height: 24),
-                  FilledButton.icon(
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => ProvisioningWizardScreen(
-                          installationId: installationId,
+                        _InfoRow(
+                            label: 'SYSTEM_ID',
+                            value:
+                                '0x${installation.systemId.toRadixString(16).padLeft(4, '0').toUpperCase()}'),
+                        _InfoRow(label: 'NET_SSID', value: installation.netSsid),
+                        _InfoRow(label: 'CHANNEL', value: '${installation.channel}'),
+                        _InfoRow(label: 'MESH_ID', value: '${installation.meshId}'),
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => ProvisioningWizardScreen(
+                                installationId: installationId,
+                              ),
+                            ),
+                          ),
+                          icon: const Icon(Icons.qr_code_scanner_rounded),
+                          label: const Text('Provisionar dispositivo'),
                         ),
-                      ),
-                    ),
-                    icon: const Icon(Icons.qr_code_scanner_rounded),
-                    label: const Text('Provisionar dispositivo'),
-                  ),
-                  if (installation.devices.isNotEmpty) ...[
-                    const SizedBox(height: 16),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'DISPOSITIVOS PROVISIONADOS',
-                        style: TextStyle(
-                          color: context.textSecondary,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 1.2,
+                        const SizedBox(height: 10),
+                        OutlinedButton.icon(
+                          onPressed: () => _share(context, ref, installation!),
+                          icon: const Icon(Icons.share_rounded, size: 18),
+                          label: const Text('Compartilhar (outro instalador / central)'),
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    for (final d in installation.devices)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Align(
+                        const SizedBox(height: 24),
+                        const _SectionLabel('ZONAS'),
+                        const SizedBox(height: 8),
+                        if (installation.zones.isEmpty)
+                          Text('Nenhuma zona ainda.',
+                              style: TextStyle(color: context.textSecondary))
+                        else
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final z in installation.zones)
+                                Chip(label: Text(z)),
+                            ],
+                          ),
+                        const SizedBox(height: 12),
+                        Align(
                           alignment: Alignment.centerLeft,
-                          child: Text(
-                            '${d.name} — ${d.zone} (${d.mac})',
-                            style: TextStyle(
-                                color: context.textPrimary, fontSize: 13),
+                          child: OutlinedButton.icon(
+                            onPressed: () => _addZone(context, ref),
+                            icon: const Icon(Icons.add),
+                            label: const Text('Adicionar zona'),
                           ),
                         ),
-                      ),
-                  ],
-                ],
+                        const SizedBox(height: 24),
+                        _SectionLabel(
+                            'CONFIGURADOS POR ESTE TELEFONE (${installation.devices.length})'),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Só um registro deste telefone. A lista completa da '
+                          'instalação fica na central, que descobre cada '
+                          'dispositivo quando ele entra na rede.',
+                          style: TextStyle(
+                              color: context.textSecondary, fontSize: 12),
+                        ),
+                        const SizedBox(height: 8),
+                        if (installation.devices.isEmpty)
+                          Text('Nenhum dispositivo ainda.',
+                              style: TextStyle(color: context.textSecondary))
+                        else
+                          for (final d in installation.devices)
+                            ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              dense: true,
+                              leading: const Icon(Icons.sensors_rounded),
+                              title: Text(d.name,
+                                  style: TextStyle(
+                                      color: context.textPrimary,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600)),
+                              subtitle: Text('${d.zone} · ${d.mac}',
+                                  style: TextStyle(
+                                      color: context.textSecondary,
+                                      fontSize: 12)),
+                              trailing: IconButton(
+                                tooltip: 'Remover do meu registro',
+                                icon: const Icon(Icons.close_rounded, size: 18),
+                                onPressed: () => _removeFromLog(context, ref, d),
+                              ),
+                            ),
+                        const SizedBox(height: 24),
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ),
     );
   }
+}
+
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Text(
+        text,
+        style: TextStyle(
+          color: context.textSecondary,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 1.2,
+        ),
+      );
 }
 
 class _InfoRow extends StatelessWidget {

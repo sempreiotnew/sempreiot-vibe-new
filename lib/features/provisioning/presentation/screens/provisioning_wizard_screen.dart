@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
+import '../../../installation/application/installation_provider.dart';
 import '../../application/provisioning_wizard_provider.dart';
 import '../../domain/entities/provisioning_step.dart';
 import '../widgets/confirm_step.dart';
@@ -32,6 +33,14 @@ class ProvisioningWizardScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final provider = provisioningWizardProvider(installationId);
     final step = ref.watch(provider.select((s) => s.step));
+    // Always visible: a phone may hold several installations, and a unit
+    // provisioned into the wrong one needs a factory reset (lifecycle §5.1).
+    final installationName = ref.watch(installationListProvider.select((v) {
+      for (final i in v.valueOrNull ?? const []) {
+        if (i.localId == installationId) return i.displayName;
+      }
+      return null;
+    }));
 
     return Scaffold(
       backgroundColor: context.bgColor,
@@ -39,9 +48,24 @@ class ProvisioningWizardScreen extends ConsumerWidget {
         backgroundColor: context.barColor,
         foregroundColor: context.textPrimary,
         elevation: 0,
-        title: const Text(
-          'Configurar Dispositivo',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Configurar Dispositivo',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+            if (installationName != null)
+              Text(
+                'Instalação: $installationName',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: context.textSecondary),
+                overflow: TextOverflow.ellipsis,
+              ),
+          ],
         ),
         centerTitle: false,
       ),

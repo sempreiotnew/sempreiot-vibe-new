@@ -17,6 +17,24 @@ import 'package:pointycastle/export.dart';
 class ProvisioningCrypto {
   static const tagLen = 16;
   static const _kdfInfo = 'siot-prov-v1';
+  static const _setupKdfInfo = 'siot-setinst-v1';
+
+  /// Setup-channel key for the USB link (spec §3.1, v3.2):
+  /// `HKDF-SHA256(ikm = utf8(pop), salt = utf8(id), info = "siot-setinst-v1", L = 16)`.
+  /// The tablet derives it from the board's sticker to send SET_INSTALLATION
+  /// (Case B) or GET_CODE under SYSTEM_ID 0x0000.
+  static Uint8List deriveSetupKey({required String id, required String pop}) {
+    final hkdf = HKDFKeyDerivator(SHA256Digest())
+      ..init(HkdfParameters(
+        Uint8List.fromList(utf8.encode(pop)),
+        16,
+        Uint8List.fromList(utf8.encode(id)),
+        Uint8List.fromList(utf8.encode(_setupKdfInfo)),
+      ));
+    final out = Uint8List(16);
+    hkdf.deriveKey(null, 0, out, 0);
+    return out;
+  }
 
   /// `proof = hex(HMAC-SHA256(key = pop, msg = nonce))` — POST /identify.
   static String proof({required String pop, required Uint8List nonce}) {
@@ -71,6 +89,48 @@ class ProvisioningCrypto {
       ..setRange(0, nonce2.length, nonce2)
       ..setRange(nonce2.length, nonce2.length + cipherWithTag.length, cipherWithTag);
     return base64.encode(envelope);
+  }
+
+  /// The reverse of [buildEnvelope] (lifecycle §11: the board's GET /code
+  /// answer). Returns the decoded `code_json`, or null when the tag fails
+  /// (wrong pop / nonce) or the content is not JSON.
+  static Map<String, dynamic>? openEnvelope({
+    required Uint8List key,
+    required String id,
+    required String envelopeB64,
+  }) {
+    Uint8List raw;
+    try {
+      raw = base64.decode(envelopeB64.trim());
+    } on FormatException {
+      return null;
+    }
+    if (raw.length < 12 + tagLen) return null;
+    final nonce2 = Uint8List.sublistView(raw, 0, 12);
+    final cipherWithTag = Uint8List.sublistView(raw, 12);
+    final ccm = CCMBlockCipher(AESEngine())
+      ..init(
+        false,
+        AEADParameters(
+          KeyParameter(key),
+          tagLen * 8,
+          nonce2,
+          Uint8List.fromList(utf8.encode(id)),
+        ),
+      );
+    final out = Uint8List(ccm.getOutputSize(cipherWithTag.length));
+    try {
+      var len = ccm.processBytes(cipherWithTag, 0, cipherWithTag.length, out, 0);
+      len += ccm.doFinal(out, len);
+      final json = jsonDecode(utf8.decode(Uint8List.sublistView(out, 0, len)));
+      return json is Map<String, dynamic> ? json : null;
+    } on InvalidCipherTextException {
+      return null;
+    } on StateError {
+      return null; // pointycastle's CCM reports a tag mismatch as StateError
+    } on FormatException {
+      return null;
+    }
   }
 
   static Uint8List _randomBytes(int n) {

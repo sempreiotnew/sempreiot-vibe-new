@@ -6,6 +6,7 @@ import '../../../../core/theme/theme_ext.dart';
 import '../../application/installation_provider.dart';
 import '../../domain/entities/installation.dart';
 import 'installation_detail_screen.dart';
+import 'join_installation_screen.dart';
 
 /// Lists installation codes generated on this phone (POC-BRIEF.md §6.1) and
 /// lets the operator create a new one before starting the provisioning
@@ -43,11 +44,30 @@ class InstallationsScreen extends ConsumerWidget {
         title: const Text('Instalações',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _create(context, ref),
-        backgroundColor: AppColors.secondary,
-        icon: const Icon(Icons.add),
-        label: const Text('Nova instalação'),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          FloatingActionButton.extended(
+            heroTag: 'join',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                  builder: (_) => const JoinInstallationScreen()),
+            ),
+            backgroundColor: context.surfaceColor,
+            foregroundColor: context.textPrimary,
+            icon: const Icon(Icons.group_add_rounded),
+            label: const Text('Entrar em instalação existente'),
+          ),
+          const SizedBox(height: 10),
+          FloatingActionButton.extended(
+            heroTag: 'create',
+            onPressed: () => _create(context, ref),
+            backgroundColor: AppColors.secondary,
+            icon: const Icon(Icons.add),
+            label: const Text('Nova instalação'),
+          ),
+        ],
       ),
       body: async.when(
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -59,14 +79,15 @@ class InstallationsScreen extends ConsumerWidget {
           if (installations.isEmpty) {
             return Center(
               child: Text(
-                'Nenhuma instalação ainda.\nToque em "Nova instalação" para começar.',
+                'Nenhuma instalação ainda.\nToque em "Nova instalação" para criar uma, '
+                'ou em "Entrar em instalação existente" se outro instalador já criou.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: context.textSecondary),
               ),
             );
           }
           return ListView.separated(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 160),
             itemCount: installations.length,
             separatorBuilder: (_, __) => const SizedBox(height: 8),
             itemBuilder: (_, i) => _InstallationTile(installation: installations[i]),

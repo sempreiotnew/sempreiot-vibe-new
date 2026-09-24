@@ -68,6 +68,12 @@ class MeshDevices extends Table {
   // cleared ONLY by operator RESET. Survives restarts by design.
   IntColumn get alarmLatched => integer().withDefault(const Constant(0))();
   DateTimeColumn get alarmLatchedAt => dateTime().nullable()();
+  // v3.2 DEVICE_TABLE mirror (spec §7.12, lifecycle §3): the board's view of
+  // this MAC. boardState: 0 expected · 1 online · 2 missing · 3 retired,
+  // null = not (yet) in the board's table. boardFlags: SafrDeviceFlags bits.
+  IntColumn get boardState => integer().nullable()();
+  IntColumn get boardFlags => integer().withDefault(const Constant(0))();
+  DateTimeColumn get tableSyncedAt => dateTime().nullable()();
 
   @override
   Set<Column> get primaryKey => {mac};
@@ -107,7 +113,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -146,6 +152,12 @@ class AppDatabase extends _$AppDatabase {
             // SAFR v3.1 (POC-BRIEF.md §4.2/§6.3): NAME_ANNOUNCE/INSTALLATION.
             await m.addColumn(meshDevices, meshDevices.zone);
             await m.addColumn(meshDevices, meshDevices.registryState);
+          }
+          if (from < 8) {
+            // SAFR v3.2 DEVICE_TABLE mirror (installation-lifecycle-v1.md §3).
+            await m.addColumn(meshDevices, meshDevices.boardState);
+            await m.addColumn(meshDevices, meshDevices.boardFlags);
+            await m.addColumn(meshDevices, meshDevices.tableSyncedAt);
           }
         },
       );
@@ -208,6 +220,18 @@ class AppDatabase extends _$AppDatabase {
   /// Wipes the mesh device registry (the Rede map). Live devices
   /// reappear on their next heartbeat; history in deviceEvents is kept.
   Future<void> clearMeshDevices() => delete(meshDevices).go();
+
+  /// After a complete DEVICE_TABLE sync: rows the board no longer lists and
+  /// that this tablet only ever knew through the board (never heard live, or
+  /// already mirrored from an earlier table) are dropped.
+  Future<int> pruneUnlistedBoardRows(Set<String> listedMacs) {
+    final q = delete(meshDevices)
+      ..where((t) => t.registryState.equals('enrolled') | t.boardState.isNotNull());
+    if (listedMacs.isNotEmpty) {
+      q.where((t) => t.mac.isNotIn(listedMacs.toList()));
+    }
+    return q.go();
+  }
 
   // Metadata helpers — upsert and read by key
   Future<void> setMeta(String key, String value) =>

@@ -76,4 +76,17 @@ void main() {
     final raw = base64.decode(envelope);
     expect(raw.length, greaterThan(12 + ProvisioningCrypto.tagLen));
   });
+
+  test('openEnvelope reverses buildEnvelope and rejects a wrong pop', () {
+    final key = ProvisioningCrypto.deriveKey(pop: pop, nonce: nonce);
+    final envelope = ProvisioningCrypto.buildEnvelope(
+        key: key, id: id, codeJson: codeJson, nonce2Override: nonce2);
+    final back = ProvisioningCrypto.openEnvelope(key: key, id: id, envelopeB64: envelope);
+    expect(back, codeJson);
+
+    final wrongKey = ProvisioningCrypto.deriveKey(pop: 'abc123POP0001', nonce: nonce);
+    expect(ProvisioningCrypto.openEnvelope(key: wrongKey, id: id, envelopeB64: envelope), isNull);
+    expect(ProvisioningCrypto.openEnvelope(key: key, id: 'dev-002', envelopeB64: envelope), isNull);
+    expect(ProvisioningCrypto.openEnvelope(key: key, id: id, envelopeB64: 'not base64!'), isNull);
+  });
 }

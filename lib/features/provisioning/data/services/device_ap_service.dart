@@ -115,6 +115,23 @@ class DeviceApService {
     return body['count'] as int? ?? 0;
   }
 
+  /// GET /code — board admin window only (lifecycle §11). Returns the
+  /// envelope (base64) encrypted under the key derived from the pop and the
+  /// nonce of the /info that preceded /identify.
+  static Future<String> fetchCode() async {
+    final res = await http.get(Uri.parse('$_base/code')).timeout(_timeout);
+    debugPrint('[DeviceAp] code ← ${res.statusCode}');
+    if (res.statusCode != 200) {
+      throw DeviceApException(res.statusCode, res.body);
+    }
+    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    final envelope = body['envelope'];
+    if (envelope is! String || envelope.isEmpty) {
+      throw DeviceApException(res.statusCode, 'no envelope');
+    }
+    return envelope;
+  }
+
   static Future<DeviceApStatus> fetchStatus() async {
     final res = await http.get(Uri.parse('$_base/status')).timeout(_timeout);
     if (res.statusCode != 200) {
