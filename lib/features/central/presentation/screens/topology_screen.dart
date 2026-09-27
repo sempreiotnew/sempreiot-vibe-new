@@ -16,6 +16,7 @@ import '../../application/topology_provider.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
 import '../widgets/editor_gate.dart';
 import '../../application/credentials_admin_provider.dart';
+import '../../application/root_election_provider.dart';
 
 /// Rede — live map of the fire-alarm mesh. Central on top, root marked,
 /// curved glowing links, and dots with trails traveling along the real path
@@ -231,6 +232,8 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
     // The board (layer 0) is folded into the CENTRAL chip, not drawn as its
     // own node; the mesh (layer 1+) hangs off the central directly.
     final allNodes = ref.watch(topologyProvider);
+    // Who is root — or that the mesh is still deciding (root_election_provider).
+    final election = ref.watch(rootElectionProvider);
     TopologyNode? board;
     final nodes = <TopologyNode>[];
     for (final n in allNodes) {
@@ -244,7 +247,7 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
 
     final body = Column(
       children: [
-        _MeshStatusBar(nodes: nodes, onClear: _clearRegistry),
+        _MeshStatusBar(nodes: nodes, election: election, onClear: _clearRegistry),
         Expanded(
           child: nodes.isEmpty
               ? const _EmptyMesh()
@@ -310,6 +313,10 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
                                             repaint: _ticker,
                                             isDark: context.isDark,
                                             boardMac: boardMac,
+                                            rootMac: election.rootMac,
+                                            candidates: election.electing
+                                                ? election.candidates
+                                                : const {},
                                           ),
                                         ),
                                       ),
@@ -324,6 +331,11 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
                                             node: node,
                                             position:
                                                 layout.positions[node.mac]!,
+                                            isRoot: node.online &&
+                                                node.mac == election.rootMac,
+                                            isCandidate: election.electing &&
+                                                election.candidates
+                                                    .contains(node.mac),
                                             onTap: () => _showNodeSheet(node),
                                           ),
                                     ],
@@ -435,8 +447,13 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
 // ── Status bar ───────────────────────────────────────────────────────────────
 
 class _MeshStatusBar extends StatelessWidget {
-  const _MeshStatusBar({required this.nodes, required this.onClear});
+  const _MeshStatusBar({
+    required this.nodes,
+    required this.election,
+    required this.onClear,
+  });
   final List<TopologyNode> nodes;
+  final RootElectionState election;
 
   /// "Limpar dispositivos" lives here, not floating over the canvas, so it
   /// can never collide with the zoom controls on a short landscape screen.
@@ -473,6 +490,10 @@ class _MeshStatusBar extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (election.electing) ...[
+                    _ElectionPill(election: election),
+                    const SizedBox(width: 14),
+                  ],
                   _StatusCount(
                       color: AppColors.success, label: 'ATIVOS', count: online),
                   const SizedBox(width: 14),
@@ -524,6 +545,52 @@ class _MeshStatusBar extends StatelessWidget {
             ),
             icon: const Icon(Icons.delete_sweep_rounded, size: 20),
             onPressed: onClear,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// "The mesh is choosing its root": shown while several units claim level 1
+/// or the root was just lost, with the elapsed time so the operator sees it
+/// is transient — and as a trouble once it has run past what a failover is
+/// allowed to take (root_election_provider).
+class _ElectionPill extends StatelessWidget {
+  const _ElectionPill({required this.election});
+  final RootElectionState election;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now().toUtc();
+    final overdue = election.overdue(now);
+    final color = overdue ? AppColors.error : AppColors.warning;
+    final secs = election.elapsed(now).inSeconds;
+    final label = overdue ? 'SEM ROOT' : 'REORGANIZANDO';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.55)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 10,
+            height: 10,
+            child: CircularProgressIndicator(strokeWidth: 1.6, color: color),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '$label · ${secs}s',
+            style: TextStyle(
+              color: color,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.6,
+            ),
           ),
         ],
       ),
@@ -662,6 +729,8 @@ class _MeshGraphPainter extends CustomPainter {
     required Listenable repaint,
     required this.isDark,
     this.boardMac,
+    this.rootMac,
+    this.candidates = const {},
   }) : super(repaint: repaint);
 
   final List<TopologyNode> nodes;
@@ -669,6 +738,11 @@ class _MeshGraphPainter extends CustomPainter {
   final List<_TrafficDot> dots;
   final bool isDark;
   final String? boardMac;
+
+  /// The settled root (pulse ring) and, while electing, the contenders
+  /// (faster, fainter pulse; dashed link to the central).
+  final String? rootMac;
+  final Set<String> candidates;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -690,12 +764,25 @@ class _MeshGraphPainter extends CustomPainter {
       final parentOnline =
           parentKey == _centralKey || (byMac[parentKey]?.online ?? false);
       final healthy = n.online && parentOnline;
-      final color = healthy
-          ? AppColors.secondary
-          : AppColors.error.withValues(alpha: 0.8);
+      final candidate = candidates.contains(n.mac);
+      final color = candidate
+          ? AppColors.warning
+          : healthy
+              ? AppColors.secondary
+              : AppColors.error.withValues(alpha: 0.8);
 
       final path = _linkPath(from, to);
-      if (healthy) {
+      if (candidate) {
+        // Contending for root: attached, but not yet the bridge.
+        _drawDashedPath(
+          canvas,
+          path,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.3
+            ..color = color.withValues(alpha: 0.7),
+        );
+      } else if (healthy) {
         // Glow pass
         canvas.drawPath(
           path,
@@ -732,14 +819,20 @@ class _MeshGraphPainter extends CustomPainter {
       }
     }
 
-    // Pulse rings on the central and the root.
+    // Pulse rings on the central and the settled root; while electing the
+    // candidates get a quicker, fainter pulse instead of the root's.
     final phase = (nowMs % 2200) / 2200.0;
     _pulse(
         canvas, layout.positions[_centralKey], AppColors.secondary, phase, 30);
+    final fast = (nowMs % 1100) / 1100.0;
     for (final n in nodes) {
-      if (n.role == SafrNodeRole.root && n.layer > 0 && n.online) {
+      if (!n.online || n.layer == 0) continue;
+      if (n.mac == rootMac) {
         _pulse(canvas, layout.positions[n.mac], AppColors.warning,
             (phase + 0.5) % 1.0, 26);
+      } else if (candidates.contains(n.mac)) {
+        _pulse(canvas, layout.positions[n.mac],
+            AppColors.warning.withValues(alpha: 0.6), fast, 22);
       }
     }
 
@@ -1172,18 +1265,23 @@ class _NodeChip extends StatelessWidget {
   const _NodeChip({
     required this.node,
     required this.position,
+    required this.isRoot,
+    required this.isCandidate,
     required this.onTap,
   });
 
   final TopologyNode node;
   final Offset position;
+
+  /// Decided by root_election_provider, not by the unit's own claim: the
+  /// ROOT badge goes to the settled root only; while the mesh is still
+  /// choosing, the contenders wear CANDIDATO instead.
+  final bool isRoot;
+  final bool isCandidate;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    // Only an online device shows as the root; a stale/offline ex-root does
-    // not keep the ROOT marker.
-    final isRoot = node.role == SafrNodeRole.root && node.online;
     final statusColor = !node.online
         ? AppColors.error
         : node.sleeping
@@ -1196,9 +1294,11 @@ class _NodeChip extends StatelessWidget {
     };
     final ringColor = isRoot
         ? AppColors.warning
-        : node.online
-            ? AppColors.secondary.withValues(alpha: 0.6)
-            : AppColors.error.withValues(alpha: 0.65);
+        : isCandidate
+            ? AppColors.warning.withValues(alpha: 0.55)
+            : node.online
+                ? AppColors.secondary.withValues(alpha: 0.6)
+                : AppColors.error.withValues(alpha: 0.65);
 
     return Positioned(
       left: position.dx - 52,
@@ -1300,27 +1400,37 @@ class _NodeChip extends StatelessWidget {
                           ),
                         ),
                       ),
-                    if (isRoot)
+                    if (isRoot || isCandidate)
                       Positioned(
-                        left: -8,
+                        left: isCandidate ? -18 : -8,
                         bottom: -7,
                         child: Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 5, vertical: 1.5),
                           decoration: BoxDecoration(
-                            color: AppColors.warning,
+                            color: isRoot
+                                ? AppColors.warning
+                                : AppColors.warning.withValues(alpha: 0.18),
                             borderRadius: BorderRadius.circular(6),
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppColors.warning.withValues(alpha: 0.4),
-                                blurRadius: 6,
-                              ),
-                            ],
+                            border: isRoot
+                                ? null
+                                : Border.all(
+                                    color: AppColors.warning
+                                        .withValues(alpha: 0.7)),
+                            boxShadow: isRoot
+                                ? [
+                                    BoxShadow(
+                                      color: AppColors.warning
+                                          .withValues(alpha: 0.4),
+                                      blurRadius: 6,
+                                    ),
+                                  ]
+                                : null,
                           ),
-                          child: const Text(
-                            'ROOT',
+                          child: Text(
+                            isRoot ? 'ROOT' : 'CANDIDATO',
                             style: TextStyle(
-                              color: Colors.black,
+                              color: isRoot ? Colors.black : AppColors.warning,
                               fontSize: 7.5,
                               fontWeight: FontWeight.w900,
                               letterSpacing: 0.5,

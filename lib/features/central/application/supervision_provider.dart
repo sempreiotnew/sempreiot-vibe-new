@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/app_database.dart';
 import '../domain/safr/safr_v2_payloads.dart';
+import 'root_election_provider.dart';
 import 'serial_link_provider.dart';
 
 /// Supervision rule (docs/safr/protocol-safr-v3.md §8): a device that stays silent
@@ -123,6 +124,8 @@ final meshLinkStateProvider = Provider<String>((ref) {
   if (ref.watch(serialLinkProvider) != SerialLinkStatus.connected) {
     return 'disconnected';
   }
+  // The mesh is between roots: reachable, but nobody is the bridge yet.
+  if (ref.watch(rootElectionProvider).electing) return 'connecting';
   final devices = ref.watch(supervisionProvider);
   if (devices.isEmpty) return 'disconnected';
   for (final s in devices) {
