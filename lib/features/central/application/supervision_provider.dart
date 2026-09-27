@@ -51,7 +51,16 @@ class SupervisionNotifier extends StateNotifier<List<DeviceSupervision>> {
       final result = <DeviceSupervision>[];
 
       for (final d in _devices) {
-        final online = now.difference(d.lastSeenAt) < offlineThreshold(d);
+        final heard = now.difference(d.lastSeenAt) < offlineThreshold(d);
+        // The board is the authority when it knows more recently than we
+        // heard the unit: it drops a dead root's TCP session in ~5 s and
+        // pushes a DEVICE_TABLE with that unit MISSING (spec §7.12, §9.2),
+        // 40 s before our own silence rule. Any later frame from the unit
+        // (lastSeenAt newer than the table) makes it online again.
+        final boardSaysMissing = d.boardState == SafrDeviceState.missing.wire &&
+            d.tableSyncedAt != null &&
+            d.tableSyncedAt!.isAfter(d.lastSeenAt);
+        final online = heard && !boardSaysMissing;
         result.add(DeviceSupervision(device: d, online: online));
 
         final wasOnline = d.supervisionState == 0;

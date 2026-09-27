@@ -64,6 +64,13 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
   (Size, Size)? _fittedFor;
   StreamSubscription<SafrTrafficTick>? _trafficSub;
 
+  /// A change of the tree's shape (a node joined, left or moved layer)
+  /// re-fits only once the shape has held still for this long, so a
+  /// failover does not make the map jump on every intermediate state.
+  /// A viewport change (rotation) still re-fits at once.
+  static const _refitSettle = Duration(milliseconds: 1500);
+  Timer? _refitTimer;
+
   @override
   void initState() {
     super.initState();
@@ -77,6 +84,7 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
 
   @override
   void dispose() {
+    _refitTimer?.cancel();
     _trafficSub?.cancel();
     _transform.dispose();
     _ticker.dispose();
@@ -248,9 +256,18 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
                   _canvasSize = layout.canvas;
                   final key = (size, layout.canvas);
                   if (_fittedFor != key) {
+                    final viewportChanged =
+                        _fittedFor == null || _fittedFor!.$1 != size;
                     _fittedFor = key;
-                    WidgetsBinding.instance
-                        .addPostFrameCallback((_) => _fitToView());
+                    _refitTimer?.cancel();
+                    if (viewportChanged) {
+                      WidgetsBinding.instance
+                          .addPostFrameCallback((_) => _fitToView());
+                    } else {
+                      _refitTimer = Timer(_refitSettle, () {
+                        if (mounted) _fitToView();
+                      });
+                    }
                   }
                   return Stack(
                     children: [
