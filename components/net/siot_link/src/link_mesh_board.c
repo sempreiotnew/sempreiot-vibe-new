@@ -12,6 +12,7 @@
 #include "lwip/sockets.h"
 
 #include "sdkconfig.h"
+#include "siot_evbus.h"
 #include "siot_link.h"
 
 static const char *TAG = "link_mesh_board";
@@ -20,8 +21,11 @@ static const char *TAG = "link_mesh_board";
 #define TCP_LISTEN_PORT    5340
 #define TCP_BACKLOG        2
 #define RX_CHUNK_SIZE      256
-#define KEEPALIVE_IDLE_S   5      /* a root that lost power is dropped in ~11 s */
-#define KEEPALIVE_INTVL_S  2
+/* lwIP aborts the session keep_idle + cnt × intvl after the last segment it
+ * received from the root (tcp_slowtmr, independent of unacked data): a root
+ * that lost power is dropped in ~5 s and SIOT_EVT_LINK_DOWN fires. */
+#define KEEPALIVE_IDLE_S   2
+#define KEEPALIVE_INTVL_S  1
 #define KEEPALIVE_CNT      3
 
 static siot_installation_t s_code;
@@ -147,14 +151,21 @@ static void tcp_server_task(void *arg)
                 siot_link_reasm_reset(&reasm);
                 s_client_fd = fd;
                 ESP_LOGI(TAG, "root connected");
+                const siot_evt_link_t ev = {.link_kind = SIOT_LINK_MESH};
+                siot_evbus_post(SIOT_EVT_LINK_UP, &ev, sizeof(ev));
             }
         }
         if (client >= 0 && FD_ISSET(client, &rfds)) {
             const int n = recv(client, chunk, sizeof(chunk), 0);
             if (n <= 0) {
+                /* The root closed, or keepalive gave up on it: the mesh has no
+                 * path to us right now. (A newer root replacing an older
+                 * session above is not a loss and posts nothing.) */
                 ESP_LOGW(TAG, "root connection dropped");
                 drop_client(&client);
                 siot_link_reasm_reset(&reasm);
+                const siot_evt_link_t ev = {.link_kind = SIOT_LINK_MESH};
+                siot_evbus_post(SIOT_EVT_LINK_DOWN, &ev, sizeof(ev));
                 continue;
             }
             siot_link_reasm_feed(&reasm, SIOT_LINK_MESH, chunk, (size_t)n);

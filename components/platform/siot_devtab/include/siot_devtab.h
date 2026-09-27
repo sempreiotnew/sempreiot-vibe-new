@@ -99,6 +99,12 @@ esp_err_t siot_devtab_replace(const uint8_t old_mac[6], const uint8_t new_mac[6]
 /* Clears PENDING_RENAME / PENDING_DECOMMISSION after the command went out. */
 esp_err_t siot_devtab_clear_flags(const uint8_t mac[6], uint8_t flags);
 
+/* The board learned out of band that `mac` is gone (its root TCP session
+ * dropped): age its last-seen so snapshot() derives MISSING now instead of
+ * after the 45 s silence. RAM only; the next authenticated frame from the
+ * unit makes it ONLINE again. ESP_ERR_NOT_FOUND when unknown. */
+esp_err_t siot_devtab_mark_missing(const uint8_t mac[6], int64_t now_ms);
+
 /* Copies up to `max` entries with `state` derived from `now_ms`
  * (AC / unknown role: missing after 45 s; leaf: after 450 s). Returns count. */
 size_t siot_devtab_snapshot(siot_devtab_entry_t *out, size_t max, int64_t now_ms);

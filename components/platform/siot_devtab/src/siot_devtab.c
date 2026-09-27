@@ -185,6 +185,17 @@ bool siot_devtab_get(const uint8_t mac[6], int64_t now_ms, siot_devtab_entry_t *
     return s != NULL;
 }
 
+esp_err_t siot_devtab_mark_missing(const uint8_t mac[6], int64_t now_ms)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    slot_t *s = find(mac);
+    if (s == NULL) { xSemaphoreGive(s_lock); return ESP_ERR_NOT_FOUND; }
+    /* Older than the longest timeout, whatever the role. */
+    s->last_seen_ms = now_ms - SIOT_DEVTAB_LEAF_TIMEOUT_MS - 1;
+    xSemaphoreGive(s_lock);
+    return ESP_OK;
+}
+
 bool siot_devtab_touch(const uint8_t mac[6], int64_t now_ms, uint32_t epoch_now,
                        uint8_t role, uint8_t *flags_out)
 {

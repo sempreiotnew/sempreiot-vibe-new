@@ -5,6 +5,3 @@
 #          -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.4mb;sdkconfig.bench" build
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_board_4mb.csv"
-# Round-1 bench boards have no USB connector: the tablet link runs on UART0
-# through the USB-TTL adapter (brief §6.5). Text console stays off.
-CONFIG_SIOT_SERIAL_LINK_UART0=y

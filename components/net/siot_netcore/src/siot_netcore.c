@@ -53,16 +53,28 @@ static int64_t  s_pending_next_ms;
 static bool s_name_announced;
 static esp_timer_handle_t s_decommission_timer;
 
+/* Role announcement after a Mesh-Lite level change (brief §9: "TOPOLOGY 60 s
+ * + on change"). It used to fire once, at the instant of the change — before
+ * the new root had its TCP session, before a child's new root could forward —
+ * and was silently lost, so the tablet saw nothing until the next 15 s tick
+ * and the old tree stayed on screen. Now it stays pending until the path is
+ * proven (root: board session up; child: a downlink frame arrived after the
+ * change) and the frames actually left. */
+static bool    s_announce_pending;
+static int64_t s_level_change_ms;
+static bool    s_last_tx_ok; /* result of the last HEARTBEAT/TOPOLOGY send (netcore task only) */
+
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 static uint32_t now_epoch(int64_t t) { return s_epoch_base + (uint32_t)((t - s_epoch_ref_ms) / 1000); }
 
-/* When a downlink frame last came through (TIME_SYNC / LINK_CHECK from the
- * tablet every 30 s, ACKs and commands from the board). Two nodes can form a
+/* When a downlink frame last came through: the board's own HEARTBEAT every
+ * 15 s (spec §7.3 — the steady signal, tablet or not), TIME_SYNC / LINK_CHECK
+ * from the tablet, ACKs and commands from the board. Two nodes can form a
  * mesh among themselves with no board at all (Mesh-Lite picks a root
  * anyway), so "level > 0" never meant "the board is there". */
 static int64_t s_last_downlink_ms = -1;
-#define BOARD_SILENCE_MS 90000 /* 3 × the tablet's LINK_CHECK period (spec §9.3) */
+#define BOARD_SILENCE_MS 90000 /* 6 missed board HEARTBEATs = 3 × the tablet's LINK_CHECK (spec §9.3) */
 
 static bool board_reachable(int64_t t)
 {
@@ -102,6 +114,7 @@ static void tx_sink(const uint8_t *frame, size_t len, const uint8_t dst_mac[6], 
     if (siot_survey_tx(frame, len, dst_mac)) return; /* PARENT_PROBE/OFFER: ESP-NOW, not the mesh */
     const esp_err_t err = siot_link_send(SIOT_LINK_MESH, dst_mac, frame, len);
     const bool reachable = board_reachable(now_ms());
+    if (frame[4] == SAFR_MSG_HEARTBEAT || frame[4] == SAFR_MSG_TOPOLOGY) s_last_tx_ok = err == ESP_OK;
     if (err == ESP_OK) {
         /* Blue traffic tick only when the frame can actually reach the tablet;
          * inside a board-less mesh it would just be noise on the LED. */
@@ -276,6 +289,16 @@ static void on_ack(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_le
     siot_evbus_post(SIOT_EVT_ACK_RECEIVED, &ev, sizeof(ev));
 }
 
+/* The board's HEARTBEAT (spec §7.3): only ever reaches a node downlink (a
+ * node's own uplink HEARTBEATs go root → TCP, never back into the tree), so
+ * it is proof the board is behind the mesh. Relay it one hop further. */
+static void on_board_heartbeat(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len, bool dup, void *ctx)
+{
+    (void)f; (void)ctx;
+    note_downlink();
+    relay_down(raw, raw_len, dup);
+}
+
 static void on_time_sync(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len, bool dup, void *ctx)
 {
     (void)ctx;
@@ -447,6 +470,8 @@ static bool update_state(void)
     const bool level_changed = level != s_level_seen;
     if (level_changed) {
         s_level_seen = level;
+        s_announce_pending = level > 0;
+        s_level_change_ms = now_ms();
         siot_survey_set_layer(level == 0 ? 0xFF : level);
         const siot_evt_level_t ev = {.level = level};
         siot_evbus_post(SIOT_EVT_MESH_LEVEL, &ev, sizeof(ev));
@@ -482,12 +507,30 @@ static void netcore_task(void *arg)
 
     for (;;) {
         const int64_t t = now_ms();
-        const bool level_changed = update_state();
+        (void)update_state();
         xSemaphoreTake(s_lock, portMAX_DELAY);
 
-        /* Role/layer just changed: announce it now (HEARTBEAT carries LAYER,
-         * TOPOLOGY carries ROLE) so the tablet reorganises in ~1 s, not 60 s. */
-        if (level_changed) { next_hb_ms = t; next_topo_ms = t; }
+        /* Role/layer changed: announce it (HEARTBEAT carries LAYER, TOPOLOGY
+         * carries ROLE) as soon as the frames can reach the board — root: the
+         * TCP session is up; child: something came down the tree after the
+         * change, so the root above us is forwarding. Retried every tick until
+         * both frames actually left; then the periodic timers restart. */
+        if (s_announce_pending) {
+            const uint8_t level = siot_link_mesh_level();
+            const bool path_proven = level == 1 ? siot_link_mesh_board_up()
+                                   : level >= 2 && s_last_downlink_ms >= s_level_change_ms;
+            if (path_proven) {
+                emit_heartbeat(t);
+                const bool hb_ok = s_last_tx_ok;
+                emit_topology(t);
+                if (hb_ok && s_last_tx_ok) {
+                    s_announce_pending = false;
+                    next_hb_ms = t + HB_INTERVAL_MS;
+                    next_topo_ms = t + TOPO_INTERVAL_MS;
+                    ESP_LOGI(TAG, "role announced (level %u)", level);
+                }
+            }
+        }
 
         /* NAME_ANNOUNCE once after boot — keep trying until a live transport takes it. */
         if (!s_name_announced && siot_link_mesh_level() > 0 && siot_link_is_up(SIOT_LINK_MESH) &&
@@ -536,6 +579,7 @@ esp_err_t siot_netcore_start(void)
 
     esp_err_t err;
     if ((err = siot_safr_register(SAFR_MSG_ACK, on_ack, NULL)) != ESP_OK) return err;
+    if ((err = siot_safr_register(SAFR_MSG_HEARTBEAT, on_board_heartbeat, NULL)) != ESP_OK) return err;
     if ((err = siot_safr_register(SAFR_MSG_TIME_SYNC, on_time_sync, NULL)) != ESP_OK) return err;
     if ((err = siot_safr_register(SAFR_MSG_COMMAND, on_command, NULL)) != ESP_OK) return err;
     siot_safr_set_tx(tx_sink, NULL);

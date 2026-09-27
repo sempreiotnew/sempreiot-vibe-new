@@ -16,6 +16,10 @@ CONFIG_MBEDTLS_HKDF_C=y
 CONFIG_ESP_CONSOLE_NONE=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 CONFIG_BOOTLOADER_LOG_LEVEL_NONE=y
+# The link runs on UART0 (GPIO 43/44, USB-UART bridge) on every module, N4 or
+# N8R8 (decided 2026-09-27). Only sdkconfig.bench moves it to native USB,
+# because the text console takes UART0 there.
+CONFIG_SIOT_SERIAL_LINK_UART0=y
 
 # Identity: model string reported in /info and used to pick the pin map
 # (tools/pinmap/pinmap.yaml). "SIOT-BOARD" prefix = the app's wizard treats

@@ -34,7 +34,15 @@ static uint32_t        s_journal_top;             /* highest JRN_SEQ, 0 = none *
 static siot_link_kind_t s_rx_kind;                /* which link the frame being dispatched came from */
 static siot_devtab_entry_t s_snap[SIOT_DEVTAB_CAP]; /* snapshot buffer — lock held while used */
 
+/* The unit currently bridging the mesh to us: SRC of the last uplink
+ * HEARTBEAT with LAYER 1 / TOPOLOGY with ROLE root (lock held). When its TCP
+ * session drops we know it is gone ~5 s after the fact — 45 s before the
+ * silence rule would say so — and tell the tablet at once (spec §9.2). */
+static uint8_t s_root_mac[6];
+static bool    s_root_known;
+
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
+static void emit_heartbeat(void);
 
 /* Wall clock: the board's own clock comes from TIME_SYNC (brief §8 item 12,
  * not wired yet) — first_seen stays 0 until then. */
@@ -54,6 +62,17 @@ static void tx_sink(const uint8_t *frame, size_t len, const uint8_t dst_mac[6], 
     if (siot_link_send(kind, dst_mac, frame, len) == ESP_OK) {
         const siot_evt_frame_t ev = {.msg_type = frame[4]};
         siot_evbus_post(SIOT_EVT_SAFR_TX, &ev, sizeof(ev)); /* blue pulse on transmit */
+    }
+    /* The board's own HEARTBEAT is ALSO broadcast down the mesh (spec §7.3,
+     * §9.3): it is the one downlink frame every node hears every 15 s with or
+     * without a tablet, so a joined node learns the board is behind the mesh
+     * (LED online, board-silence detection) instead of waiting for the
+     * tablet's LINK_CHECK or a TEST tap. No root connected: nothing to do. */
+    if (frame[4] == SAFR_MSG_HEARTBEAT) {
+        const esp_err_t err = siot_link_send(SIOT_LINK_MESH, dst_mac, frame, len);
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            ESP_LOGD(TAG, "heartbeat downlink: %s", esp_err_to_name(err));
+        }
     }
 }
 
@@ -263,6 +282,12 @@ static void handle_uplink(const siot_safr_frame_t *f, const uint8_t *raw, size_t
     if (!dup && f->msg_type == SAFR_MSG_NAME_ANNOUNCE) adopt_name_announce(f, role);
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    if ((f->msg_type == SAFR_MSG_HEARTBEAT && f->payload_len >= 20 && f->payload[19] == 1) ||
+        (f->msg_type == SAFR_MSG_TOPOLOGY && f->payload_len >= 6 && f->payload[4] == SAFR_ROLE_ROOT &&
+         f->payload[5] == 1)) {
+        memcpy(s_root_mac, f->src_mac, 6);
+        s_root_known = true;
+    }
     if (!dup && f->msg_type == SAFR_MSG_EVENT && f->payload_len == SAFR_EVENT_LEN) {
         journal_append(f->src_mac, f->payload);
         if (f->payload[0] == SAFR_EVT_ALARM) coord_admin_note_alarm(); /* no admin window mid-alarm */
@@ -457,6 +482,33 @@ static void on_frame(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_
     else handle_downlink(f, raw, raw_len, dup);
 }
 
+/* Root TCP session (link_mesh_board.c). UP: a root just connected — send our
+ * HEARTBEAT now, up and down, so the whole re-formed tree has its proof of
+ * the board within a second and announces itself (netcore's pending
+ * announce) instead of at the next 15 s tick. DOWN: the root we knew is
+ * gone — mark it missing and push the device table to the tablet unasked. */
+static void on_link(siot_evt_id_t id, const void *data, void *ctx)
+{
+    (void)ctx;
+    if (((const siot_evt_link_t *)data)->link_kind != SIOT_LINK_MESH) return;
+    if (id == SIOT_EVT_LINK_UP) {
+        emit_heartbeat();
+        return;
+    }
+    uint8_t mac[6];
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    const bool known = s_root_known;
+    memcpy(mac, s_root_mac, 6);
+    xSemaphoreGive(s_lock);
+    if (!known) return;
+    const int64_t t = now_ms();
+    char mac_s[SIOT_MAC_STR_LEN];
+    if (siot_devtab_mark_missing(mac, t) == ESP_OK) {
+        ESP_LOGW(TAG, "root %s session dropped -> MISSING, pushing DEVICE_TABLE", siot_mac_to_str(mac, mac_s));
+        send_device_table(0, SAFR_BCAST_MAC, t);
+    }
+}
+
 /* Both links deliver here (their own tasks); the dispatcher is keyed by
  * MSG_TYPE only, so remember the link for the handler. Each link's rx runs
  * in its own task, so the pair (set kind, dispatch) is serialised by s_rx_lock. */
@@ -552,6 +604,8 @@ esp_err_t siot_coordinator_start(void)
     siot_link_set_rx(on_link_rx, NULL);
     esp_err_t err = siot_evbus_subscribe(SIOT_EVT_BUTTON_TAP, on_button, NULL, NULL);
     if (err != ESP_OK) return err;
+    if ((err = siot_evbus_subscribe(SIOT_EVT_LINK_UP, on_link, NULL, NULL)) != ESP_OK) return err;
+    if ((err = siot_evbus_subscribe(SIOT_EVT_LINK_DOWN, on_link, NULL, NULL)) != ESP_OK) return err;
     err = coord_admin_init(); /* double tap: admin window (lifecycle §11) */
     if (err != ESP_OK) return err;
 

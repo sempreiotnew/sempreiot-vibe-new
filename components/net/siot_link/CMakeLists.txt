@@ -10,7 +10,7 @@ if(${target} STREQUAL "linux")
 else()
     set(srcs "src/link_core.c" "src/link_serial.c" "src/link_mesh_board.c")
     set(priv_reqs esp_wifi esp_netif esp_event lwip esp_timer esp_hw_support
-                  siot_hal_serial siot_identity siot_util)
+                  siot_hal_serial siot_identity siot_util siot_evbus)
     if(CONFIG_MESH_LITE_ENABLE)
         # The node image only: the mesh_lite / iot_bridge managed components
         # exist in apps/node (idf_component.yml), not in apps/board.

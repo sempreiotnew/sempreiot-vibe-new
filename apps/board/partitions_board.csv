@@ -3,8 +3,8 @@
 nvs,           data, nvs,      0x9000,   0x6000
 otadata,       data, ota,      0xF000,   0x2000
 phy_init,      data, phy,      0x11000,  0x1000
-ota_0,         app,  ota_0,    0x20000,  0x200000
-ota_1,         app,  ota_1,    0x220000, 0x200000
-fw_store,      data, fat,      0x420000, 0x300000
-nvs_factory,   data, nvs,      0x720000, 0x8000
-coredump,      data, coredump, 0x728000, 0x10000
+ota_0,         app,  ota_0,    0x20000,  0x260000
+ota_1,         app,  ota_1,    0x280000, 0x260000
+fw_store,      data, fat,      0x4E0000, 0x300000
+nvs_factory,   data, nvs,      0x7E0000, 0x8000
+coredump,      data, coredump, 0x7E8000, 0x10000
