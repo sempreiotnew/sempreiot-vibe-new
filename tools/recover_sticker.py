@@ -25,7 +25,8 @@ from pathlib import Path
 REGIONS = [
     ("nvs (POC)", 0x9000, 0x6000),
     ("nvs_factory (4 MB table)", 0x3E0000, 0x8000),
-    ("nvs_factory (8 MB table)", 0x720000, 0x8000),
+    ("nvs_factory (8 MB table)", 0x7E0000, 0x8000),
+    ("nvs_factory (8 MB table, before 2026-09-27)", 0x720000, 0x8000),
 ]
 KV_RE = re.compile(r"^\s*siot_fact:(id|pop)\s*=\s*(.*?)\s*$")
 

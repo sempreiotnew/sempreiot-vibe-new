@@ -28,10 +28,10 @@ under **UL 864 / NFPA 72 (US)** and **EN 54-25 / ISO 7240-25 (EU/international)*
 
 | Part | What it is | Hardware / runtime | Status |
 |---|---|---|---|
-| **Board** | The control unit. Raises the installation's Wi-Fi access point, bridges the mesh to the tablet over USB, ACKs commands, journals every event, will latch alarms and supervise devices on its own. Never a mesh node. | ESP32-S3, 8 MB flash, mains + battery, native USB to the tablet | POC (`pocs/board`) → Phase 1 firmware |
+| **Board** | The control unit. Raises the installation's Wi-Fi access point, bridges the mesh to the tablet over USB, ACKs commands, journals every event, will latch alarms and supervise devices on its own. Never a mesh node. | ESP32-S3-WROOM-1-**N8R8** (8 MB flash + 8 MB PSRAM, PSRAM to be enabled — §4.1), mains + battery, native USB to the tablet | POC (`pocs/board`) → Phase 1 firmware |
 | **Tablet (Central app)** | Operator panel: shows devices, events, alarms; SILENCE / RESET; latching and supervision today; talks to the board over USB only. | Android tablet, Flutter app in CENTRAL mode (`mobile/sempreiot_central_app`) | Implemented |
-| **AC device** | Any mains-powered unit (siren, I/O module, AC detector, repeater). Mesh node; root-capable. | ESP32-S3, 4 MB, one firmware image for every AC type | POC (`pocs/node`) → Phase 1 firmware |
-| **Battery detector** | Battery-powered smoke/heat detector. Sleeps; wakes to talk to one AC device by ESP-NOW; never root, never relay. | ESP32-S3, batteries, ADPD188BI smoke + HDC2080 temp/humidity | Planned Phase 2 |
+| **AC device** | Any mains-powered unit (siren, I/O module, AC detector, repeater). Mesh node; root-capable. | ESP32-S3-WROOM-1-**N4** (4 MB flash, no PSRAM; N8R8 is the fallback, same footprint — §4.1), one firmware image for every AC type | POC (`pocs/node`) → Phase 1 firmware |
+| **Battery detector** | Battery-powered smoke/heat detector. Sleeps; wakes to talk to one AC device by ESP-NOW; never root, never relay. | ESP32-S3-WROOM-1-**N4** (§4.1), batteries, ADPD188BI smoke + HDC2080 temp/humidity | Planned Phase 2 |
 | **Installer / Viewer app** | Same Flutter app on a phone. Installer functions (create installation, provision units) work offline; viewer functions need internet. | Android (iOS later), APP mode | Implemented (round 1) |
 | **Cloud** | Mirrors the tablet's presence/status for remote viewers; access control between users and centrals. Never in the fire path. | AWS IoT Core (MQTT), Cognito, Lambda (`lambda/`) | Implemented (presence, storage, access) |
 | **Factory station** | Writes identity into every unit and prints its sticker. | Python tool + flasher | Planned (OTA/production blueprint) |
@@ -141,7 +141,7 @@ the same change** (rule in `CLAUDE.md`).
 | 7.1 | Add / replace / retire / rename / forget a unit | Same provisioning flow to add; tablet node sheet ("Gerenciar", Master/Nível 4 PIN) sends `SET_DEVICE`, `RETIRE`/`UNRETIRE`, `REPLACE_DEVICE`, `DECOMMISSION` (typed confirmation), `FORGET_DEVICE`; every action audited. | Implemented (Phase 2, 2026-09-24; bench test pending) | spec §7.6 v3.2, lifecycle §5 E–H | `siot_coordinator.c` `handle_lifecycle_command`, app `topology_screen.dart` |
 | 7.2 | Replace the board / tablet / lost phone | Board: provision from any code holder or arm from the tablet (Case B), then "Reenviar nomes à placa"; tablet: "Ler código da placa" (`GET_CODE`) or the encrypted QR; phone: encrypted QR from any holder, or the board admin window ("Entrar pela placa"). | Implemented (Phases 2–3, 2026-09-24; bench test pending) | lifecycle §4, §5 I–K, §11 | app `central_installation_screen.dart`, `join_from_board_screen.dart` |
 | 7.3 | Channel change | `SET_CHANNEL {channel, switch_at}` down the mesh, board switches last. | Planned (undefined) | blueprint §8 | — |
-| 7.4 | Firmware update (OTA) | Two signed images (board, node); the board stores the node image and serves the whole site through the mesh; rollback on failed self-test; battery detectors update via the "pending" flag. | Planned (OTA blueprint) | `ota-and-production-blueprint-v1.md` | — |
+| 7.4 | Firmware update (OTA) | Two signed images (board, node); the board stores the node image and serves the whole site through the mesh; rollback on failed self-test; battery detectors update via the "pending" flag. | Planned, not scheduled (hardware fit confirmed 2026-09-27: N8R8 board with 3 MB `fw_store`, N4 nodes with 1.875 MB slots, rollback already enabled; USB push needs 921600 baud) | `ota-and-production-blueprint-v1.md` §1.4–1.5 | — |
 | 7.5 | Factory station | Flashes bootloader + app + identity, prints the sticker, records the unit in the factory DB; secure boot + flash encryption on production units. | Planned | OTA blueprint §5 | — |
 | 7.6 | Bench tooling | Console commands, host tests (protocol vectors), hardware-in-the-loop script, failover timer, LED language for silent bench debugging (7.7). | Phase 1 firmware (LED language, host tests, timer) → Phase 1 step 4 (console, HIL) | brief §9/§11 | `siot_ui_led`, `firmware/test/host`, `tools` |
 | 7.7 | LED language — traffic pulses | Decided 2026-09-23 so a walk test can be read from the LEDs alone. Role colours: white blink = setup, white solid = joining, **green flash 250 ms every 5 s = root node**, off = child node, **magenta flash 250 ms every 5 s = board**, red = alarm latched, blue blink = IDENTIFY. Traffic pulses fire **only when the unit transmits** (its own frames; on the board also every relay), never on receive: **blue 100 ms** = background frame (`HEARTBEAT`, `TOPOLOGY`, `NAME_ANNOUNCE`, `EVENT_LOG_*`, `INSTALLATION`); **blue 500 ms** = message (`EVENT`, `ACK`, `COMMAND`, `TIME_SYNC`); **cyan 500 ms** = the tablet's ACK for a frame this unit sent arrived (the only cyan). Pulses queue in order, never override. Reading a walk test: tap on a node → *blue* (sent) then *cyan* (confirmed); board → one *blue* when it forwards the event to the tablet, one *blue* when it forwards the ACK back; three blues 2 s apart and no cyan = no ACK (tablet not connected or link down). Ticks fold into a running tick; IDENTIFY suppresses pulses while it runs. | Phase 1 firmware | brief §9 (base colours) | `siot_ui_led` (`on_tx`, pulse queue) |
@@ -163,6 +163,65 @@ the same change** (rule in `CLAUDE.md`).
 | How long does installing a unit take? | ~20–30 s per unit from the phone, offline. | blueprint §3, POC-BRIEF §7 |
 | Battery life of a detector? | Decided by POC D (battery pack + 60–150 s cadence) — not yet measured. | blueprint §11 |
 | Which standards? | Designed for UL 864 / NFPA 72 and EN 54-25 / ISO 7240-25; the board is the certifiable control unit, the tablet a supplementary annunciator. Numeric limits to be verified against purchased editions before a lab submittal. | spec §0 |
+
+### 4.1 Scale and hardware constraints — the 250-device target (decided 2026-09-27)
+
+Modules recommended by the supplier (2026-09-25): **ESP32-S3-WROOM-1-N8R8** (8 MB flash + 8 MB octal
+PSRAM) and **ESP32-S3-WROOM-1-N4** (4 MB flash, no PSRAM). Same footprint and pinout; the R8 parts
+consume GPIO 35–37, which no SempreIoT PCB uses. `firmware/build.sh` / `tools/flash.sh` know both
+(`--module n8r8|n4`); `tools/flash.sh` refuses to write a build whose flash size differs from the chip.
+
+**Decision**
+
+| Product | Module | Why |
+|---|---|---|
+| Board | N8R8, **PSRAM enabled** (`CONFIG_SPIRAM=y`, octal; today off — the build summary warns) | Root of everything, OTA server (`fw_store`), event journal, device table. One or two per site: cost irrelevant. |
+| AC device (siren, I/O, AC detector, repeater) | **N4**, confirmed by measurement (below); N8R8 is the fallback with no PCB or firmware change | Flash, outage storage and the leaf-manager role all fit the N4. The only open question is root RAM under load. |
+| Battery detector | N4 | Never root, never relay, sleeps; PSRAM would cost standby current for nothing. |
+
+**Constraints that led there (each one is a rule for the firmware)**
+
+1. **Flash is not the limit.** Node image 903 KB today in a 1.875 MB slot (46 %); the fixed cost is
+   Wi-Fi + lwIP + Mesh-Lite + mbedTLS, the application grows slowly; expected final size 1.2–1.4 MB,
+   under the OTA blueprint's 1.75 MB cap. Board image 858 KB in a 2.375 MB slot (grown from 2 MB on
+   2026-09-27 using 768 KB of the 8 MB table's spare; 32 KB spare remains, same as the node table).
+2. **Outage storage lives in flash, never in PSRAM.** Whatever a unit must keep while the mesh, the
+   board or its own power fails has to survive a reboot or brownout. PSRAM is volatile. Sizing: one
+   event record ≈ 40 B → 64 KB holds ~1,600 events; a status snapshot every minute for 24 h ≈ 90 KB.
+   Units store state changes and alarms, not heartbeats.
+3. **Reserve the node journal partition now.** Partition tables never change over the air (OTA
+   blueprint §8). Shrinking the two node OTA slots to the 1.75 MB cap frees 256 KB on the 4 MB table
+   for a `journal` data partition. This must ship in the first fielded table, whichever module wins.
+4. **The leaf manager is bounded by ESP-NOW, not by memory.** Per-leaf state (MAC, sequence, last
+   seen, battery, mailbox) ≈ 128 B → all 250 leaves on one parent = 32 KB. Limits that do bind
+   (`esp_now.h`, IDF 5.5.2): **20 peers total, 6 encrypted**. Rule: a parent adds a leaf as an
+   unencrypted peer when it wakes, answers, drops it; SAFR does the encryption. Airtime per parent
+   (hundreds of detectors waking every 60–150 s) is the other bound — an installer placement rule.
+5. **Root throughput is small at 250 devices** (heartbeat 15 s, topology 60 s, frames ≤ 250 B):
+   heartbeats ≈ 17 frames/s, topology ≈ 4 frames/s, all-250-in-alarm re-announce + ACKs ≈ 8 frames/s,
+   total ≈ 30 frames/s ≈ 4 KB/s. The root copies relayed frames without decrypting them; it holds one
+   TCP connection per direct child (≤ ~10) plus one to the board, never 250 of anything.
+6. **The real scale risks are bursts, not steady flow — and they are the same on any module:**
+   - *Reconnection storm* when the root dies: every subtree re-associates, DHCPs and reforms. This
+     is the 60 s / 120 s failover target (row 2.3) and the test that matters for certification.
+   - *Retry storm* when the board or tablet drops: 250 units resend ACK-required events 3× at 2 s
+     then raise their own communication trouble (spec §7.2). Every node queue must be bounded so a
+     long outage cannot grow memory.
+   - *SoftAP fan-out*: each node admits a limited number of children; a site where one AC device is
+     the only good parent for dozens of units hits that cap, not a RAM cap. Installer placement rule.
+7. **One node image for both modules.** Build the node with `CONFIG_SPIRAM=y` +
+   `CONFIG_SPIRAM_IGNORE_NOTFOUND=y` (both in IDF 5.5.2) so the same signed image boots on N4 and
+   N8R8; partitions are found by name so a per-module table is a factory-station choice only.
+
+**Measurements that close the decision (before a production quantity of N4 is ordered)**
+
+| Test | How | Pass |
+|---|---|---|
+| Root heap at site scale | Bench-only *load mode*: each of two real nodes emits heartbeats + topology for 125 synthetic MACs at real cadence through the real mesh, board and tablet, one hour, with an OTA download in flight | root minimum free heap stays above ~100 KB |
+| Failover at scale | Same load; kill the root; time reformation | < 60 s target, 120 s max (row 2.3) |
+| Fleet memory margin | Add **minimum free heap + largest free block** to every `TOPOLOGY` frame (60 s) so every site reports its own margin to the tablet | continuous data, no bench needed |
+
+If the heap test fails, the AC device purchase order changes to N8R8; nothing else does.
 
 ---
 

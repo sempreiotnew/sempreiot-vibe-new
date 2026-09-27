@@ -50,7 +50,7 @@ MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
 
 # Default size of the generated .bin = the read-only "nvs_factory" partition
 # of the product firmware (firmware/apps/{board,node}/partitions_*.csv, OTA
-# blueprint §1.1/§1.2: 0x8000 at 0x3E0000 on the node, 0x720000 on the board).
+# blueprint §1.1/§1.2: 0x8000 at 0x3E0000 on the node, 0x7E0000 on the board).
 # The round-1 POCs (pocs/) wrote the same namespace into their 0x6000 "nvs"
 # partition instead — pass --nvs-size 0x6000 for those.
 DEFAULT_NVS_SIZE = 0x8000
@@ -206,7 +206,7 @@ def main() -> int:
     print(f"png:  {png_path if png_ok else '(skipped — see warning above)'}")
     print(
         "\nTo flash the identity alone (nvs_factory offset from the app's "
-        "partition table: node 0x3E0000, board 0x720000):\n"
+        "partition table: node 0x3E0000, board 0x7E0000):\n"
         f"  esptool.py write_flash 0x3E0000 {bin_path}\n"
         "or app + partition table + identity in one go:\n"
         f"  tools/flash.sh node <port> {id_}"

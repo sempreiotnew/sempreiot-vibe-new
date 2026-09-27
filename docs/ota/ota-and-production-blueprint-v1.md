@@ -56,13 +56,16 @@ logging at INFO in release builds.
 nvs,           data, nvs,      0x9000,   0x6000
 otadata,       data, ota,      0xF000,   0x2000
 phy_init,      data, phy,      0x11000,  0x1000
-ota_0,         app,  ota_0,    0x20000,  0x200000  # 2 MB
-ota_1,         app,  ota_1,    0x220000, 0x200000  # 2 MB
-fw_store,      data, fat,      0x420000, 0x300000  # 3 MB: holds node.bin + manifest to serve to the mesh
-nvs_factory,   data, nvs,      0x720000, 0x8000
-coredump,      data, coredump, 0x728000, 0x10000
-# 0x738000–0x800000 spare (~800 KB)
+ota_0,         app,  ota_0,    0x20000,  0x260000  # 2.375 MB
+ota_1,         app,  ota_1,    0x280000, 0x260000  # 2.375 MB
+fw_store,      data, fat,      0x4E0000, 0x300000  # 3 MB: holds node.bin + manifest to serve to the mesh
+nvs_factory,   data, nvs,      0x7E0000, 0x8000
+coredump,      data, coredump, 0x7E8000, 0x10000
+# 0x7F8000–0x800000 spare (32 KB)
 ```
+
+_2026-09-27: the app slots grew from 2 MB to 2.375 MB each, taking 768 KB of the former 800 KB spare
+(system reference §4.1). No unit had been fielded on the 2 MB table._
 
 `fw_store` is why the board needs 8 MB: it keeps the **node** image (≈1.8 MB) plus the release
 manifest, so it can serve all nodes on site without the tablet being involved for each one.
@@ -96,6 +99,37 @@ stage 1 verifies signatures on OTA update (`SECURE_SIGNED_ON_UPDATE_NO_SECURE_BO
 not on a directly UART-flashed image — only stage 2's hardware Secure Boot closes that gap. Full
 command-by-command reference: `docs/ota/secure-signed-firmware-howto.md`.
 
+### 1.4 Hardware fit — the modules this design runs on (decided 2026-09-27)
+
+Modules per product are fixed in `docs/sempreiot-system-reference.md` §4.1. What each one gives the OTA
+design:
+
+| Product | Module | OTA role | Fit |
+|---|---|---|---|
+| Board | ESP32-S3-WROOM-1-**N8R8** (8 MB flash + 8 MB PSRAM) | Receives both images from the tablet over USB; updates itself in place; keeps the **node** image in `fw_store` (3 MB) and serves it to the whole site over HTTP. | The only reason the board is 8 MB. App slots 2.375 MB each (§1.2); board image 858 KB today. |
+| AC device | ESP32-S3-WROOM-1-**N4** (4 MB flash) | Pulls `/fw/node.bin` from the board over plain HTTP, through its parent when at depth ≥ 2 (Mesh-Lite NAPT), writes the inactive slot, self-tests, rolls back on failure. | Slots 1.875 MB; image 903 KB today, cap 1.75 MB (§1.1). |
+| Battery detector | ESP32-S3-WROOM-1-**N4** | Same pull, on wake, when the parent's check-in reply says an image is available (§3.5). | Same table as the AC device. |
+
+Already true in the current builds (`firmware/apps/{board,node}/sdkconfig.defaults`):
+`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` on both images. `CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP` exists in
+IDF 5.5.2 (`components/esp_https_ota/Kconfig`), which closes the §8 `[VERIFY]` on plain HTTP.
+
+**The USB link is the bottleneck of the push (§3.2).** At 115200 8N1 (≈ 11 KB/s) a 903 KB node image
+takes ≈ 80 s and a 1.5 MB one over 2 min, with supervision frames sharing the link the whole time. The
+switch to 921600 for `OTA_PUSH_*` (≈ 10 s) is therefore part of Phase 1, on the board and the tablet app.
+
+**Rolling a site.** One node at a time, ≈ 40 s each including reboot and self-test, root last: 2 nodes on
+the bench ≈ 1.5 min; 250 nodes < 3 h in the background, paused by any alarm (§3.4).
+
+### 1.5 Implementation status
+
+_2026-09-27: **nothing in `firmware/` implements OTA yet** — no `OTA_PUSH_*` handler, no `fw_store`, no
+HTTP server or client, no scheduler. The design is complete and the hardware fits it; development is
+deliberately not scheduled. When it starts, the order is §7 as written: signed images (Phase 0) → board
+self-update over USB (Phase 1) → node image through the mesh (Phase 2). The bench set for the first two
+phases is one N8R8 board and two N4 nodes: push from the tablet, board updates itself, then the two nodes
+update one after the other, root last._
+
 ---
 
 ## 2. Release pipeline (build → sign → publish)
@@ -106,7 +140,7 @@ git tag v1.4.2
       ▼
 CI (GitHub Actions or similar, one job per image)
   1. idf.py set-target esp32s3 && idf.py build         (board, then node)
-  2. size check: node.bin ≤ 1.75 MB, board.bin ≤ 1.9 MB
+  2. size check: node.bin ≤ 1.75 MB, board.bin ≤ 2.25 MB (slot 2.375 MB)
   3. sign: done by the build using the key from CI secrets   (never on a developer machine)
   4. produce manifest.json (below)
   5. upload {board.bin, node.bin, manifest.json} to release storage
@@ -177,7 +211,8 @@ New SAFR messages (USB link, tablet → board):
 | `OTA_PUSH_CHUNK` | `seq`, `data` (4 KB), `crc32` | Board ACKs each chunk; tablet resumes from last ACKed `seq` after a USB hiccup. |
 | `OTA_PUSH_END` | — | Board verifies signature + sha256 + `project_name`, replies `OTA_PUSH_RESULT {ok, reason}`. |
 
-Bump the USB baud rate to 921600 for this (1.8 MB ≈ 25 s instead of ≈ 3 min at 115200).
+Bump the USB baud rate to 921600 for this (1.8 MB ≈ 25 s instead of ≈ 3 min at 115200; today's
+903 KB node image ≈ 10 s instead of ≈ 80 s — §1.4).
 
 Board-side verification of a staged **node** image in `fw_store`: read the file back and run
 `esp_image_verify()` on it (`[VERIFY]` — it verifies signature + checksum on any flash region
@@ -494,7 +529,8 @@ the previous one's exit test passes.
 
 - `[VERIFY]` `esp_image_verify()` behaviour on a non-app partition region (§3.2).
 - `[VERIFY]` Mesh-Lite NAPT throughput at depth 2–3 and SoftAP max station count (affects detector join in §3.5).
-- `[VERIFY]` `esp_https_ota` with plain HTTP + partial/resume support in the IDF version used.
+- `[VERIFY]` `esp_https_ota` partial/resume support in IDF 5.5.2. (Plain HTTP is confirmed:
+  `CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP` exists — §1.4.)
 - Decide the release cadence and who holds the "promote to stable" button.
 - Decide whether the board gets an optional `factory` rescue app partition (space exists on 8 MB;
   not needed while USB reflash from the tablet is available).
