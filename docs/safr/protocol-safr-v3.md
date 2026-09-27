@@ -301,7 +301,7 @@ Sentinels for "not available": `0xFF` (uint8), `0xFFFF` (uint16), `0x7FFF` (int1
 | MSG_TYPE | Name | Direction | Payload |
 |----------|------|-----------|---------|
 | 0x01 | EVENT | uplink | 17 bytes |
-| 0x02 | HEARTBEAT | uplink | 20 bytes |
+| 0x02 | HEARTBEAT | uplink; the board's own copy also downlink (§7.3) | 20 bytes |
 | 0x03 | TOPOLOGY | uplink | 14 + 7·children |
 | 0x04 | ACK | both | 4 bytes |
 | 0x05 | COMMAND | downlink | 2 + n bytes |
@@ -416,6 +416,16 @@ The v2 behavior ("3 retries then give up") is **non-compliant and removed**.
 
 Supervision beacon (§9.2). Never sets `F_ACK_REQ`; never inserted into the
 Events feed — it silently updates the device registry (battery, RSSI, last-seen).
+
+**The board's own HEARTBEAT goes both ways (v3.3, 2026-09-27).** The board sends
+it to the central every 15 s as before *and* broadcasts the same frame down into
+the mesh; every node relays it one hop further (dedupe §9.1 makes this
+loop-safe). It is the one downlink frame a node hears on a fixed cadence with or
+without a central attached, so a node that has joined the mesh takes it as proof
+the board is behind the mesh (LED "online", §9.3 board-silence detection).
+Before this a joined node waited for the central's LINK_CHECK (up to 30 s) or a
+TEST tap, and with no central attached it waited forever. A node's own
+HEARTBEAT is never relayed downward: uplink frames go root → central only.
 
 | Off | Size | Field | What it is for |
 |----|------|--------------------|---|
@@ -590,6 +600,10 @@ in reply to `GET_DEVICE_TABLE`. One frame per page; the board fills each page up
 to `SAFR_MAX_PAYLOAD`. Never carries the code. `INSTALLATION` (§7.10) stays as
 the legacy view for pre-v3.2 tablets.
 
+**Unsolicited push (v3.3, 2026-09-27).** The board also sends the full table,
+`DST = broadcast`, without a request, the moment its root's TCP session drops
+(§9.2 "root gone"). The central applies it exactly like a reply.
+
 | Off | Size | Field |
 |----|------|-------|
 | 0 | 1 | PAGE (1-based) |
@@ -688,6 +702,22 @@ sender (needs ACK)                      confirmer
 
 ### 9.2 Uplink supervision (device → central) ⛑ NFPA 72 ≤ 200 s / EN 54-25 ≤ 300 s
 
+**Root gone (v3.3).** The board knows the root is dead before anyone's silence
+rule does: the root's TCP session is aborted by TCP keepalive ~5 s after its last
+segment. The board then marks the unit it last saw at LAYER 1 / ROLE root as
+`missing` in its device table and pushes the table (§7.12). The central treats
+the board's `missing` as authoritative whenever the table is newer than its own
+last frame from that unit; any later authenticated frame from the unit makes it
+online again on both sides. The silence rule below stays as the backstop and is
+what still applies to a non-root node.
+
+**Role change announce (v3.3).** A node whose Mesh-Lite level changed sends
+HEARTBEAT + TOPOLOGY as soon as the new path is proven — root: its board session
+is up; child: a downlink frame arrived after the change — retrying until both
+frames left, then restarts its 15 s / 60 s timers. The board sends its own
+HEARTBEAT (up and down) the moment a root connects, which is that proof for the
+whole re-formed tree.
+
 | Sender | HEARTBEAT | TOPOLOGY |
 |--------|-----------|----------|
 | root / relay (powered) | every 15 s | every 60 s |
@@ -710,6 +740,12 @@ de descida") — well inside 200 s.
 The central's **USB link status** additionally follows the stricter local rule:
 the link is "connected" only when the port is open **and** a CRC+auth-valid
 frame arrived within the last 10 s.
+
+**Node-side board supervision (v3.3).** A node counts the board as reachable
+while any downlink frame arrived within the last 90 s — in steady state the
+board's downlink HEARTBEAT (§7.3) every 15 s, i.e. 6 missed heartbeats. A node
+whose mesh is up but whose board is silent stays in "finding the network" (LED
+white breathe) and its TEST button runs the range survey instead of a walk test.
 
 ### 9.4 Link-quality trouble
 

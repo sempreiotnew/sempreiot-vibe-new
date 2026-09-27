@@ -89,10 +89,10 @@ under **UL 864 / NFPA 72 (US)** and **EN 54-25 / ISO 7240-25 (EU/international)*
 | # | Functionality | What it does | Status | Spec | Code |
 |---|---|---|---|---|---|
 | 4.1 | Heartbeats and topology | Every powered device reports liveness every 15 s and its position in the mesh (parent, children, signal) every 60 s. | POC | spec §7.3/§7.4/§9.2 | `node_safr.c`, `root_duties.c` |
-| 4.2 | Device-missing trouble | A device silent for 3 × its interval (45 s powered, 180 s battery) is flagged missing with a trouble; any valid frame restores it. Inside the 200 s (NFPA 72) / 300 s (EN 54-25) limits. | Implemented (tablet) · Planned Phase 1 (board) | spec §9.2, blueprint §5.3 | app `supervisionProvider` |
+| 4.2 | Device-missing trouble | A device silent for 3 × its interval (45 s powered, 180 s battery) is flagged missing with a trouble; any valid frame restores it. Inside the 200 s (NFPA 72) / 300 s (EN 54-25) limits. **Root fast path (2026-09-27):** the board drops a dead root's TCP session in ~5 s, marks it missing and pushes DEVICE_TABLE; the tablet takes that as authoritative, so a dead root leaves the map in seconds, not 45. Nodes re-announce their role only once the new path is proven, and the board heartbeats the tree the moment a root connects, so the new tree is on the tablet ~2 s after the new root connects. | Implemented (tablet + board fast path) | spec §9.2, §7.12 | app `supervisionProvider`, `siot_coordinator.c` `on_link`, `siot_netcore.c` announce-pending |
 | 4.3 | Downlink supervision | The tablet proves the link *towards* the board works: `LINK_CHECK` every 30 s, trouble after 3 unconfirmed. | Implemented (app) / POC (board ACKs) | spec §9.3 | app, `root_duties.c` |
 | 4.4 | Link-quality trouble | Sustained CRC/auth failures (≥ 5 in 60 s) raise a trouble even if some frames get through. | Implemented (app) | spec §9.4 | app |
-| 4.5 | Board self-reporting | The board reports itself as the layer-0 device so the tablet shows "mesh connected". | POC | POC-BRIEF §4.2 | `root_duties.c` |
+| 4.5 | Board self-reporting | The board reports itself as the layer-0 device so the tablet shows "mesh connected". Since 2026-09-27 its HEARTBEAT is also broadcast down the mesh every 15 s: the signal a joined node uses to know the board is there (LED online within 15 s of joining, tablet or not; before, it waited for the tablet's LINK_CHECK or a TEST tap). | Implemented (board + node) | spec §7.3, §9.3 | `siot_coordinator.c` `tx_sink`, `siot_netcore.c` `on_board_heartbeat` |
 
 ### 3.5 Alarm handling and operator actions
 
