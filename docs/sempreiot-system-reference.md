@@ -53,9 +53,9 @@ under `firmware/components/features/` — never with a new image, unless it no l
 | Model | Product | Family / image | Power · network | PCB map | Status |
 |---|---|---|---|---|---|
 | `SIOT-BOARD-01` | Board (control unit) | board | mains + battery · installation AP, USB to the tablet | `docs/spec/definition-central.md` | bench (devkit); product PCB pending |
-| `SIOT-SIREN-01` | Siren | node | mains · Mesh-Lite node, root-capable, leaf parent | pending (devkit pins as placeholder) | planned: `features/siot_siren` (sounder, `COMMAND SOUND`) |
-| `SIOT-PBS-01` | Push-button (manual call) station | node | mains · Mesh-Lite node, root-capable, leaf parent | pending | planned: station input → `EVENT ALARM` (manual) |
-| `SIOT-SMOKE-01` | Battery smoke detector | leaf | batteries · ESP-NOW to a parent node, sleeps | `docs/spec/definition-detector.md` | leaf link coded; sensing phase pending |
+| `SIOT-SIREN-01` | Siren (`docs/devices/siren.md`) | node | mains · Mesh-Lite node, root-capable, leaf parent | pending (devkit pins as placeholder) | planned: `features/siot_siren` (sounder, `COMMAND SOUND`) |
+| `SIOT-PBS-01` | Push-button (manual call) station (`docs/devices/push-button-station.md`) | node | mains · Mesh-Lite node, root-capable, leaf parent | pending | planned: station input → `EVENT ALARM` (manual) |
+| `SIOT-SMOKE-01` | Battery smoke detector (`docs/devices/smoke-detector.md`) | leaf | batteries · ESP-NOW to a parent node, sleeps | `docs/spec/definition-detector.md` | leaf link coded; sensing phase pending |
 | `SIOT-NODE-01` | generic bench AC unit (devkit) | node | — | devkit | bench only |
 | `SIOT-LEAF-01` | generic bench battery unit (devkit) | leaf | — | devkit | bench only |
 
@@ -322,7 +322,8 @@ blueprint.
 | 4c | `docs/phases-development/phase2-leaf-brief.md` | The battery-detector (leaf) plan: decisions behind protocol §12, the bench without leaf hardware (deep sleep on devkits, mocked sensors), cadence vs standards and battery arithmetic, step order and exit checklist. |
 | 5 | `docs/others/app-sempreiot-central.md` | The Flutter app as it is: modes, providers, DB, SAFR pipeline, cloud, wizard. (Table catalogue of record is §3.6.1 of this file.) |
 | 6 | `docs/spec/definition-central.md`, `docs/spec/definition-detector.md` | PCB GPIO maps, sensors, UART/USB. |
-| 6b | `docs/devices/board.md`, `docs/devices/node.md`, `docs/devices/leaf.md` | One page per device type (board, AC device / node, battery detector / leaf): definition, hardware, rules, every functionality row that touches it with status, modes and LEDs, messages, storage, numbers, what is missing. Compiled from this file — this file wins on conflict. |
+| 6b | `docs/devices/board.md`, `docs/devices/node.md`, `docs/devices/leaf.md` | One page per **family** (board, AC device / node, battery detector / leaf): definition, hardware, rules, every functionality row that touches it with status, modes and LEDs, messages, storage, numbers, what is missing. Compiled from this file — this file wins on conflict. |
+| 6c | `docs/devices/siren.md`, `docs/devices/push-button-station.md`, `docs/devices/smoke-detector.md` | One page per **product** (§2.1): what the model inherits from its family today, the planned feature component, rules, open items. |
 | 7 | `pocs/POC-BRIEF.md`, `pocs/APP-BRIEF.md`, `pocs/README.md` | Round-1 POC contracts and the bench LED language. |
 | 8 | `CLAUDE.md` | Toolchain and coding rules for every session (IDF 5.5.2, header-before-docs). |
 | 9 | this file | Functionality catalogue, customer numbers, status, index. |
