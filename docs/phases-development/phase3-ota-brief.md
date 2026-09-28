@@ -43,6 +43,18 @@ story needs (signed images, rollback, an update log). Nothing in the remaining l
 10. **`force` (downgrade) exists for the bench only** and is refused in production builds.
 11. **Protocol first**: every new message goes into `docs/safr/protocol-safr-v3.md` (revision 3.5) before
     code, with host tests for the codecs.
+12. **Versioning rules** (2026-09-28). One version per **release**, from the git tag, through
+    `firmware/VERSION` into every image's `esp_app_desc_t` (covered by the signature) and its boot line;
+    a release = the board, node and leaf images built from one tag. A unit accepts an image only if
+    `version > running` (semver); `force` is bench-only and compiled out of production builds. A
+    `-dev` / dirty version is refused by the tablet for any rollout outside bench mode. Every unit reports
+    its version (and model) in `NAME_ANNOUNCE` from step 0; the board's table, the Rede sheet and the
+    rollout table show "runs X → target Y"; `OTA_RESULT` carries the version actually running. Results
+    are journaled on the board and persisted on the tablet (per-unit update history). Anti-rollback in
+    eFuse comes with secure boot (OTA blueprint Phase 6).
+13. **A unit's product is fixed at the factory.** No field command changes a model (decided 2026-09-28
+    after discussion): "update only sirens" is a rollout **filtered by model**, both products running the
+    same node image at possibly different versions, which the additive protocol allows.
 
 ## 3. What exists already
 
