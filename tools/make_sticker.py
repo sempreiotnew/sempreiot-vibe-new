@@ -93,13 +93,15 @@ def validate_mac(mac: str | None) -> str | None:
     return mac.upper()
 
 
-def write_nvs_csv(path: Path, id_: str, pop: str) -> None:
+def write_nvs_csv(path: Path, id_: str, pop: str, model: str | None) -> None:
     with path.open("w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["key", "type", "encoding", "value"])
         w.writerow(["siot_fact", "namespace", "", ""])
         w.writerow(["id", "data", "string", id_])
         w.writerow(["pop", "data", "string", pop])
+        if model:  # the product (reference §2.1); absent = the firmware's build default
+            w.writerow(["model", "data", "string", model])
 
 
 def find_nvs_partition_gen() -> Path | None:
@@ -176,6 +178,9 @@ def main() -> int:
     ap.add_argument("--pop", default=None, help="factory pop secret (default: random 24 chars)")
     ap.add_argument("--mac", default=None, help="unit's real MAC, AA:BB:CC:DD:EE:FF (for the sticker only)")
     ap.add_argument("--out-dir", default="./stickers", help="output root (default ./stickers)")
+    ap.add_argument("--model", default=None,
+                    help="product model written into the factory identity, e.g. SIOT-SIREN-01 "
+                         "(docs/sempreiot-system-reference.md §2.1); omitted = the firmware's build default")
     ap.add_argument("--qr-only", default=None, metavar="DIR",
                     help="only (re)write DIR/sticker.png from DIR/sticker.json; nothing else is touched")
     ap.add_argument(
@@ -220,16 +225,20 @@ def main() -> int:
     json_path = out_dir / "sticker.json"
     png_path = out_dir / "sticker.png"
 
-    write_nvs_csv(csv_path, id_, pop)
+    write_nvs_csv(csv_path, id_, pop, args.model)
     bin_ok = generate_nvs_bin(csv_path, bin_path, int(args.nvs_size, 0))
 
     payload = {"id": id_, "mac": mac, "pop": pop}
-    json_path.write_text(json.dumps(payload, indent=2) + "\n")
+    record = dict(payload)
+    if args.model:
+        record["model"] = args.model  # kept in sticker.json for tools; the QR stays {id, mac, pop}
+    json_path.write_text(json.dumps(record, indent=2) + "\n")
     png_ok = generate_qr_png(payload, png_path)
 
     print(f"id:   {id_}")
     print(f"pop:  {pop}")
     print(f"mac:  {mac or '(not set)'}")
+    print(f"model: {args.model or '(build default)'}")
     print(f"csv:  {csv_path}")
     print(f"bin:  {bin_path if bin_ok else '(skipped — see warning above)'}")
     print(f"json: {json_path}")

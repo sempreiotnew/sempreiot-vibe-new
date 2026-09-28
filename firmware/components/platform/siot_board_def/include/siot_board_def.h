@@ -18,7 +18,8 @@ extern "C" {
 #define SIOT_PIN_NONE (-1)
 
 typedef struct {
-    const char *model;      /* matches CONFIG_SIOT_DEV_MODEL */
+    const char *model;      /* the unit's product model (factory identity; reference §2.1) */
+    const char *family;     /* the firmware image it runs: "board" | "node" | "leaf" */
     uint8_t     hw_rev;     /* 0 = any revision (nothing on the sticker yet, brief §14 item 14) */
     bool        is_default; /* the entry used when no model matches */
     int         led_r, led_g, led_b;   /* RGB LED (LEDC) */

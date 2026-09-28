@@ -2,7 +2,7 @@
 # tools/flash.sh — flash ONE unit: bootloader + partition table + otadata + app
 # + its factory identity (nvs_factory), from the product firmware build.
 #
-#   tools/flash.sh <board|node|leaf> <port> [<sticker-id>] [--flash 4mb|8mb | --module n8r8|n4] [--bench] [--erase] [--force]
+#   tools/flash.sh <board|node|leaf> <port> [<sticker-id>] [--model SIOT-XXX-01] [--flash 4mb|8mb | --module n8r8|n4] [--bench] [--erase] [--force]
 #
 #   Modules (supplier recommendation, 2026-09-25; table in firmware/tools/build_summary.py):
 #     8mb = ESP32-S3-WROOM-1-N8R8  8 MB flash + 8 MB PSRAM  -> the board (product)
@@ -18,6 +18,10 @@
 #                    Every flash leaves tools/stickers/<id>/sticker.png (the QR the
 #                    installer app scans) next to sticker.bin; the `qrcode[pil]`
 #                    python package is installed into the IDF env on first use.
+#   --model          the product written into the unit's factory identity (reference §2.1:
+#                    SIOT-SIREN-01, SIOT-PBS-01, SIOT-SMOKE-01, …). Default per image:
+#                    board SIOT-BOARD-01, node SIOT-NODE-01, leaf SIOT-LEAF-01. An existing
+#                    sticker whose model differs is re-stamped (same id and pop, new bin/json).
 #   --flash, --bench the variant built by firmware/build.sh with the same flags
 #   --module         (board: build, build-4mb, build-4mb-bench, build-8mb-bench)
 #   --erase          erase the whole flash first (also wipes "nvs": the unit
@@ -35,9 +39,10 @@ usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 APP="$1"; PORT="$2"; shift 2
 STICKER_ID=""
 if [[ $# -gt 0 && "$1" != --* ]]; then STICKER_ID="$1"; shift; fi
-FLASH=8mb; BENCH=0; ERASE=""; FORCE=""
+FLASH=8mb; BENCH=0; ERASE=""; FORCE=""; MODEL=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --model) MODEL="${2:-}"; shift 2 ;;
         --flash) FLASH="${2:-}"; shift 2 ;;
         --module) case "${2:-}" in n8r8|N8R8) FLASH=8mb ;; n4|N4) FLASH=4mb ;; *) usage ;; esac; shift 2 ;;
         --bench) BENCH=1; shift ;;
@@ -49,6 +54,7 @@ done
 TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FW_DIR="$TOOLS_DIR/../firmware"
 case "$APP" in board|node|leaf) ;; *) usage ;; esac
+if [[ -z "$MODEL" ]]; then case "$APP" in board) MODEL=SIOT-BOARD-01 ;; node) MODEL=SIOT-NODE-01 ;; leaf) MODEL=SIOT-LEAF-01 ;; esac; fi
 case "$FLASH" in 4mb|8mb) ;; *) usage ;; esac
 [[ "$APP" == "node" || "$APP" == "leaf" ]] && FLASH=4mb   # node and leaf images are only ever built for the N4
 
@@ -93,13 +99,23 @@ if [[ -z "$STICKER_ID" ]]; then
     STICKER_ID="${MAC//:/}"
     if [[ ! -f "$TOOLS_DIR/stickers/$STICKER_ID/sticker.bin" ]]; then
         echo "new unit $MAC: creating identity $STICKER_ID (random pop)"
-        python3 "$TOOLS_DIR/make_sticker.py" --id "$STICKER_ID" --mac "$MAC" --out-dir "$TOOLS_DIR/stickers"
+        python3 "$TOOLS_DIR/make_sticker.py" --id "$STICKER_ID" --mac "$MAC" --model "$MODEL" --out-dir "$TOOLS_DIR/stickers"
     else
         echo "unit $MAC: reusing identity tools/stickers/$STICKER_ID/"
     fi
 fi
 STICKER_BIN="$TOOLS_DIR/stickers/$STICKER_ID/sticker.bin"
 [[ -f "$STICKER_BIN" ]] || { echo "no $STICKER_BIN — run tools/make_sticker.py --id $STICKER_ID ... or omit the id" >&2; exit 1; }
+# Model on the sticker (reference §2.1): re-stamp an existing unit when it differs, same id + pop.
+STICKER_JSON="$TOOLS_DIR/stickers/$STICKER_ID/sticker.json"
+if [[ -f "$STICKER_JSON" ]]; then
+    HAVE_MODEL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("model",""))' "$STICKER_JSON")
+    if [[ "$HAVE_MODEL" != "$MODEL" ]]; then
+        echo "sticker $STICKER_ID: model '${HAVE_MODEL:-none}' -> '$MODEL' (re-stamping, same id and pop)"
+        POP=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pop"])' "$STICKER_JSON")
+        python3 "$TOOLS_DIR/make_sticker.py" --id "$STICKER_ID" --pop "$POP" --mac "$MAC" --model "$MODEL" --out-dir "$TOOLS_DIR/stickers" >/dev/null
+    fi
+fi
 STICKER_PNG="$TOOLS_DIR/stickers/$STICKER_ID/sticker.png"
 if [[ ! -f "$STICKER_PNG" && -f "$TOOLS_DIR/stickers/$STICKER_ID/sticker.json" ]]; then
     python3 "$TOOLS_DIR/make_sticker.py" --qr-only "$TOOLS_DIR/stickers/$STICKER_ID" >/dev/null || true

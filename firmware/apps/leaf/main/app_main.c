@@ -51,6 +51,10 @@ void app_main(void)
     if (siot_board_def_select(id->model, 0) != ESP_OK) {            /* 3 */
         ESP_LOGW(TAG, "no pin map for model %s, using %s", id->model, siot_board_def()->model);
     }
+    if (strcmp(siot_board_def()->family, "leaf") != 0) {                /* reference §2.1: wrong image for this product */
+        ESP_LOGE(TAG, "model %s is a '%s' product but this is the leaf image: flash the %s firmware",
+                 id->model, siot_board_def()->family, siot_board_def()->family);
+    }
     ESP_ERROR_CHECK(siot_evbus_init());                             /* 6 (before ui: it subscribes) */
     ESP_ERROR_CHECK(siot_ui_led_init(IS_BOARD));                    /* 4-5 */
     ESP_ERROR_CHECK(siot_ui_button_init());                         /* 5: factory-reset hold armed */

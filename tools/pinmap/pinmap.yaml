@@ -10,6 +10,7 @@
 schema: 1
 boards:
   - model: SIOT-BOARD-01
+    family: board
     hw_rev: 0
     default: true          # used, with a warning, when CONFIG_SIOT_DEV_MODEL matches nothing
     pins:
@@ -24,6 +25,7 @@ boards:
       usb_dm: 19           # native USB-Serial-JTAG (product tablet link)
       usb_dp: 20
   - model: SIOT-NODE-01
+    family: node          # generic bench AC unit (devkit)
     hw_rev: 0
     pins:
       led_r: 14
@@ -37,6 +39,7 @@ boards:
       usb_dm: 19
       usb_dp: 20
   - model: SIOT-LEAF-01
+    family: leaf          # generic bench battery unit (devkit)
     hw_rev: 0
     pins:                  # battery detector: same devkit wiring as the node (docs/spec/definition-detector.md)
       led_r: 14
@@ -49,3 +52,20 @@ boards:
       uart0_rx: 44
       usb_dm: 19
       usb_dp: 20
+
+  # ---- Product catalogue (docs/sempreiot-system-reference.md §2.1), 2026-09-28 ----
+  # Pins below are the devkit's until each PCB's GPIO map exists; the product-
+  # specific peripherals (sounder, station button, sensors) are added here when
+  # their feature component lands — never in C.
+  - model: SIOT-SIREN-01      # AC siren: node image + sounder driver (features/siot_siren, planned)
+    family: node
+    hw_rev: 0
+    pins: {led_r: 14, led_g: 47, led_b: 48, led_active_low: false, button: 21, acok: 5, uart0_tx: 43, uart0_rx: 44, usb_dm: 19, usb_dp: 20}
+  - model: SIOT-PBS-01        # AC push-button (manual call) station: node image + station input (planned)
+    family: node
+    hw_rev: 0
+    pins: {led_r: 14, led_g: 47, led_b: 48, led_active_low: false, button: 21, acok: 5, uart0_tx: 43, uart0_rx: 44, usb_dm: 19, usb_dp: 20}
+  - model: SIOT-SMOKE-01      # battery smoke detector: leaf image + ADPD188BI / HDC2080 (sensing phase)
+    family: leaf
+    hw_rev: 0
+    pins: {led_r: 14, led_g: 47, led_b: 48, led_active_low: false, button: 21, acok: 5, uart0_tx: 43, uart0_rx: 44, usb_dm: 19, usb_dp: 20}

@@ -46,6 +46,10 @@ def main(argv):
                 raise SystemExit(f"{src}: board {b['model']} lacks pin {f}")
         lines.append("    {")
         lines.append(f"        .model = \"{b['model']}\",")
+        family = b.get("family", "node")
+        if family not in ("board", "node", "leaf"):
+            raise SystemExit(f"{src}: board {b['model']} has unknown family {family!r}")
+        lines.append(f"        .family = \"{family}\",")
         lines.append(f"        .hw_rev = {int(b.get('hw_rev', 0))},")
         lines.append(f"        .is_default = {c_bool(b.get('default', False))},")
         for f in PIN_FIELDS:

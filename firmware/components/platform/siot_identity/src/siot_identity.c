@@ -14,6 +14,7 @@ static const char *TAG = "siot_identity";
 
 static siot_identity_t s_id;
 static bool s_valid;
+static bool s_model_from_factory;
 
 static esp_err_t read_factory(void)
 {
@@ -30,6 +31,16 @@ static esp_err_t read_factory(void)
     size_t pop_len = sizeof(s_id.pop);
     err = nvs_get_str(h, "id", s_id.id, &id_len);
     if (err == ESP_OK) err = nvs_get_str(h, "pop", s_id.pop, &pop_len);
+    /* The product (model) is a factory fact too (2026-09-28, product catalogue,
+     * reference §2.1): one node image serves a siren and a push-button station,
+     * one leaf image every battery detector. Units stickered before this key
+     * existed keep the build's CONFIG_SIOT_DEV_MODEL. */
+    char model[SIOT_MODEL_MAX_LEN + 1];
+    size_t model_len = sizeof(model);
+    if (err == ESP_OK && nvs_get_str(h, "model", model, &model_len) == ESP_OK && model[0] != '\0') {
+        strlcpy(s_id.model, model, sizeof(s_id.model));
+        s_model_from_factory = true;
+    }
     nvs_close(h);
     if (err != ESP_OK) return ESP_ERR_NOT_FOUND;
     if (s_id.id[0] == '\0' || strlen(s_id.pop) < SIOT_POP_MIN_LEN) return ESP_ERR_NOT_FOUND;
@@ -54,7 +65,8 @@ esp_err_t siot_identity_init(void)
         return err;
     }
     s_valid = true;
-    ESP_LOGI(TAG, "id=%s model=%s mac=%02X:%02X:%02X:%02X:%02X:%02X", s_id.id, s_id.model,
+    ESP_LOGI(TAG, "id=%s model=%s (%s) mac=%02X:%02X:%02X:%02X:%02X:%02X", s_id.id, s_id.model,
+             s_model_from_factory ? "factory" : "build default, no model on the sticker",
              s_id.mac[0], s_id.mac[1], s_id.mac[2], s_id.mac[3], s_id.mac[4], s_id.mac[5]);
     return ESP_OK;
 }

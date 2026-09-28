@@ -6,6 +6,14 @@
  * Numbers come from siot_leaf_proto.h, never from here. */
 #include "siot_leafmgr.h"
 
+#include "sdkconfig.h"
+
+/* Every image compiles every component under features/; the parent role is
+ * only built into images that switch it on (features/README.md item 2). */
+#if !CONFIG_SIOT_FEATURE_LEAFMGR
+esp_err_t siot_leafmgr_init(void) { return ESP_ERR_NOT_SUPPORTED; }
+#else
+
 #include <string.h>
 
 #include "esp_log.h"
@@ -338,3 +346,5 @@ esp_err_t siot_leafmgr_init(void)
              SIOT_LEAF_MAILBOX_CAP, SIOT_LEAF_CUSTODY_CAP);
     return ESP_OK;
 }
+
+#endif /* CONFIG_SIOT_FEATURE_LEAFMGR */

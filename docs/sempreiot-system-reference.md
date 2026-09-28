@@ -38,6 +38,32 @@ under **UL 864 / NFPA 72 (US)** and **EN 54-25 / ISO 7240-25 (EU/international)*
 
 ---
 
+### 2.1 Product catalogue (decided 2026-09-28)
+
+**Three firmware images, by how a unit lives on the network** — `board`, `node` (every mains-powered
+unit), `leaf` (every battery unit) — and **one model string per product**, written into the unit's factory
+identity (`nvs_factory`, key `model`, next to `id` and `pop`; `tools/flash.sh --model`). At boot the
+firmware reads the model and enables that product's peripherals and features; the pin map
+(`tools/pinmap/pinmap.yaml`) has one entry per model with its family, and every image refuses (logs an
+error for) a model of another family. OTA rolls out per image; the tablet can restrict a rollout by
+model, zone or unit. A product is added with a catalogue row, a pin-map entry and a feature component
+under `firmware/components/features/` — never with a new image, unless it no longer fits the family
+(image cap 1.75 MB, or a different radio life).
+
+| Model | Product | Family / image | Power · network | PCB map | Status |
+|---|---|---|---|---|---|
+| `SIOT-BOARD-01` | Board (control unit) | board | mains + battery · installation AP, USB to the tablet | `docs/spec/definition-central.md` | bench (devkit); product PCB pending |
+| `SIOT-SIREN-01` | Siren | node | mains · Mesh-Lite node, root-capable, leaf parent | pending (devkit pins as placeholder) | planned: `features/siot_siren` (sounder, `COMMAND SOUND`) |
+| `SIOT-PBS-01` | Push-button (manual call) station | node | mains · Mesh-Lite node, root-capable, leaf parent | pending | planned: station input → `EVENT ALARM` (manual) |
+| `SIOT-SMOKE-01` | Battery smoke detector | leaf | batteries · ESP-NOW to a parent node, sleeps | `docs/spec/definition-detector.md` | leaf link coded; sensing phase pending |
+| `SIOT-NODE-01` | generic bench AC unit (devkit) | node | — | devkit | bench only |
+| `SIOT-LEAF-01` | generic bench battery unit (devkit) | leaf | — | devkit | bench only |
+
+Reserved for later rows: heat detector (leaf), I/O module and repeater (node), AC detector (node). A
+hardware revision field is kept beside the model (`hw_rev`, 0 = any) for the day a `-02` PCB needs a
+different pin map under the same product. Units stickered before this key existed keep the image's
+build default (`CONFIG_SIOT_DEV_MODEL`); re-stamping a sticker keeps its id and pop.
+
 ## 3. Functionality catalogue
 
 ### 3.1 Identity, installation and provisioning

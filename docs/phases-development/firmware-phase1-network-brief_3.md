@@ -631,8 +631,9 @@ Closed on 2026-09-22 and removed from this list: identity scheme (id + pop in `n
     entry layout, states, flags, NVS in the existing `nvs` partition, cap 120); lifecycle Phase 2 work.
 12. Board wall clock from `TIME_SYNC` (its own heartbeat timestamp is 0).
 13. ALARM-first TX queue (spec §0 severity priority); the POC has one in-flight critical frame.
-14. Remove the Kconfig `id`/`pop` fallback; move `siot_fact` to `nvs_factory`; add `dev_type` / `hw_rev`
-    to the sticker only if `board_def_select` needs more than `model`.
+14. Remove the Kconfig `id`/`pop` fallback; move `siot_fact` to `nvs_factory` — done in step 2. **Model
+    on the sticker: closed 2026-09-28** (reference §2.1): `nvs_factory` key `model`, `tools/flash.sh --model`,
+    pin-map entries carry a `family`; `hw_rev` stays reserved beside it.
 
 **Phase 2 prerequisites (recorded here so they are not forgotten; not Phase 1 work):**
 
