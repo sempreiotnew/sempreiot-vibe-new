@@ -71,8 +71,6 @@ a.out
 build-*/
 .DS_Store
 
-# Separate git repositories with their own history and remotes (not submodules yet):
-#   firmware/                     https://github.com/sempreiotnew/firmware.git
-#   mobile/sempreiot_central_app/ https://github.com/sempreiotnew/sempreiot_central_app.git
-/firmware/
-/mobile/sempreiot_central_app/
+# firmware/ and mobile/sempreiot_central_app/ live in this repository since 2026-09-28
+# (histories imported with git subtree from sempreiotnew/firmware and
+# sempreiotnew/sempreiot_central_app, now archived). Their own .gitignore files still apply.
