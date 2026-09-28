@@ -194,7 +194,7 @@ the app's (`topology_provider.dart`, `topology_screen.dart`); "Implemented" = in
 | Tablet state | Rule | Map | Node sheet "Estado" | Status |
 |---|---|---|---|---|
 | **Acordado** | a frame arrived < 3 s ago, or an alarm is latched and not yet RESET (a leaf in alarm is awake, spec §12.6) | green, sensor icon, glow | "Acordado" / "Acordado — em alarme" | Implemented 2026-09-28 |
-| **Dormindo** | online (a frame within 180 s) and not awake — the normal state of a healthy leaf, ≈ 99 % of the time | grey, moon icon, no glow | "Dormindo · último despertar há 37 s · próximo em ~23 s" (60 s cadence, spec §12.2) | Implemented 2026-09-28 |
+| **Dormindo** | online (a frame within 180 s) and not awake — the normal state of a healthy leaf, ≈ 99 % of the time | grey, moon icon with a small drifting "z z" inside the circle, no glow; its link keeps the last dBm but in the sleep colour (reference §3.6.2) | "Dormindo · último despertar há 37 s · próximo em ~23 s" (60 s cadence, spec §12.2) | Implemented 2026-09-28 |
 | **Sem comunicação** (lost) | silent > 180 s (3 × 60 s), or the board's DEVICE_TABLE says `missing` — whichever comes first | red, dimmed after 10 min | "Sem comunicação há 4 min" + the synthetic TROUBLE "dispositivo ausente" in the feed; any frame restores it | Implemented (180 s, board table authoritative; "há X" 2026-09-28) |
 | **Sem comunicação há muito tempo** | silent > 10 min | drawn at 32 % opacity, never auto-removed | same | Implemented |
 | **Esperado** | in the board's table from an `/enroll` hint or a rename, never heard | outline only | "Nunca ouvido pela placa" | Implemented (`boardState expected`) |

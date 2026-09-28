@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/database/app_database.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/signal_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../../../core/utils/relative_time.dart';
 import '../../application/safr_downlink_provider.dart';
@@ -765,10 +766,13 @@ class _MeshGraphPainter extends CustomPainter {
           parentKey == _centralKey || (byMac[parentKey]?.online ?? false);
       final healthy = n.online && parentOnline;
       final candidate = candidates.contains(n.mac);
+      // Link colour = signal quality (system reference §3.6.2). A sleeping
+      // leaf's link keeps its last dBm but wears the sleep colour: the reading
+      // is from the last wake and the next one may come through any parent.
       final color = candidate
           ? AppColors.warning
           : healthy
-              ? AppColors.secondary
+              ? (n.sleeping ? sleepingLinkColor(isDark) : signalColor(n.rssi))
               : AppColors.error.withValues(alpha: 0.8);
 
       final path = _linkPath(from, to);
@@ -811,8 +815,9 @@ class _MeshGraphPainter extends CustomPainter {
         );
       }
 
-      // Link quality: the child's RSSI to this parent, printed on the line
-      // (not for a stale device — that reading is long out of date).
+      // Link quality: the child's RSSI to this parent, printed on the line in
+      // the link's colour (not for a stale device — that reading is long out
+      // of date). A sleeping leaf keeps its last value, in the sleep colour.
       if (n.rssi != null && !n.stale) {
         _linkLabel(
             canvas, path, '${n.rssi} dBm', healthy ? color : AppColors.error);
@@ -1341,13 +1346,19 @@ class _NodeChip extends StatelessWidget {
                                   context.surfaceColor)
                               : context.surfaceColor,
                         ),
-                        child: Icon(
-                          icon,
-                          size: 19,
-                          color: node.online
-                              ? context.textPrimary
-                              : context.textSecondary.withValues(alpha: 0.7),
-                        ),
+                        child: node.sleeping
+                            ? _SleepingMoon(
+                                color: context.textPrimary,
+                                zColor: context.textSecondary,
+                              )
+                            : Icon(
+                                icon,
+                                size: 19,
+                                color: node.online
+                                    ? context.textPrimary
+                                    : context.textSecondary
+                                        .withValues(alpha: 0.7),
+                              ),
                       ),
                     ),
                     Positioned(
@@ -1552,7 +1563,7 @@ class _NodeDetailSheetState extends ConsumerState<_NodeDetailSheet> {
             if (node.parentMac != null) _fact(context, 'Pai', node.parentMac!),
             if (node.rssi != null)
               _fact(context, 'Sinal', '${node.rssi} dBm',
-                  valueColor: node.weakLink ? AppColors.warning : null),
+                  valueColor: signalColor(node.rssi)),
             if (node.isLeaf)
               _fact(
                 context,
@@ -2111,6 +2122,83 @@ class _EmptyMesh extends StatelessWidget {
             style: TextStyle(color: context.textSecondary, fontSize: 12.5),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The moon of a sleeping leaf with two small "z" drifting up and fading,
+/// clipped to the avatar circle so the chip's layout never changes. One
+/// controller per sleeping leaf; the frame cost is two tiny texts.
+class _SleepingMoon extends StatefulWidget {
+  const _SleepingMoon({required this.color, required this.zColor});
+
+  final Color color;
+  final Color zColor;
+
+  @override
+  State<_SleepingMoon> createState() => _SleepingMoonState();
+}
+
+class _SleepingMoonState extends State<_SleepingMoon>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2600),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  /// One "z": rises 7 px and fades over its own third of the cycle, staggered
+  /// by `delay` (0..1) so the two never move together.
+  Widget _z(double t, double delay, double size, double right, double bottom) {
+    final u = ((t - delay) % 1.0 + 1.0) % 1.0; // 0..1 within this z's cycle
+    final visible = u < 0.55;
+    final k = visible ? u / 0.55 : 0.0;
+    final opacity = visible ? (k < 0.25 ? k / 0.25 : 1.0 - (k - 0.25) / 0.75) : 0.0;
+    return Positioned(
+      right: right - k * 1.5,
+      bottom: bottom + k * 7,
+      child: Opacity(
+        opacity: opacity.clamp(0.0, 1.0),
+        child: Text(
+          'z',
+          style: TextStyle(
+            color: widget.zColor,
+            fontSize: size,
+            fontWeight: FontWeight.w800,
+            height: 1,
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipOval(
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (context, _) {
+          final t = _c.value;
+          return Stack(
+            clipBehavior: Clip.hardEdge,
+            alignment: Alignment.center,
+            children: [
+              // The moon breathes very slightly with the first z.
+              Transform.translate(
+                offset: Offset(-1.5, 1.5 - 1.0 * (0.5 - (t - 0.5).abs())),
+                child: Icon(Icons.dark_mode_rounded, size: 18, color: widget.color),
+              ),
+              _z(t, 0.0, 7.5, 7, 22),
+              _z(t, 0.45, 6, 3, 20),
+            ],
+          );
+        },
       ),
     );
   }
