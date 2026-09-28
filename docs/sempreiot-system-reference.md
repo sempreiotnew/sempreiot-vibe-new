@@ -267,6 +267,7 @@ blueprint.
 | 4b | `docs/phases-development/phase2-installation-lifecycle-brief.md` | The installation-lifecycle implementation plan (Phases 0–4): what was built per area, the deploy recipe, the bench checklist, and the Phase 4 items that are deliberately not done. |
 | 5 | `docs/others/app-sempreiot-central.md` | The Flutter app as it is: modes, providers, DB, SAFR pipeline, cloud, wizard. (Table catalogue of record is §3.6.1 of this file.) |
 | 6 | `docs/spec/definition-central.md`, `docs/spec/definition-detector.md` | PCB GPIO maps, sensors, UART/USB. |
+| 6b | `docs/devices/board.md`, `docs/devices/node.md`, `docs/devices/leaf.md` | One page per device type (board, AC device / node, battery detector / leaf): definition, hardware, rules, every functionality row that touches it with status, modes and LEDs, messages, storage, numbers, what is missing. Compiled from this file — this file wins on conflict. |
 | 7 | `pocs/POC-BRIEF.md`, `pocs/APP-BRIEF.md`, `pocs/README.md` | Round-1 POC contracts and the bench LED language. |
 | 8 | `CLAUDE.md` | Toolchain and coding rules for every session (IDF 5.5.2, header-before-docs). |
 | 9 | this file | Functionality catalogue, customer numbers, status, index. |
