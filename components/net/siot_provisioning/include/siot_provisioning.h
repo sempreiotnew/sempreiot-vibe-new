@@ -39,6 +39,11 @@ extern "C" {
  * AP + the HTTP server. Setup mode is exclusive: the unit reboots out of it. */
 esp_err_t siot_provisioning_start(bool is_board);
 
+/* ms since boot of the last HTTP request on the setup network, 0 = none yet.
+ * Battery leafs run their setup window from it (protocol §12.9): a phone that
+ * is merely associated is not activity. */
+int64_t siot_provisioning_last_activity_ms(void);
+
 /* Board: where /enroll entries go. When set, each `{mac, name, zone}` is
  * handed to `sink` (the coordinator's device table, lifecycle §3.2 "expected")
  * instead of the legacy ≤ 8 enrolled blob. Call before siot_provisioning_start(). */

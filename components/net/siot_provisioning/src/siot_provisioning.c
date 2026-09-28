@@ -16,6 +16,11 @@ static void on_stored(void)
     esp_restart();
 }
 
+int64_t siot_provisioning_last_activity_ms(void)
+{
+    return prov_http_last_request_ms();
+}
+
 esp_err_t siot_provisioning_start(bool is_board)
 {
     if (!siot_identity_valid()) return ESP_ERR_INVALID_STATE;

@@ -13,3 +13,6 @@ esp_err_t prov_softap_start(const siot_identity_t *id);
 /* HTTP contract on port 80. `on_stored` runs when normal-mode boot should happen. */
 typedef void (*prov_done_cb_t)(void);
 esp_err_t prov_http_start(const siot_identity_t *id, bool is_board, prov_done_cb_t on_stored);
+
+/* ms since boot of the last HTTP request on the setup network (0 = none). */
+int64_t prov_http_last_request_ms(void);

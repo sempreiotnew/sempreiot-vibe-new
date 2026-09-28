@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # firmware/ci/check.sh — the CI gate for every commit (brief §2 ci/, §15).
 #
-#   1. idf.py build apps/board and apps/node (esp32s3, ESP-IDF v5.5.2)
-#   2. fail if sempreiot-node.bin > 1.75 MB (OTA blueprint §1.1)
+#   1. idf.py build apps/board, apps/node and apps/leaf (esp32s3, ESP-IDF v5.5.2)
+#   2. fail if sempreiot-node.bin or sempreiot-leaf.bin > 1.75 MB (OTA blueprint §1.1)
 #   3. build test/host for the linux target and run the Unity tests
 #
 # Usage: ci/check.sh            (from anywhere; uses ~/.espressif/tools/activate_idf_v5.5.2.sh)
@@ -44,6 +44,7 @@ build_app() {
 
 build_app board
 build_app node
+build_app leaf
 
 log "build apps/board --flash 4mb (bench table)"
 "$FW_DIR/build.sh" board --flash 4mb > "$FW_DIR/apps/board/build_ci.log" 2>&1 \
@@ -54,6 +55,9 @@ NODE_BIN="$FW_DIR/apps/node/build/sempreiot-node.bin"
 NODE_BYTES=$(wc -c < "$NODE_BIN" | tr -d ' ')
 log "sempreiot-node.bin = $NODE_BYTES bytes (limit $NODE_MAX_BYTES)"
 (( NODE_BYTES <= NODE_MAX_BYTES )) || fail "node image $NODE_BYTES B exceeds 1.75 MB"
+LEAF_BYTES=$(wc -c < "$FW_DIR/apps/leaf/build/sempreiot-leaf.bin" | tr -d ' ')
+log "sempreiot-leaf.bin = $LEAF_BYTES bytes (limit $NODE_MAX_BYTES)"
+(( LEAF_BYTES <= NODE_MAX_BYTES )) || fail "leaf image $LEAF_BYTES B exceeds 1.75 MB"
 BOARD_BYTES=$(wc -c < "$FW_DIR/apps/board/build/sempreiot-board.bin" | tr -d ' ')
 log "sempreiot-board.bin = $BOARD_BYTES bytes"
 

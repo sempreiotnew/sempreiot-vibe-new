@@ -63,14 +63,37 @@ static esp_err_t ensure_peer(const uint8_t mac[6])
 }
 
 /* ---- transport ------------------------------------------------------------ */
+static esp_err_t transport_send(const uint8_t dst[6], const uint8_t *frame, size_t len);
+
+static siot_survey_raw_cb_t s_raw_cb;
+static void               *s_raw_ctx;
+
+void siot_survey_set_raw_sink(siot_survey_raw_cb_t cb, void *ctx)
+{
+    s_raw_cb = cb;
+    s_raw_ctx = ctx;
+}
 
 static void deliver(const esp_now_recv_info_t *info, const uint8_t *frame, int len)
 {
     if (len < SAFR_MIN_FRAME || frame[0] != SAFR_SOF) return;
     const uint8_t type = frame[4];
-    if (type != SAFR_MSG_PARENT_PROBE && type != SAFR_MSG_PARENT_OFFER) return; /* not ours */
-    s_rx_rssi = (info && info->rx_ctrl) ? (int8_t)info->rx_ctrl->rssi : (int8_t)SAFR_NA_RSSI;
+    const int8_t rssi = (info && info->rx_ctrl) ? (int8_t)info->rx_ctrl->rssi : (int8_t)SAFR_NA_RSSI;
+    if (type != SAFR_MSG_PARENT_PROBE && type != SAFR_MSG_PARENT_OFFER) {
+        /* A leaf talking to its parent (protocol §12): the leaf manager's, if any. */
+        if (s_raw_cb && info) s_raw_cb(info->src_addr, rssi, frame, (size_t)len, s_raw_ctx);
+        return;
+    }
+    s_rx_rssi = rssi;
     siot_safr_rx(frame, (size_t)len);
+}
+
+esp_err_t siot_survey_espnow_send(const uint8_t dst[6], const uint8_t *frame, size_t len)
+{
+    if (!s_ready) return ESP_ERR_INVALID_STATE;
+    esp_err_t err = ensure_peer(dst);
+    if (err == ESP_OK) err = transport_send(dst, frame, len);
+    return err;
 }
 
 #if CONFIG_MESH_LITE_ENABLE
@@ -139,10 +162,15 @@ static void on_probe(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_
     (void)raw; (void)raw_len; (void)ctx; /* every copy is answered: the prober may have missed the first offer */
     if (f->payload_len < 1) return;
     const uint8_t purpose = f->payload[0];
-    if (purpose == SAFR_PROBE_PARENT && !s_online) return; /* leafs want an ONLINE AC parent */
     if (purpose != SAFR_PROBE_PARENT && purpose != SAFR_PROBE_SURVEY) return;
+    uint8_t layer = s_layer;
+    if (purpose == SAFR_PROBE_PARENT) {
+        if (s_layer == 0) return;            /* the board is never a leaf's parent (spec §7.15) */
+        if (!s_online) layer = 0xFF;         /* here, but no path to the board yet: the leaf hears us
+                                                and keeps probing every wake, never binds (spec §12.3) */
+    }
 
-    const uint8_t offer[3] = {purpose, (uint8_t)s_rx_rssi, s_layer};
+    const uint8_t offer[3] = {purpose, (uint8_t)s_rx_rssi, layer};
     char src[SIOT_MAC_STR_LEN];
     ESP_LOGI(TAG, "probe msg_id %u (purpose %u%s) from %s at %d dBm -> offer", f->msg_id, purpose,
              dup ? ", repeat" : "", siot_mac_to_str(f->src_mac, src), s_rx_rssi);

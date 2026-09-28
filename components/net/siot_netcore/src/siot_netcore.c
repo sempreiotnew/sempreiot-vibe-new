@@ -107,11 +107,22 @@ static void post_state(siot_state_t next)
 
 /* ---- TX ---------------------------------------------------------------- */
 
+static siot_netcore_tx_hook_t       s_tx_hook;
+static void                        *s_tx_hook_ctx;
+static siot_netcore_downlink_hook_t s_dl_hook;
+static void                        *s_dl_hook_ctx;
+
+void siot_netcore_set_tx_hook(siot_netcore_tx_hook_t hook, void *ctx) { s_tx_hook = hook; s_tx_hook_ctx = ctx; }
+void siot_netcore_set_downlink_hook(siot_netcore_downlink_hook_t hook, void *ctx) { s_dl_hook = hook; s_dl_hook_ctx = ctx; }
+bool siot_netcore_board_reachable(void) { return board_reachable(now_ms()); }
+uint32_t siot_netcore_epoch(void) { return s_epoch_base ? now_epoch(now_ms()) : 0; }
+
 /* siot_safr's TX sink: onto the mesh link, one blue pulse when it left. */
 static void tx_sink(const uint8_t *frame, size_t len, const uint8_t dst_mac[6], void *ctx)
 {
     (void)ctx;
     if (siot_survey_tx(frame, len, dst_mac)) return; /* PARENT_PROBE/OFFER: ESP-NOW, not the mesh */
+    if (s_tx_hook && s_tx_hook(frame, len, dst_mac, s_tx_hook_ctx)) return; /* a leaf's: ESP-NOW (§12) */
     const esp_err_t err = siot_link_send(SIOT_LINK_MESH, dst_mac, frame, len);
     const bool reachable = board_reachable(now_ms());
     if (frame[4] == SAFR_MSG_HEARTBEAT || frame[4] == SAFR_MSG_TOPOLOGY) s_last_tx_ok = err == ESP_OK;
@@ -263,16 +274,17 @@ static bool for_me(const siot_safr_frame_t *f)
 
 /* Every distinct downlink frame goes one hop further to our children (brief
  * §6.3): the dedupe in siot_safr makes this loop-safe. */
-static void relay_down(const uint8_t *raw, size_t raw_len, bool duplicate)
+static void relay_down(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len, bool duplicate)
 {
     if (!duplicate) siot_link_mesh_broadcast_children(raw, raw_len);
+    if (s_dl_hook) s_dl_hook(f, raw, raw_len, duplicate, s_dl_hook_ctx); /* leafs behind this node (§12.5) */
 }
 
 static void on_ack(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len, bool dup, void *ctx)
 {
     (void)ctx;
     note_downlink();
-    relay_down(raw, raw_len, dup);
+    relay_down(f, raw, raw_len, dup);
     if (!for_me(f) || f->payload_len < 4) return;
     const uint16_t acked = siot_get_u16(&f->payload[0]);
     const siot_evt_ack_t ev = {.msg_id = acked, .status = f->payload[2]};
@@ -296,14 +308,14 @@ static void on_board_heartbeat(const siot_safr_frame_t *f, const uint8_t *raw, s
 {
     (void)f; (void)ctx;
     note_downlink();
-    relay_down(raw, raw_len, dup);
+    relay_down(f, raw, raw_len, dup);
 }
 
 static void on_time_sync(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len, bool dup, void *ctx)
 {
     (void)ctx;
     note_downlink();
-    relay_down(raw, raw_len, dup);
+    relay_down(f, raw, raw_len, dup);
     if (!for_me(f) || f->payload_len < 5) return;
     if (!dup) {
         xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -353,7 +365,7 @@ static void on_command(const siot_safr_frame_t *f, const uint8_t *raw, size_t ra
 {
     (void)ctx;
     note_downlink();
-    relay_down(raw, raw_len, dup);
+    relay_down(f, raw, raw_len, dup);
     if (!for_me(f) || f->payload_len < 2) return;
     const uint8_t cmd = f->payload[0];
     const size_t alen = f->payload[1];

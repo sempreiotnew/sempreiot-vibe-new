@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 #include "mbedtls/base64.h"
@@ -34,6 +35,12 @@ static bool s_is_board;
 static prov_done_cb_t s_on_stored;
 
 static prov_state_t s_state = ST_IDLE;
+
+/* Last HTTP request, ms since boot (0 = none). A battery leaf's setup window
+ * runs from this (protocol §12.9): a phone merely associated is not activity. */
+static int64_t s_last_request_ms;
+static void prov_touch(void) { s_last_request_ms = esp_timer_get_time() / 1000; }
+int64_t prov_http_last_request_ms(void) { return s_last_request_ms; }
 static siot_prov_enroll_sink_t s_enroll_sink;
 
 void siot_provisioning_set_enroll_sink(siot_prov_enroll_sink_t sink)
@@ -114,6 +121,7 @@ static cJSON *read_json_body(httpd_req_t *req)
 
 static esp_err_t handle_info(httpd_req_t *req)
 {
+    prov_touch();
     esp_fill_random(s_nonce, sizeof(s_nonce));
     s_have_nonce = true;
 
@@ -136,6 +144,7 @@ static esp_err_t handle_info(httpd_req_t *req)
 
 static esp_err_t handle_identify(httpd_req_t *req)
 {
+    prov_touch();
     cJSON *json = read_json_body(req);
     if (!json) return ESP_OK;
 
@@ -194,6 +203,7 @@ static void reboot_timer_cb(TimerHandle_t t)
 
 static esp_err_t handle_provision(httpd_req_t *req)
 {
+    prov_touch();
     if (s_state == ST_IDLE) return send_err(req, 409, "not_identified");
     /* Lifecycle §5.1: one unit, one provisioning. A second installer hitting
      * the window before the reboot gets a clear refusal, not a silent overwrite. */
@@ -264,6 +274,7 @@ static esp_err_t handle_provision(httpd_req_t *req)
 
 static esp_err_t handle_enroll(httpd_req_t *req)
 {
+    prov_touch();
     if (!s_is_board) return send_err(req, 404, "not_a_board");
     cJSON *json = read_json_body(req);
     if (!json) return ESP_OK;
@@ -325,6 +336,7 @@ static cJSON *code_json_of(const siot_installation_t *c)
 
 static esp_err_t handle_code(httpd_req_t *req)
 {
+    prov_touch();
     if (!s_admin) return send_err(req, 404, "not_admin");
     if (s_state != ST_IDENTIFIED || !s_have_nonce) return send_err(req, 409, "not_identified");
     if (!siot_config_has_code()) return send_err(req, 409, "no_code");
@@ -365,6 +377,7 @@ static esp_err_t handle_code(httpd_req_t *req)
 
 static esp_err_t handle_status(httpd_req_t *req)
 {
+    prov_touch();
     if (!s_admin && s_state == ST_STORED && !s_status_polled) {
         s_status_polled = true;
         /* "reboot after /status has been polled at least once": fire now,

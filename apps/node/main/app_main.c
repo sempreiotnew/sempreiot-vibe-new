@@ -23,6 +23,9 @@
 #include "siot_ui_button.h"
 #include "siot_ui_led.h"
 #include "siot_version.h"
+#if CONFIG_SIOT_FEATURE_LEAFMGR
+#include "siot_leafmgr.h"
+#endif
 
 static const char *TAG = "node";
 #define IS_BOARD false
@@ -97,6 +100,9 @@ void app_main(void)
     ESP_ERROR_CHECK(siot_link_mesh_node_init(code));
     ESP_ERROR_CHECK(siot_netcore_start());
     if (siot_survey_init(0xFF) != ESP_OK) ESP_LOGW(TAG, "survey mode unavailable (ESP-NOW init failed)");
+#if CONFIG_SIOT_FEATURE_LEAFMGR
+    if (siot_leafmgr_init() != ESP_OK) ESP_LOGW(TAG, "leaf manager unavailable"); /* parent role, protocol §12.11 */
+#endif
     ESP_LOGI(TAG, "normal mode: system_id=0x%04X ssid=%s name=%s",
              code->system_id, code->net_ssid, code->name);
 }

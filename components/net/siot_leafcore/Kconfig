@@ -1,0 +1,55 @@
+menu "SempreIoT leaf (siot_leafcore)"
+
+    choice SIOT_LEAF_SLEEP_MODE
+        prompt "Sleep between wakes"
+        default SIOT_LEAF_SLEEP_DEEP
+        help
+            DEEP is the product and the bench default: every wake is a reboot,
+            state lives in RTC memory (protocol section 12.2). LIGHT and NONE
+            keep the same state machine running for a debugger session; they
+            never fake a shorter wake.
+
+        config SIOT_LEAF_SLEEP_DEEP
+            bool "Deep sleep (timer + button wake)"
+        config SIOT_LEAF_SLEEP_LIGHT
+            bool "Light sleep (bench: RAM kept, console survives)"
+        config SIOT_LEAF_SLEEP_NONE
+            bool "No sleep (bench: task delay between cycles)"
+    endchoice
+
+    config SIOT_LEAF_HB_INTERVAL_S
+        int "Heartbeat interval (s)"
+        default 60
+        range 5 60
+        help
+            Protocol section 12.12 fixes 60 s (3 misses = 180 s under the
+            200 s NFPA limit). Below 60 is a bench setting only: the board
+            still applies its 180 s rule.
+
+    config SIOT_LEAF_SETUP_WINDOW_S
+        int "Setup window: seconds without a provisioning request before sleep"
+        default 120
+        help
+            Protocol section 12.9: the window restarts on every HTTP request
+            (/info, /identify, /provision...) and when a phone joins; a phone
+            that merely stays associated is NOT activity. Then deep sleep with
+            the button as the only wake source.
+
+    config SIOT_LEAF_SETUP_MAX_S
+        int "Setup: absolute cap from boot, whatever happens (s)"
+        default 600
+        help
+            Battery backstop (never waste battery): even with a phone talking
+            to it, an unprovisioned leaf sleeps this long after boot. A short
+            press opens a new window.
+
+    config SIOT_LEAF_BENCH_PARENT_MAC
+        string "Bench: bind to this parent MAC when no ONLINE node offers"
+        default ""
+        help
+            AA:BB:CC:DD:EE:FF of a node devkit. Empty = discovery only
+            (protocol section 12.3: only ONLINE nodes answer, so with the
+            board off nothing offers). Lets the first sleep-cycle test run
+            without a board; the node's hardware ACK still confirms delivery.
+
+endmenu

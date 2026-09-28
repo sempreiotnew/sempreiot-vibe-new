@@ -7,11 +7,11 @@ All firmware images live here. Layout, layering rules and the implementation ord
 apps/            one folder per image — THIN: app_main.c, sdkconfig.defaults, partitions_*.csv, idf_component.yml
   board/         sempreiot-board  (8 MB) — control unit: installation AP, TCP bridge, serial to tablet, root duties
   node/          sempreiot-node   (4 MB) — every AC device type (siren, I/O, AC detector, repeater) in one image
-  (leaf/)        Phase 2 — battery detector (ESP-NOW, deep sleep)
+  leaf/          sempreiot-leaf   (4 MB) — battery detector: ESP-NOW to a parent node, deep sleep, no Mesh-Lite (protocol §12)
 components/      ALL the code, shared by every app; dependencies point DOWN only
-  core/          pure C, no IDF drivers, builds on the linux target (siot_safr, siot_evbus, siot_version, siot_util)
-  platform/      the only layer that includes driver/*.h, nvs.h, esp_wifi.h (siot_board_def, siot_hal_*, siot_identity, siot_config)
-  net/           moves SAFR frames (siot_link, siot_netcore, siot_coordinator, siot_provisioning)
+  core/          pure C, no IDF drivers, builds on the linux target (siot_safr, siot_evbus, siot_version, siot_util, siot_leaf_proto)
+  platform/      the only layer that includes driver/*.h, nvs.h, esp_wifi.h (siot_board_def, siot_hal_*, siot_identity, siot_config, siot_sensor)
+  net/           moves SAFR frames (siot_link, siot_netcore, siot_coordinator, siot_provisioning, siot_survey, siot_leafcore)
   ui/            LED, button, console (siot_ui_led, siot_ui_button, siot_console)
   features/      Phase 2+ plug-ins; empty in Phase 1 — read features/README.md before adding one
 test/
@@ -48,10 +48,12 @@ firmware/build.sh board                       # 8 MB product table          → 
 firmware/build.sh board --flash 4mb           # 4 MB bench devkits          → apps/board/build-4mb
 firmware/build.sh board --flash 4mb --bench   # 4 MB + console on UART0     → apps/board/build-4mb-bench
 firmware/build.sh node                        # node is always 4 MB         → apps/node/build
+firmware/build.sh leaf                        # leaf is always 4 MB         → apps/leaf/build
 firmware/build.sh host                        # linux host tests
 tools/flash.sh board /dev/cu.usbserial-XXXX --flash 4mb --erase           # tablet on the USB-TTL adapter (UART0)
 tools/flash.sh board /dev/cu.usbserial-XXXX --flash 4mb --bench --erase   # console on the adapter: NO tablet link there
                                                                           # (id = chip MAC, sticker auto)
+tools/flash.sh leaf  /dev/cu.usbserial-ZZZZ --erase                       # a devkit that was a node: --erase wipes its code
 ```
 
 Round-1 bench units are all 4 MB; the product board is 8 MB (OTA blueprint §1.2: `fw_store`).
@@ -81,6 +83,22 @@ Status (brief §15):
   Full table: `docs/sempreiot-system-reference.md` §3.7 row 7.7.
 - Next: step 4 (supervision + persistence: device_table, flash journal, TIME_SYNC clock on the
   board, ALARM-first queue, `siot_console`).
+- **Leaf (Phase 2, protocol §12) — steps 1–2 of `docs/phases-development/phase2-leaf-brief.md` done
+  2026-09-28, bench pending:** `siot_leaf_proto` (core: 9-byte leaf ACK, parent pick, outbox ring,
+  policy; 7 host tests), `siot_sensor` (mock backend), `siot_leafcore` (Wi-Fi STA without association +
+  raw ESP-NOW with the `0xD2` type byte, RTC state, deep sleep with timer + button wake on GPIO 21,
+  2-minute setup window then button-only sleep, discovery → bind → NAME_ANNOUNCE / TOPOLOGY /
+  HEARTBEAT, leaf ACK handling incl. EPOCH / CHANNEL / PENDING / NO_PATH, mailbox drain, outbox
+  drain + NVS mirror, walk test with the central's cyan, survey, post-provisioning verdict,
+  SET_DEVICE / DECOMMISSION / IDENTIFY handlers), `apps/leaf`. 791 KB. Not yet: the parent role on
+  the node (brief step 3) — until then a leaf binds only to an ONLINE node's offer or to
+  `CONFIG_SIOT_LEAF_BENCH_PARENT_MAC`, and no SAFR ACK ever comes back (the MAC-layer ACK does).
+  Alarm tiers and the alarm broadcast fallback are step 4. Log on UART0; `awake_ms` per wake.
+- **Parent role on the node — brief step 3, done in code 2026-09-28, bench pending:**
+  `features/siot_leafmgr` (first `features/` component). Seams added for it: `siot_survey_set_raw_sink` /
+  `siot_survey_espnow_send`, `siot_netcore_set_tx_hook` / `siot_netcore_set_downlink_hook` /
+  `siot_netcore_board_reachable` / `siot_netcore_epoch`; the board forwards a replayed mesh frame to the
+  tablet unchanged (custody retries). Node `sdkconfig.defaults`: `CONFIG_SIOT_FEATURE_LEAFMGR=y`.
 
 Bench flow: `tools/flash.sh <app> <port> --erase` (identity = chip MAC, sticker files created in
 `tools/stickers/<MAC>/` on first use)

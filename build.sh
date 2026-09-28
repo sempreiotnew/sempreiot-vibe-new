@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # firmware/build.sh — build one image in a named variant directory.
 #
-#   firmware/build.sh <board|node|host> [--flash 4mb|8mb | --module n8r8|n4] [--bench] [-- <extra idf.py args>]
+#   firmware/build.sh <board|node|leaf|host> [--flash 4mb|8mb | --module n8r8|n4] [--bench] [-- <extra idf.py args>]
 #
 #   Modules (supplier recommendation, 2026-09-25; table in tools/build_summary.py):
 #     8mb = ESP32-S3-WROOM-1-N8R8  8 MB flash + 8 MB PSRAM  -> the board (product)
@@ -10,7 +10,7 @@
 #   --flash 4mb|8mb  board only: flash size. 8mb = the product table with fw_store
 #   --module n8r8|n4 (default, OTA blueprint §1.2); 4mb = the bench devkits
 #                    (partitions_board_4mb.csv). Same flag, spelled either way.
-#                    The node is always 4 MB (N4).
+#                    The node and the leaf are always 4 MB (N4).
 #   --bench          board only: text console on UART0 (sdkconfig.bench). Never on
 #                    a unit wired to the tablet: the tablet link is UART0 in every
 #                    other build (sdkconfig.defaults), on N4 and N8R8 alike.
@@ -20,6 +20,7 @@
 #   apps/board/build-4mb        4 MB
 #   apps/board/build-4mb-bench  4 MB + console (tablet link moves to native USB)
 #   apps/board/build-8mb-bench  8 MB + console (tablet link moves to native USB)
+#   apps/leaf/build             4 MB, battery detector (no Mesh-Lite)
 # tools/flash.sh takes the same flags and flashes from the matching directory.
 #
 # After a successful board/node build, tools/build_summary.py prints the flash
@@ -30,7 +31,7 @@ set -euo pipefail
 usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 APP="${1:-}"; shift || true
-case "$APP" in board|node|host) ;; *) usage ;; esac
+case "$APP" in board|node|leaf|host) ;; *) usage ;; esac
 FLASH=8mb; BENCH=0; EXTRA=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -42,7 +43,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 case "$FLASH" in 4mb|8mb) ;; *) usage ;; esac
-[[ "$APP" == "node" ]] && FLASH=4mb   # the node image is only ever built for the N4
+[[ "$APP" == "node" || "$APP" == "leaf" ]] && FLASH=4mb   # node and leaf images are only ever built for the N4
 
 FW_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -z "${IDF_PATH:-}" ]]; then

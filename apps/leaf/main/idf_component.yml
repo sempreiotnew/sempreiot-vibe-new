@@ -1,0 +1,6 @@
+## IDF Component Manager Manifest File — sempreiot-leaf
+## No managed components: the leaf runs ESP-NOW on IDF's own esp_wifi and never
+## joins a mesh (protocol §12.1). Mesh-Lite stays a node-only dependency.
+dependencies:
+  idf:
+    version: '>=5.5.2'

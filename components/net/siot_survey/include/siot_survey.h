@@ -43,6 +43,18 @@ esp_err_t siot_survey_probe(void);
  * out on ESP-NOW (or was dropped); false = not ours, send it as usual. */
 bool siot_survey_tx(const uint8_t *frame, size_t len, const uint8_t dst_mac[6]);
 
+/* Every ESP-NOW frame that is not a PARENT_PROBE / PARENT_OFFER (a leaf's
+ * HEARTBEAT, EVENT, NAME_ANNOUNCE, TOPOLOGY, ACK — protocol §12) is handed
+ * raw to this sink: `src` is the ESP-NOW source address (the unicast
+ * address to answer to), `rssi` how it was heard. Runs in the ESP-NOW receive
+ * context: copy and return. NULL = such frames are dropped (Phase 1). */
+typedef void (*siot_survey_raw_cb_t)(const uint8_t src[6], int8_t rssi, const uint8_t *frame, size_t len, void *ctx);
+void siot_survey_set_raw_sink(siot_survey_raw_cb_t cb, void *ctx);
+
+/* Sends any SAFR frame over ESP-NOW to `dst` (unicast or broadcast), same
+ * transport and type byte as the probes. ESP_ERR_INVALID_STATE before init. */
+esp_err_t siot_survey_espnow_send(const uint8_t dst[6], const uint8_t *frame, size_t len);
+
 #define SIOT_SURVEY_COLLECT_MS 4500 /* 4 probes 1.2 s apart (3.6 s) + the last answers */
 
 #ifdef __cplusplus

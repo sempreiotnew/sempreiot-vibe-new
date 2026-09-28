@@ -4,4 +4,5 @@ idf_component_register(SRCS "app_main.c"
                                      siot_version siot_evbus siot_safr
                                      siot_board_def siot_identity siot_config
                                      siot_ui_led siot_ui_button
-                                     siot_provisioning siot_link siot_netcore siot_survey)
+                                     siot_provisioning siot_link siot_netcore siot_survey
+                                     siot_leafmgr)

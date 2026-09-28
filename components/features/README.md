@@ -20,5 +20,6 @@ This directory is the freeze boundary. Phase 1 (`core`, `platform`, `net`, `ui`)
 7. **Tests:** host tests in `test/host` for anything protocol-level; HIL steps in `test/hil` for anything
    that needs a board.
 
-Planned: `siot_leaf_espnow` (Phase 2), `siot_sensing`, `siot_alarm_engine`, `siot_ota_client`,
-`siot_ota_server`, `siot_ota_scheduler`, `siot_siren`.
+Built: `siot_leafmgr` (2026-09-28, the node's parent role for battery leafs — protocol §12.11; hooks:
+`siot_survey_set_raw_sink`, `siot_netcore_set_tx_hook`, `siot_netcore_set_downlink_hook`).
+Planned: `siot_sensing`, `siot_alarm_engine`, `siot_ota_client`, `siot_ota_server`, `siot_ota_scheduler`, `siot_siren`.

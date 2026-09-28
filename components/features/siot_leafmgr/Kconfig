@@ -1,0 +1,22 @@
+menu "SempreIoT leaf manager (siot_leafmgr)"
+
+    config SIOT_FEATURE_LEAFMGR
+        bool "Parent role for battery leafs on this node (protocol section 12.11)"
+        default n
+        help
+            Answers a leaf's HEARTBEAT / EVENT with the 9-byte leaf ACK
+            (PENDING, NO_PATH, EPOCH, CHANNEL), forwards its frames into the
+            mesh, takes custody of its events until the board's ACK, keeps a
+            mailbox of downlink frames for it while it sleeps and delivers
+            them on its next wake. Node image only.
+
+    config SIOT_LEAFMGR_MAX_LEAVES
+        int "Leafs this node keeps state for"
+        depends on SIOT_FEATURE_LEAFMGR
+        default 16
+        range 1 64
+        help
+            About 1.2 KB each (mailbox of 4 frames). Entries silent for 180 s
+            are dropped, so the number bounds concurrent leafs, not lifetime.
+
+endmenu

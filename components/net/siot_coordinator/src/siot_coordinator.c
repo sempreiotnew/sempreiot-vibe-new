@@ -521,6 +521,11 @@ static void on_link_rx(siot_link_kind_t kind, const uint8_t *frame, size_t len, 
     s_rx_kind = kind;
     const siot_safr_rx_result_t r = siot_safr_rx(frame, len);
     xSemaphoreGive(s_rx_lock);
+    /* A byte-identical retransmission from the mesh (a node's custody retry
+     * for a leaf EVENT whose ACK was lost, protocol §12.6) is a "replay" to
+     * this board's RAM table but must still reach the tablet, which ACKs
+     * every ack-required frame (spec §9.1); nothing here processes it twice. */
+    if (r == SIOT_SAFR_RX_REPLAY && kind == SIOT_LINK_MESH) relay(SIOT_LINK_SERIAL, frame, len);
     /* Setup channel on USB (spec §3.1): SYSTEM_ID 0x0000 frames are foreign
      * to the installation key but may carry GET_CODE under the sticker key. */
     if (r == SIOT_SAFR_RX_FOREIGN && kind == SIOT_LINK_SERIAL && coord_setup_handle(frame, len, true)) return;
