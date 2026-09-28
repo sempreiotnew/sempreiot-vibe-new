@@ -27,4 +27,11 @@ class AppColors {
   /// Fire-alarm severity scale (SAFR): TROUBLE sits between OK (success)
   /// and ALERT (warning) — a distinct orange so faults never read as alarms.
   static const Color trouble = Color(0xFFE8763A);
+
+  /// The units' LED language (system reference §3.7 row 7.7), reused for the
+  /// packets travelling the Rede map so a tap on a unit and its dot on the
+  /// tablet tell the same story: blue = a frame was sent, cyan = the tablet's
+  /// ACK reached the unit, red = alarm, orange = trouble.
+  static const Color ledBlue = Color(0xFF3B82F6);
+  static const Color ledCyan = Color(0xFF22D3EE);
 }

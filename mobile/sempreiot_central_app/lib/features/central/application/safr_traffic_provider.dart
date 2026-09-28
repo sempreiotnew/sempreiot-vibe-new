@@ -11,14 +11,19 @@ class SafrTrafficTick {
     required this.mac,
     required this.direction,
     required this.severity,
+    this.ack = false,
   });
+
+  /// The frame is an ACK — downlink: the tablet's confirmation travelling to
+  /// the unit (drawn cyan, like the unit's LED when it arrives).
 
   /// Origin (uplink) or destination (downlink) device MAC.
   final String mac;
   final SafrTrafficDirection direction;
 
-  /// 0 ok · 1 trouble · 2 alert · 3 alarm — colors the traveling dot.
+  /// 0 ok · 1 trouble · 2 alert · 3 alarm — colors the traveling packet.
   final int severity;
+  final bool ack;
 }
 
 class SafrTrafficBus {

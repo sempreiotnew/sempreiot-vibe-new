@@ -1,3 +1,4 @@
+import 'dart:ui' show Tangent;
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -203,7 +204,10 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
     // (protocol §12.2; reference row 6.8).
     final leafRoutine = tick.severity < 1 && origin.isLeaf &&
         tick.direction == SafrTrafficDirection.uplink;
-    if (tick.severity < 1 && !leafRoutine) return;
+    // The tablet's ACK going back down is the cyan the unit's LED shows when
+    // it arrives: worth a packet for any unit (walk test: blue up, cyan down).
+    final ackDown = tick.ack && tick.direction == SafrTrafficDirection.downlink;
+    if (tick.severity < 1 && !leafRoutine && !ackDown) return;
 
     // Path from the device up to the central, following parent links.
     final path = <String>[tick.mac];
@@ -221,13 +225,14 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
       path: tick.direction == SafrTrafficDirection.uplink
           ? path
           : path.reversed.toList(),
+      // Colours = the units' LED language (reference §3.7 row 7.7, §3.6.2):
+      // red alarm · orange trouble · cyan = the tablet's ACK · blue = a
+      // frame sent (heartbeat, test, name, command). No amber: an ALERT such
+      // as the walk test is "blue then cyan" on the unit, so here too.
       color: switch (tick.severity) {
         3 => AppColors.error,
-        2 => AppColors.warning,
         1 => AppColors.trouble,
-        _ => tick.direction == SafrTrafficDirection.downlink
-            ? AppColors.success
-            : AppColors.secondary,
+        _ => ackDown ? AppColors.ledCyan : AppColors.ledBlue,
       },
       startedAt: DateTime.now(),
       // A leaf's packet crosses each hop a little slower: one hop more than a
@@ -850,30 +855,17 @@ class _MeshGraphPainter extends CustomPainter {
       }
     }
 
-    // Traveling dots with trails.
+    // Traveling packets: a small data packet (rounded body, two data stripes)
+    // oriented along the line, with a soft glow and two fainter ghosts behind.
     dots.removeWhere((d) => d.progress >= 1.0);
     for (final dot in dots) {
-      for (var k = 3; k >= 0; k--) {
-        final t = dot.progress - k * 0.035;
+      for (var k = 2; k >= 0; k--) {
+        final t = dot.progress - k * 0.03;
         if (t < 0) continue;
-        final pos = _positionAlong(dot.path, t);
-        if (pos == null) continue;
-        if (k == 0) {
-          canvas.drawCircle(
-            pos,
-            6.5,
-            Paint()
-              ..color = dot.color.withValues(alpha: 0.30)
-              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
-          );
-          canvas.drawCircle(pos, 3.4, Paint()..color = dot.color);
-        } else {
-          canvas.drawCircle(
-            pos,
-            3.4 - k * 0.7,
-            Paint()..color = dot.color.withValues(alpha: 0.28 - k * 0.06),
-          );
-        }
+        final tan = _tangentAlong(dot.path, t);
+        if (tan == null) continue;
+        _drawPacket(canvas, tan.position, tan.angle, dot.color,
+            k == 0 ? 1.0 : 0.85 - k * 0.15, k == 0 ? 1.0 : 0.30 - k * 0.10);
       }
     }
   }
@@ -943,7 +935,40 @@ class _MeshGraphPainter extends CustomPainter {
       ..cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, to.dx, to.dy);
   }
 
-  Offset? _positionAlong(List<String> keys, double progress) {
+  /// One packet: 12 × 7.5 body with a lighter header band and two data
+  /// stripes, rotated to travel along the link. `scale` / `alpha` draw the
+  /// motion ghosts.
+  void _drawPacket(Canvas canvas, Offset pos, double angle, Color color,
+      double scale, double alpha) {
+    canvas.save();
+    canvas.translate(pos.dx, pos.dy);
+    canvas.rotate(angle);
+    canvas.scale(scale);
+    if (alpha >= 1.0) {
+      canvas.drawOval(
+        Rect.fromCenter(center: Offset.zero, width: 20, height: 13),
+        Paint()
+          ..color = color.withValues(alpha: 0.28)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
+      );
+    }
+    final body = RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset.zero, width: 12, height: 7.5),
+        const Radius.circular(1.8));
+    canvas.drawRRect(body, Paint()..color = color.withValues(alpha: alpha));
+    // Header band (leading edge) + two data stripes, in the body's own light.
+    final ink = Paint()
+      ..color = Colors.white.withValues(alpha: 0.75 * alpha)
+      ..strokeWidth = 1.0
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(const Offset(3.6, -2.4), const Offset(3.6, 2.4), ink..strokeWidth = 1.4);
+    canvas.drawLine(const Offset(-4.2, -1.2), const Offset(1.4, -1.2), ink..strokeWidth = 0.9);
+    canvas.drawLine(const Offset(-4.2, 1.2), const Offset(0.2, 1.2), ink);
+    canvas.restore();
+  }
+
+  /// Position and heading along the multi-hop path (same curve as the link).
+  Tangent? _tangentAlong(List<String> keys, double progress) {
     final points = [
       for (final key in keys)
         if (layout.positions[key] != null) layout.positions[key]!,
@@ -953,12 +978,14 @@ class _MeshGraphPainter extends CustomPainter {
     final t = (progress * segments).clamp(0.0, segments.toDouble());
     final seg = t.floor().clamp(0, segments - 1);
     final local = t - seg;
-    // Follow the same curve the link uses.
     final metrics =
         _linkPath(points[seg], points[seg + 1]).computeMetrics().toList();
     if (metrics.isEmpty) return null;
     final m = metrics.first;
-    return m.getTangentForOffset(m.length * local)?.position;
+    final tan = m.getTangentForOffset(m.length * local);
+    if (tan == null) return null;
+    // Tangent.angle is measured counter-clockwise; the canvas rotates clockwise.
+    return Tangent.fromAngle(tan.position, -tan.angle);
   }
 
   void _pulse(

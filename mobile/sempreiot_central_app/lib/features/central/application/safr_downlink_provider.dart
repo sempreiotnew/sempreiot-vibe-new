@@ -275,6 +275,7 @@ class SafrDownlink {
           mac: source.srcMac,
           direction: SafrTrafficDirection.downlink,
           severity: 0,
+          ack: true,
         ));
   }
 
