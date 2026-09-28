@@ -188,15 +188,22 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
   }
 
   void _onTraffic(SafrTrafficTick tick) {
-    // Only animate real events (alert/alarm/trouble). Routine traffic —
-    // heartbeats, topology, ACKs — used to spawn a dot every time (the
-    // constant blue balls); those are dropped so the walk-test dot stands out.
-    if (tick.severity < 1) return;
     final nodes = {
       for (final n in ref.read(topologyProvider))
         if (n.layer > 0) n.mac: n
     };
-    if (!nodes.containsKey(tick.mac)) return;
+    final origin = nodes[tick.mac];
+    if (origin == null) return;
+    // Only animate real events (alert/alarm/trouble) from AC nodes. Their
+    // routine traffic — heartbeats every 15 s, topology, ACKs — used to spawn
+    // a dot every time (the constant blue balls); those are dropped so the
+    // walk-test dot stands out. A battery leaf is the exception: it wakes
+    // once a minute and its every frame is the news that it is alive, so its
+    // heartbeat travels the tree as a calm accent-coloured packet
+    // (protocol §12.2; reference row 6.8).
+    final leafRoutine = tick.severity < 1 && origin.isLeaf &&
+        tick.direction == SafrTrafficDirection.uplink;
+    if (tick.severity < 1 && !leafRoutine) return;
 
     // Path from the device up to the central, following parent links.
     final path = <String>[tick.mac];
@@ -223,7 +230,9 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
             : AppColors.secondary,
       },
       startedAt: DateTime.now(),
-      duration: Duration(milliseconds: 550 * (path.length - 1)),
+      // A leaf's packet crosses each hop a little slower: one hop more than a
+      // node (leaf → parent) and the eye should be able to follow it.
+      duration: Duration(milliseconds: (leafRoutine ? 700 : 550) * (path.length - 1)),
     ));
     if (_dots.length > 40) _dots.removeRange(0, _dots.length - 40);
   }
