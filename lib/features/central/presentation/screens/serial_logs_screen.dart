@@ -187,6 +187,7 @@ class _ValidationHeader extends ConsumerWidget {
     final (dotColor, statusText) = switch (status) {
       SerialLinkStatus.connected => (AppColors.success, 'RECEBENDO'),
       SerialLinkStatus.connecting => (AppColors.warning, 'AGUARDANDO'),
+      SerialLinkStatus.stalled => (AppColors.error, 'PLACA MUDA'),
       SerialLinkStatus.error => (AppColors.error, 'ERRO'),
       SerialLinkStatus.disconnected => (
           context.textSecondary.withValues(alpha: 0.4),
@@ -890,6 +891,12 @@ class _EmptyState extends StatelessWidget {
           'Conectando...',
           'Porta aberta — aguardando quadros SAFR válidos.',
           AppColors.warning,
+        ),
+      SerialLinkStatus.stalled => (
+          Icons.usb_off_rounded,
+          'Placa sem resposta',
+          'A porta está aberta mas a placa parou de enviar quadros.',
+          AppColors.error,
         ),
       SerialLinkStatus.error => (
           Icons.usb_off_rounded,

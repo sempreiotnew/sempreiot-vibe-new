@@ -60,6 +60,24 @@ class SafrDownlink {
           prev != SerialLinkStatus.connected) {
         _onLinkUp();
       }
+      // The board went silent behind an open port (spec §9.3): one trouble
+      // for the site, restored when its frames come back.
+      if (next == SerialLinkStatus.stalled) {
+        _insertSyntheticEvent(
+          severity: 1,
+          kind: 'board_silent',
+          description:
+              'Placa sem resposta há ${serialLinkSilence.inSeconds} s — '
+              'instalação sem supervisão',
+        );
+      } else if (prev == SerialLinkStatus.stalled &&
+          next == SerialLinkStatus.connected) {
+        _insertSyntheticEvent(
+          severity: 0,
+          kind: 'board_restored',
+          description: 'Placa voltou a responder',
+        );
+      }
     });
     _hourlySync = Timer.periodic(const Duration(hours: 1), (_) {
       if (_connected) sendTimeSync();
