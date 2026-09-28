@@ -73,7 +73,7 @@ Status words are the reference's: `Implemented` · `POC` · `Planned` · `Open`.
 | 1.6 | Tablet reads the installation | Answers `GET_INSTALLATION` / `GET_DEVICE_TABLE` with identity, SSID, channel, name, table — never the secrets. Answers `GET_CODE` **only on the setup channel** after the operator typed the board's `pop` | Implemented (bench pending) |
 | 1.7 | Case A / Case B | A: provisioned from a phone like any unit. B: armed by the tablet with `SET_INSTALLATION` on the setup channel, ACKs, reboots on the new SSID | A: POC · B: Implemented (bench pending) |
 | 1.8 | Factory reset | Button held 5 s: wipes `siot_inst` (the code, names), keeps identity, back to setup mode | POC |
-| 1.9 | Device naming | Relays `NAME_ANNOUNCE` up; applies `SET_DEVICE` to its table (sets `ANNOTATED`, `PENDING_RENAME` if the unit is not online) and re-originates it to the unit on its next frame | Implemented (bench pending) |
+| 1.9 | Device naming | Relays `NAME_ANNOUNCE` up; applies `SET_DEVICE` to its table (sets `ANNOTATED`, `PENDING_RENAME` if the unit is not online) and re-originates it to the unit on its next frame — for a leaf, on its first frame through **any** parent, which is what refills the current parent's mailbox (spec §12.5) | Implemented (bench pending) |
 | 1.10 | Survey mode | Not a prober. **Answers** `PARENT_PROBE purpose = 1` with `PARENT_OFFER {LAYER 0x00}` over raw ESP-NOW on the installation channel and shows the 1 s colour verdict; node-to-board reach is the link that matters most | Implemented, bench-verified 2026-09-24 |
 | 1.11 | Provisioning dedup | `/provision` answers `409 already_stored` after the first success | Implemented |
 | 1.12 | **Admin window** | Double tap: installation AP suspended, `SIOT-SETUP-<id>` for 5 min with `GET /info`, `/identify`, `GET /code` (the code encrypted for the sticker); closes 2 s after a delivery; refused within 10 min of an ALARM; LED white blink meanwhile. The root loses the board for the window | Implemented (bench pending) |
@@ -95,7 +95,7 @@ Status words are the reference's: `Implemented` · `POC` · `Planned` · `Open`.
 | 3.1 | Authenticated frames | Every frame it originates is AES-128-CCM under the installation key; `LEN ≤ 250` | POC |
 | 3.2 | Replay protection | Remember `(BOOT_CTR, MSG_CTR)` per `SRC_MAC` and drop older frames | Planned Phase 1 (only the tablet has it) |
 | 3.3 | Acknowledged delivery | ACKs downlink commands as the mesh's confirmer; the tablet ACKs uplink `F_ACK_REQ` and the board relays that ACK down | POC |
-| 3.6 | **Event journal + backfill** | Stores every uplink `EVENT` `{jrn_seq, mac, payload}`; answers `EVENT_LOG_REQ` with `EVENT_LOG_DATA`, deduped by the tablet; ≥ 64 entries | POC (RAM ring) → Phase 1 (flash-persisted, monotonic `JRN_SEQ`) |
+| 3.6 | **Event journal + backfill** | Stores every uplink `EVENT` `{jrn_seq, mac, payload}`; answers `EVENT_LOG_REQ` with `EVENT_LOG_DATA`, deduped by the tablet; ≥ 64 entries. Leaf events replayed from a leaf outbox arrive with their original timestamps and sequence numbers and are journaled in order (spec §12.6) | POC (RAM ring) → Phase 1 (flash-persisted, monotonic `JRN_SEQ`) |
 | 3.7 | Severity priority | ALARM > supervisory > trouble > restore in the transmit queue | Planned Phase 1 (POC has one in-flight critical frame) |
 | 3.8 | Time synchronisation | Receives `TIME_SYNC` from the tablet on link-up and hourly, ACKs, forwards down the mesh, and must **adopt the epoch itself** (its own HEARTBEAT timestamp is 0 today) | POC (forward) · Planned Phase 1 (board clock) |
 
@@ -104,7 +104,7 @@ Status words are the reference's: `Implemented` · `POC` · `Planned` · `Open`.
 | Ref | Function | Board's part | Status |
 |---|---|---|---|
 | 4.1 | Heartbeats / topology | Emits its own `HEARTBEAT` every 15 s and `TOPOLOGY` every 60 s with `LAYER 0`, `NODE_ROLE root`, `PARENT_MAC` = the tablet, children = AC devices heard | POC |
-| 4.2 | Device-missing trouble | Marks an entry `missing` after 3 × its interval (45 s AC, 3 × heartbeat for a leaf, unknown role → 45 s). **Root fast path (v3.3):** TCP keepalive reaps a dead root in ~5 s; the board marks it missing and pushes the full `DEVICE_TABLE` unsolicited; the tablet takes it as authoritative | Implemented (table + fast path); synthetic TROUBLE from the board is Phase 1 step 4 |
+| 4.2 | Device-missing trouble | Marks an entry `missing` after 3 × its interval (45 s AC, 180 s for a leaf at its fixed 60 s, unknown role → 45 s). **Root fast path (v3.3):** TCP keepalive reaps a dead root in ~5 s; the board marks it missing and pushes the full `DEVICE_TABLE` unsolicited; the tablet takes it as authoritative | Implemented (table + fast path); synthetic TROUBLE from the board is Phase 1 step 4 |
 | 4.3 | Downlink supervision | ACKs the tablet's `LINK_CHECK` every 30 s | POC |
 | 4.5 | Self-reporting both ways | Its `HEARTBEAT` goes to the tablet **and** is broadcast down the mesh every 15 s; it is the frame a joined node uses to know the board is there (LED online within 15 s of joining, tablet or not); sent the moment a root connects | Implemented (2026-09-27) |
 

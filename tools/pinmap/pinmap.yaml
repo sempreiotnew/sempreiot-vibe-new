@@ -36,3 +36,16 @@ boards:
       uart0_rx: 44
       usb_dm: 19
       usb_dp: 20
+  - model: SIOT-LEAF-01
+    hw_rev: 0
+    pins:                  # battery detector: same devkit wiring as the node (docs/spec/definition-detector.md)
+      led_r: 14
+      led_g: 47
+      led_b: 48
+      led_active_low: false
+      button: 21           # RST/TEST, pull-up, active low — also the deep-sleep wake pin (RTC IO)
+      acok: 5
+      uart0_tx: 43         # flash + bench log (the native USB console drops on every sleep)
+      uart0_rx: 44
+      usb_dm: 19
+      usb_dp: 20

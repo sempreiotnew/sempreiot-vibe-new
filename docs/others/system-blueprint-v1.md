@@ -38,8 +38,8 @@ _2026-09-14. This is the authoritative step-by-step for installation, network fo
 ## 2. Factory state of every unit (board included)
 
 - NVS: `id`, `pop`, no code. Sticker printed with `{id, mac, pop}` plus a peel-off duplicate.
-- On power-up with no code, or after a 5 s button hold (factory reset — already implemented in `pocs/patinha`): **setup mode** for 10 minutes — LED white blink — raising the setup network `SIOT-SETUP-<id>` with WPA2 password `pop`. Battery units stop after 10 minutes and re-arm on a button press; AC units keep it up.
-- LED language everywhere (proposal, colours not final): **white blink** = waiting for setup (also after a factory reset; the only white blink) · **white solid** = factory-reset armed (button held ≥ 5 s) · **white breathe** (slow dim fade) = configured, no path to the board yet (decided 2026-09-24; the hard white blink stays setup-only) · **green solid 3 s** = installed · **red** = fault · **blue short blink** = test button pressed (as in `patinha`) · survey mode (`installation-lifecycle-v1.md` §6, unit provisioned but no path to the board): passive unit **1 s green / yellow / red solid** = how well it heard the probe (≥ −75 / ≥ −85 / below dBm) · pressed unit goes **dark = locked** for ~5 s and blinks **once per answering unit** in that link's colour, **one red blink** = nobody; breathe back = unlocked.
+- On power-up with no code, or after a 5 s button hold (factory reset — already implemented in `pocs/patinha`): **setup mode** for 10 minutes — LED white blink — raising the setup network `SIOT-SETUP-<id>` with WPA2 password `pop`. Battery units stop after **2 minutes without a provisioning request or a phone joining** (2026-09-28, protocol §12.9; was 10; a phone merely associated does not count) and in any case **10 minutes after boot**, then deep sleep with the button as the **only** wake source — a short press opens another window; AC units keep it up.
+- LED language everywhere (proposal, colours not final): **white blink** = waiting for setup (also after a factory reset; the only white blink) · **white solid** = factory-reset armed (button held ≥ 5 s) · **white breathe** (slow dim fade) = configured, no path to the board yet (decided 2026-09-24; the hard white blink stays setup-only) · **green solid 3 s** = installed · **red** = fault · **blue short blink** = test button pressed (as in `patinha`) · survey mode (`installation-lifecycle-v1.md` §6, unit provisioned but no path to the board): passive unit **1 s green / yellow / red solid** = how well it heard the probe (≥ −75 / ≥ −85 / below dBm) · pressed unit goes **dark = locked** for ~5 s and blinks **once per answering unit** in that link's colour, **one red blink** = nobody; breathe back = unlocked. **Leafs** (protocol §12.8): no LED at all while asleep, no white breathe; a press gives an **immediate blue blink** instead of the dark period, and after provisioning the unit shows one blink per parent in reach then **green solid 3 s** (bound and acknowledged) or **one red blink**.
 
 ---
 
@@ -86,11 +86,11 @@ Expected cold start to all-green: about 2 minutes for 50 units.
 
 ## 5. Normal operation
 
-### 5.1 Battery detector (every 60 s, configurable 60–150 s)
-Wake → radio on, installation channel → ESP-NOW HEARTBEAT to bound parent → wait ≤ 100 ms for the parent's ACK → if the ACK carries the **PENDING** flag, stay awake and fetch the queued command → sleep. Wake budget target ≤ 500 ms. Smoke sensor samples autonomously and wakes the ESP by GPIO4 on threshold. If 3 consecutive heartbeats get no ACK → `PARENT_PROBE` and re-bind; if nobody answers → local COMM_FAULT (red LED, trouble chirp) and keep trying at the normal cadence.
+### 5.1 Battery detector (every 60 s — fixed; protocol §12)
+Wake → radio on, installation channel → drain the **outbox** (events stored while no parent answered) → ESP-NOW HEARTBEAT (unicast, `F_ACK_REQ`) to the bound parent → wait ≤ 100 ms for the parent's 9-byte ACK (carries **PENDING** + count, **NO_PATH**, **EPOCH**, **CHANNEL** — the leaf sets its clock and channel from it, no TIME_SYNC ever) → if PENDING, stay awake and receive the queued frames (≤ 4) → sleep. Hard budget 500 ms outside alarm; no LED in sleep. Smoke sensor samples autonomously and wakes the ESP by GPIO 4 on threshold. **2 consecutive misses** → `PARENT_PROBE` and re-bind (done at ≈ 120 s, before the board's 180 s rule); nobody answers → local COMM_FAULT (one red blink + trouble chirp per wake), probe every wake while nodes are heard, every 5 min when nobody is. The interval was "configurable 60–150 s"; it is **60 s fixed** until POC D measures the battery (protocol §12.12: 3 × 150 s breaks both standards' limits).
 
 ### 5.2 AC device
-Always associated. Forwards its bound detectors' frames upward; holds a **mailbox** (queued downlink commands per bound detector) and raises the PENDING flag in that detector's next ACK. Stores-and-forwards a detector's ALARM/TROUBLE upward with SAFR retries until the board ACKs.
+Always associated. Answers `PARENT_PROBE` only while ONLINE. Acknowledges every leaf frame at once (that ACK is the leaf's permission to sleep) and takes **custody**: stores-and-forwards the detector's events upward with SAFR retries until the board ACKs (queue bounded, ALARM never dropped). Holds a **mailbox** (≤ 4 queued downlink frames per known detector, same-command replace, expiry 180 s) and raises the PENDING flag with the count in that detector's next ACK; the board's device table is the truth behind it. Sets NO_PATH in the ACK while it has no path to the board. Forwards an ALARM heard by **broadcast** from any leaf, bound or not. Protocol §12.5, §12.6, §12.11.
 
 ### 5.3 Board
 Supervision: AC device silent > 45 s or battery detector silent > 3 × its interval → synthetic TROUBLE "device missing" (as today). Journal every EVENT to flash. Latch every ALARM until operator RESET. Drive its own fire/fault/power LEDs and sounder regardless of the tablet. Bridge every frame to the tablet over USB.
@@ -102,14 +102,14 @@ Everything the app does today over USB, unchanged. When internet exists, mirror 
 
 ## 6. Alarm sequence
 
-1. Detector senses smoke → wakes → `EVENT ALARM` with `F_ACK_REQ` by ESP-NOW to its parent → detector stays awake.
+1. Detector senses smoke → wakes → `EVENT ALARM` with `F_ACK_REQ` by ESP-NOW to its parent → detector stays awake. If the unicast fails at the MAC layer (parent dead or out of range) the detector resends the same frame **at once as an ESP-NOW broadcast**; every AC device that hears it forwards it, the board keeps one copy (protocol §12.6).
 2. Parent forwards up the mesh to the root → board over Wi-Fi → tablet over USB.
 3. Board latches, journals, drives its sounder, applies cause-and-effect and sends `COMMAND SOUND` down the mesh to the selected sirens. **Default rule:** every siren also sounds on any *authenticated* ALARM it overhears on the mesh, board reachable or not.
-4. Board ACKs the detector end-to-end. No ACK within 2 s → detector retries 3× (fresh MSG_CTR) → then `PARENT_PROBE` + re-bind → keep going. Every 60 s the detector re-announces the same ALARM (`F_RETX`, same DEV_SEQ) until RESET.
+4. Board ACKs the detector end-to-end (the detector tells the parent's custody ACK from the board's by `SRC_MAC`; only the board's lets an alarm rest). No ACK within 2 s → detector retries 3× (fresh MSG_CTR) → then `PARENT_PROBE` + re-bind → keep going, awake and sounding. Every 60 s the detector re-announces the same ALARM (`F_RETX`, same DEV_SEQ) until RESET. An alarm that clears before any ACK is stored (ALARM + RESTORE) in the detector's outbox and delivered on the next wake with a parent.
 5. Operator presses SILENCE (sirens off, latch stays) or RESET (board sends RESET down; latch clears only after the root ACKs).
 
 ### 6.4 Walk test (commissioning)
-Installer presses the test button on each detector → `MANUAL_TEST` ALERT → tablet ticks the unit with time and RSSI. Tablet flags any battery detector that had fewer than two `PARENT_OFFER`s. Tablet exports the installation report (PDF): units, zones, MACs, firmware, test times, RSSI.
+Installer presses the test button on each detector → `MANUAL_TEST` ALERT → tablet ticks the unit with time and RSSI; the unit shows blue (sent) then **cyan** (the panel's ACK came back) — on a battery detector too, which stays awake ≈ 3 s for it (protocol §12.8). Tablet flags any battery detector whose bind-time `TOPOLOGY` (protocol §12.7) listed fewer than two parent candidates or a link below −85 dBm. Tablet exports the installation report (PDF): units, zones, MACs, firmware, test times, RSSI.
 
 ---
 
@@ -148,7 +148,7 @@ Installer presses the test button on each detector → `MANUAL_TEST` ALERT → t
 - `COMMAND SET_INSTALLATION` / `GET_INSTALLATION` (USB, tablet ⇄ board) — carries the code and the enrolled list. **Done in protocol v3.2** together with `DEVICE_TABLE`, `SET_DEVICE`, `RETIRE/UNRETIRE/REPLACE/DECOMMISSION/FORGET_DEVICE`, `GET_DEVICE_TABLE`, `GET_CODE` (`installation-lifecycle-v1.md`).
 - `NAME_ANNOUNCE` (unit → board, sent after provisioning and on every boot): `{name ≤ 32 bytes, zone ≤ 16 bytes}` so the board's registry never depends on the phone's list.
 - `PARENT_PROBE` (leaf → broadcast) and `PARENT_OFFER` (node → leaf), authenticated with `SAFR_PSK`. **Specified in v3.2 (§7.14/§7.15)** with a `purpose` byte; `purpose = 1` is the **survey mode**: TEST button on a unit that has no network yet → range test between units without the board (`installation-lifecycle-v1.md` §6).
-- ACK STATUS bit **PENDING** (0x04) — "a command is queued for you; stay awake".
+- ACK STATUS bit **PENDING** (0x04) — "a command is queued for you; stay awake". **Done in protocol v3.4 §12** (2026-09-28) together with `NO_PATH` (0x08), the leaf ACK `EPOCH` + `CHANNEL` extension, the mailbox, custody + outbox, the alarm broadcast fallback, leaf `TOPOLOGY` and the 2-minute setup window.
 - `COMMAND SOUND` (board → sirens) and `SET_CHANNEL`.
 - Enrollment record: `{mac, id, name, zone, state: enrolled|online|missing|retired}`.
 - Cap `LEN ≤ 250` (ESP-NOW payload limit).
@@ -181,7 +181,7 @@ Mesh-Lite for AC devices; board above the mesh as the access point; automatic ro
 
 ## 11. Still open
 - Full device list beyond detectors and sirens, and which need downlink.
-- Battery pack and target life (decided by POC-D).
+- Battery pack and target life (decided by POC-D). Protocol §12.12 gives the wake cost and the standards' minimum life (NFPA 72 ≥ 1 year, EN 54-25 ≥ 3 years — verify against purchased editions); at 60 s the rough estimate is ≈ 7 months on 2 500 mAh, so the pack, not the protocol, closes this.
 - Chip per product: classic ESP32-WROOM vs S3 (USB bridge vs native USB; deep-sleep boot time).
 - Whether battery detectors interlink peer-to-peer when no AC device exists.
 - Lab pre-submittal review of the board as control unit (ISO 7240-2 / UL 864) — book it before freezing the board's hardware.

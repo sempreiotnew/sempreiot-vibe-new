@@ -9,8 +9,14 @@ here. Do **not** keep divergent layout comments in code — cite this file inste
 
 - Version: **3** (`VER = 0x03`). Revision **3.2** (2026-09-24) adds the installation-lifecycle
   messages (§7.6 CMD 0x11–0x19, §7.12–§7.15, ACK `DETAIL`) — all additive, `VER` unchanged; the
-  flows are in `docs/others/installation-lifecycle-v1.md`.
-- Status: implemented (uplink + downlink + journal backfill); v3.2 additions: specified, Phase 2
+  flows are in `docs/others/installation-lifecycle-v1.md`. Revision **3.3** (2026-09-27) adds the
+  failover rules (§7.3 board HEARTBEAT downlink, §7.12 unsolicited push, §9.2 root gone, §9.3 node-side
+  board supervision). Revision **3.4** (2026-09-28) specifies the **leaf link** (§12): leaf HEARTBEAT
+  acknowledged by its parent with `PENDING` / `NO_PATH`, the ACK `EPOCH` + `CHANNEL` extension, the parent
+  mailbox, custody + leaf outbox, the alarm broadcast fallback, leaf `TOPOLOGY` (parent candidates), the
+  button verdict and the 2-minute setup window — all additive, `VER` unchanged.
+- Status: implemented (uplink + downlink + journal backfill); v3.2 additions: implemented, bench pending;
+  v3.3: implemented; **v3.4: specified, firmware Phase 2 (`docs/phases-development/phase2-leaf-brief.md`)**
 - Supersedes: SAFR v2 (`VER = 0x02` — decode-only for stored packets) and
   SAFR v1 (`VER = 0x01` — deprecated, decode-only)
 
@@ -181,7 +187,7 @@ not interoperable with a neighboring installation. Two mechanisms enforce this:
 | Bit | Name | Meaning |
 |-----|------|---------|
 | 0 | **F_ENC** | Payload is encrypted (AES-CCM) and a 16-byte TAG follows it. **Production receivers must reject frames without F_ENC** (§4.1) — plaintext is a bench-debug facility only. |
-| 1 | **F_ACK_REQ** | Sender demands an ACK (§9). Set on ALARM/TROUBLE events and on all central downlink except EVENT_LOG_REQ. |
+| 1 | **F_ACK_REQ** | Sender demands an ACK (§9). Set on ALARM/TROUBLE events and on all central downlink except EVENT_LOG_REQ. *(v3.4)* Also on **every leaf EVENT and every leaf HEARTBEAT**: the parent's ACK is the leaf's permission to sleep (§12.2, §12.6). |
 | 2 | **F_RETX** | This frame is a **periodic re-announcement** of a condition already reported (§7.2): same DEV_SEQ, fresh MSG_ID/MSG_CTR. Lets the log console label repeats honestly instead of showing what looks like a brand-new alarm every 60 s. ⛑ NFPA 72 §23.16: alarm repeated ≤ every 60 s until restore. |
 | 3–7 | reserved | Must be 0. Receivers ignore them (forward compatibility). |
 
@@ -416,6 +422,9 @@ The v2 behavior ("3 retries then give up") is **non-compliant and removed**.
 
 Supervision beacon (§9.2). Never sets `F_ACK_REQ`; never inserted into the
 Events feed — it silently updates the device registry (battery, RSSI, last-seen).
+*(v3.4)* **Exception — leafs:** a battery leaf's HEARTBEAT **does** set `F_ACK_REQ`
+and is acknowledged by its **parent** (not the central) on the same wake, with the
+extended leaf ACK of §12.4. That ACK is what lets the leaf sleep.
 
 **The board's own HEARTBEAT goes both ways (v3.3, 2026-09-27).** The board sends
 it to the central every 15 s as before *and* broadcasts the same frame down into
@@ -441,6 +450,8 @@ HEARTBEAT is never relayed downward: uplink frames go root → central only.
 ### 7.4 TOPOLOGY — `MSG_TYPE 0x03` (uplink) — payload 14 + 7·CHILD_COUNT bytes
 
 Sent by every non-leaf node (root included) every 60 s and on any child change.
+*(v3.4)* A **leaf** sends one TOPOLOGY **after every bind**, never periodically: its
+"children" are the **parent candidates** it heard (§12.7). `NODE_ROLE = 2`.
 
 | Off | Size | Field | What it is for |
 |----|------|--------------------|---|
@@ -460,6 +471,15 @@ Sent by every non-leaf node (root included) every 60 s and on any child change.
 | 0 | 2 | ACKED_MSG_ID | which transmission is being confirmed |
 | 2 | 1 | STATUS: 0x00 OK, 0x01 ERROR, 0x02 UNKNOWN_DST | OK = processed; ERROR = received but rejected; UNKNOWN_DST = no such device |
 | 3 | 1 | DETAIL *(v3.2; was RESERVED, always 0 before)* | With STATUS ERROR on the v3.2 commands: `0x01` unknown MAC · `0x02` table full · `0x03` not retired · `0x04` bad ARGS · `0x05` refused (own MAC / broadcast) · `0x06` not in setup mode · `0x00` no detail. Pre-v3.2 receivers ignore the byte. |
+
+*(v3.4)* **STATUS is a code in its low two bits plus flags above them:** bits 0–1 =
+`0x00 OK` / `0x01 ERROR` / `0x02 UNKNOWN_DST`; bit 2 = **`PENDING` (0x04)** "frames
+are queued for you, stay awake" (`DETAIL` = how many, §12.5); bit 3 = **`NO_PATH`
+(0x08)** "I acknowledge, but I have no path to the board right now" (§12.4). Both
+flags are set only by a **parent acknowledging a leaf**; every other ACK keeps
+STATUS ≤ 0x02. A **leaf ACK** (parent → leaf) also carries **5 bytes appended** to
+the payload — `EPOCH u32` and `CHANNEL u8` (§12.4). Receivers accept both the
+4-byte and the 9-byte form.
 
 `DST_MAC` = original sender; `SRC_MAC` = the confirmer. The **root** ACKs central
 downlink on behalf of the mesh; the **central** ACKs any uplink frame carrying
@@ -658,8 +678,11 @@ RSSI it heard the probe at on its LED for 1 s (green ≥ −75 dBm, yellow ≥ �
 red); the prober's LED is dark for the 4.5 s window (TEST locked), it counts
 one answer per SRC_MAC and blinks once per answering unit in the colour of
 `min(RSSI_SEEN, own rx RSSI)`; no answer = one red blink; base pattern back =
-unlocked. Parent discovery (`PURPOSE = 0`): only AC
-units that are ONLINE answer.
+unlocked. Parent discovery (`PURPOSE = 0`) *(v3.4, 2026-09-28)*: every **AC
+node** answers — with its LAYER when ONLINE, with **`LAYER 0xFF`** when it has
+no path to the board ("here, but no board yet"); the **board never answers**
+`PURPOSE = 0` (it is not a leaf's parent). The leaf binds only to a LAYER ≠
+`0xFF` answer; §12.3 has the selection rule and the back-off.
 
 ---
 
@@ -721,7 +744,7 @@ whole re-formed tree.
 | Sender | HEARTBEAT | TOPOLOGY |
 |--------|-----------|----------|
 | root / relay (powered) | every 15 s | every 60 s |
-| leaf (sleeping) | every 60 s (on wake) | — |
+| leaf (sleeping) | every 60 s (on wake), ACKed by its parent (§12) | once per bind (§12.7) |
 
 **Rule:** if the central hears nothing (no frame of any type) from a known
 device for **3 × its heartbeat interval** (45 s powered, 180 s leaf), it must
@@ -796,11 +819,312 @@ Recorded so nobody mistakes the protocol for the whole certification story:
   every 24 h at the panel — an app/panel behavior, not a wire format.
 - **Event history retention**: NFPA 72 requires a panel event log; the app's
   Drift `DeviceEvents` table is append-only and must stay that way.
-- **Sleeping-leaf command mailbox**: deferred until leaves drive sounders or
-  relays; when they do, a pending-command flag piggybacked on heartbeat ACKs
-  will be added (a leaf in alarm already stays awake — §7.2). *(v3.2)* The
-  lifecycle commands `SET_DEVICE` and `DECOMMISSION` addressed to a leaf wait
-  for the same mailbox (`docs/others/installation-lifecycle-v1.md` §5.2).
+- **Sleeping-leaf command mailbox**: *(v3.4)* specified in §12.5 — the `PENDING`
+  flag on the parent's heartbeat ACK, the parent-side queue, and the drain on
+  wake. `SET_DEVICE` and `DECOMMISSION` addressed to a leaf ride it
+  (`docs/others/installation-lifecycle-v1.md` §5.2). Until the leaf firmware
+  exists (`phase2-leaf-brief.md`) the board keeps the pending flags in its table.
+- **Leaf battery life**: the standards' minimum battery life for radio devices
+  (NFPA 72: at least 1 year; EN 54-25: at least 3 years — **verify against the
+  purchased editions**) is a hardware + cadence question, §12.12; the protocol
+  fixes the wake cost, POC D measures it.
+
+---
+
+## 12. Leaf link — battery detectors over ESP-NOW *(v3.4, 2026-09-28)*
+
+Normative for battery leafs and for the **parent duties** of AC nodes. Decided
+2026-09-28 (blueprint §5.1, §5.2, §6; lifecycle §5.2, §6 and the installation
+guide follow this section). Everything here is additive: existing payload
+layouts are unchanged, new fields are appended, new behaviour hangs on reserved
+bits.
+
+### 12.1 Transport rules
+
+1. **ESP-NOW only** after provisioning: station interface, never associated,
+   installation `CHANNEL` from the code, no scanning ever. The one exception is
+   the OTA pull (OTA blueprint §3.5), gated by battery ≥ 60 %.
+2. Every ESP-NOW frame is an ordinary SAFR v3 frame, `LEN ≤ 250`, authenticated
+   under the installation key. The SAFR header is untouched by the transport:
+   an uplink EVENT still has `DST_MAC` = central; only the **ESP-NOW peer
+   address** (parent MAC or broadcast) changes.
+3. On a node ESP-NOW belongs to Mesh-Lite (`esp_mesh_lite_espnow_*`, data-type
+   byte `0xD2`, as in §7.14); the board uses raw ESP-NOW with the same prefix.
+4. **Unicast to the bound parent** for everything except `PARENT_PROBE` and the
+   alarm fallback (§12.6). A unicast is acknowledged at the 802.11 MAC layer
+   (the ESP-NOW send callback reports success or failure): that is the
+   **hop-delivery proof**. The SAFR ACK on top is the **application proof**.
+5. **Peers:** a parent adds a leaf as an *unencrypted* ESP-NOW peer when its
+   frame arrives, answers, and drops it (IDF 5.5.2: 20 peers total, 6
+   encrypted). SAFR does the cryptography.
+6. Rate: the base 1 Mbps rate (best sensitivity; a Mesh-Lite link needs a
+   stronger signal than one ESP-NOW frame — hence the thresholds of §12.3).
+
+### 12.2 Leaf states and the wake cycle
+
+A deep-sleep wake is a reboot: all leaf state lives in RTC memory (parent MAC,
+channel, miss counter, state, outbox, "announced" flag), mirrored to NVS where
+§12.6 says so.
+
+```
+SETUP ──/provision→ STORED_UNBOUND ──bind→ BOUND ──2 misses→ (probe) ──nobody→ COMM_FAULT
+                                            │  ▲                                     │
+                                            │  └──── any parent answers ◄────────────┘
+                                            └──ALARM→ ALARM_ACTIVE ──RESET / restore→ BOUND
+```
+
+Wake sources: **timer** every `HB_INTERVAL` = **60 s** (fixed in v3.4, §12.12),
+**sensor** (GPIO 4, smoke / heat threshold), **button** (GPIO 21, §12.8).
+
+Timer wake, in order:
+
+1. Radio on, installation channel.
+2. **Outbox drain** (§12.6): every stored EVENT, oldest first.
+3. `HEARTBEAT` unicast to the bound parent, `F_ACK_REQ`.
+4. Wait **≤ 100 ms** for the parent's ACK (§12.4). MAC failure → one retry, then
+   count a **miss**.
+5. ACK with `PENDING` → stay awake and receive `DETAIL` frames (§12.5), ACK
+   those that carry `F_ACK_REQ`.
+6. Sleep. **Hard budget 500 ms** outside alarm: whatever state the exchange is
+   in, the leaf sleeps at the budget; undelivered mailbox frames wait.
+
+**No LED in sleep, ever.** A leaf shows patterns only while awake and only when
+an installer is plausibly present: the setup window, the verdict after
+provisioning, a button press, and the COMM_FAULT chirp (§12.8).
+
+### 12.3 Parent discovery, binding and back-off
+
+- **Probe:** `PARENT_PROBE {PURPOSE = 0}` broadcast, listen ≈ 200 ms. Every AC
+  node answers (`PARENT_OFFER`, §7.15): ONLINE ones with their LAYER, the others
+  with `LAYER 0xFF` — heard, listed in the leaf's TOPOLOGY, **never bound**.
+- **Link quality** of a candidate = the weaker direction:
+  `min(RSSI_SEEN in the offer, RSSI at which the leaf received the offer)`.
+- **Selection:** best link wins; lower `LAYER` breaks ties. Prefer candidates
+  with link ≥ **−85 dBm**; if none reaches it, bind to the best anyway (a weak
+  parent beats none) — the leaf's `TOPOLOGY` (§12.7) exposes the weakness to the
+  tablet.
+- **After a bind:** `NAME_ANNOUNCE` (only once ever after provisioning, RTC
+  flag; §7.11), `TOPOLOGY` (§12.7), then the first `HEARTBEAT`.
+- **Re-probe:** on the **2nd consecutive miss** (so a dead parent is replaced at
+  ≈ 120 s, before the board's 180 s missing rule); on the next wake after an ACK
+  with `NO_PATH`; and once every **24 h** to pick up a better parent that
+  appeared later.
+- **Back-off while unbound:** offers were heard but all `LAYER 0xFF` (nodes
+  exist, board not there yet) → probe **every wake**, so the leaf appears
+  within a minute of the board arriving. Nobody answered at all → probe every
+  **5 min** (every 5th wake); there is nothing to wait for and a probe is a full
+  wake. A **button press** on an unbound leaf also runs one discovery first
+  (§12.8).
+
+### 12.4 Leaf ACK (parent → leaf) — payload 9 bytes
+
+The §7.5 ACK with 5 bytes **appended**:
+
+| Off | Size | Field | What it is for |
+|----|------|-------|---|
+| 0 | 2 | ACKED_MSG_ID | as §7.5 |
+| 2 | 1 | STATUS | bits 0–1 code; **bit 2 `PENDING` (0x04)**, **bit 3 `NO_PATH` (0x08)** |
+| 3 | 1 | DETAIL | with `PENDING`: **number of queued frames** (≤ 4 will follow this wake); with `ERROR`: the v3.2 detail codes; else 0 |
+| 4 | 4 | EPOCH (Unix s, UTC) | the parent's clock (from `TIME_SYNC`, §7.7); the leaf sets its RTC — `TIME_SYNC` is **never** queued for a leaf |
+| 8 | 1 | CHANNEL | the installation channel as the parent sees it; differs from the leaf's stored one → the leaf switches and stores it (this is how `SET_CHANNEL` reaches leafs) |
+
+`NO_PATH` = the parent is up but has no path to the board (no downlink frame in
+90 s, §9.3). The parent still takes custody of the leaf's events (§12.6); the
+leaf keeps the parent, probes on the next wake (§12.3) and treats a button press
+as a survey (§12.8). `EPOCH = 0` = the parent has no clock yet; the leaf keeps
+its RTC. Fields appended later (e.g. the OTA offer) are versioned by **length**.
+
+### 12.5 Mailbox — downlink to a sleeping leaf
+
+- **What is queued:** any downlink frame whose `DST_MAC` is a leaf the parent
+  has heard within `3 × HB_INTERVAL` (180 s): `COMMAND` (`SET_DEVICE`,
+  `DECOMMISSION`, `RESET`, `SILENCE`, `IDENTIFY`, `TEST`, `RELAY_SET`), the
+  central's `ACK` for a leaf frame still awaiting it, later the OTA offer.
+  `TIME_SYNC` is never queued (§12.4). Broadcast downlink is delivered to every
+  leaf the parent knows.
+- **Depth:** 4 per leaf. A newer `COMMAND` with the same `CMD` **replaces** the
+  older one; a full mailbox drops the oldest and counts it.
+- **Drain:** after an ACK with `PENDING`, the parent sends the queued frames
+  **unchanged, in order, immediately**, at most 4 per wake; the leaf ACKs each
+  `F_ACK_REQ` frame (the parent relays those ACKs up) and sleeps after the
+  `DETAIL`-th frame or at the budget. Undelivered frames stay for the next wake.
+  A frame is "delivered" when the leaf's radio acknowledged it at the MAC layer.
+- **Which ACKs reach a leaf:** only an ACK that closes an EVENT the parent
+  holds in custody (§12.6) is delivered or queued — the walk-test cyan and the
+  end-to-end alarm ACK. The central also ACKs a leaf's HEARTBEAT (it carries
+  `F_ACK_REQ`, §7.5); the parent drops those: the leaf needs nothing from
+  them and a queued one would cost it a mailbox drain on every wake.
+- **Immediate delivery:** a downlink frame for a leaf the parent heard within
+  the last **3 s** (walk test, alarm: it is still awake) is sent at once; only
+  if the MAC acknowledgement fails does it go to the mailbox. This is how the
+  central's ACK reaches a leaf waiting for its cyan (§12.8).
+- **Expiry:** entries are dropped after `3 × HB_INTERVAL` without a frame from
+  that leaf, and when the leaf is next heard through **another** parent.
+- **The board's device table is the truth, the mailbox is a cache:** on the
+  first frame from a leaf — through any parent — the board re-originates every
+  pending `SET_DEVICE` / `DECOMMISSION` for it (lifecycle §3.2), which fills the
+  *current* parent's mailbox. A stale mailbox on the old parent is therefore
+  harmless.
+
+### 12.6 Uplink events — custody, alarm, outbox
+
+**Every leaf EVENT carries `F_ACK_REQ`** (§3.2). Three tiers:
+
+1. **Hop ACK = custody.** The parent acknowledges on the same wake (`SRC_MAC` =
+   parent). From then on the **parent** owns delivery: it forwards the frame
+   into the mesh and retries **the identical bytes** — 3 fast retries 2 s
+   apart, then, for an ALARM only, every 60 s for ever — until the ACK for
+   that (leaf, `MSG_ID`) comes back down. Custody queue 32 frames per node;
+   when full, drop the oldest non-ALARM; ALARM is never dropped. A non-ALARM
+   event whose fast phase is exhausted is released (the leaf's own COMM_FAULT
+   rule covers the outage). A retransmission is a "replay" to the **board's**
+   RAM replay table; the board therefore forwards a replayed mesh frame to the
+   central unchanged without processing it again, and the central ACKs every
+   ack-required frame (§9.1). The leaf sleeps on the hop ACK — except for an alarm.
+2. **ALARM = end to end.** The leaf does **not** sleep on the hop ACK. It stays
+   awake until the **board's** ACK arrives (`SRC_MAC` = board, relayed down by the
+   parent), re-announces every 60 s (`F_RETX`, same `DEV_SEQ`, §7.2) and drives
+   its local sounder throughout. The leaf tells the two ACKs apart by `SRC_MAC`.
+3. **Alarm broadcast fallback.** If the unicast ALARM fails at the MAC layer
+   (send status FAIL — parent dead or out of range), the leaf **immediately**
+   resends the same frame (same `MSG_ID`, fresh `MSG_CTR`) as an ESP-NOW
+   **broadcast**. Every node that hears it — bound or not — forwards it up and
+   takes custody; the board dedupes by `DEV_SEQ`; the board's ACK is relayed
+   down by every node that forwarded, the leaf dedupes by `MSG_ID`. Then the leaf
+   probes and re-binds as usual, still awake, still sounding.
+
+**Leaf outbox** — for events raised while **no parent acknowledges at all**:
+
+- RTC memory, **16 entries**, ≈ 40 B each (`{dev_seq, timestamp, event payload
+  17 B}`), **mirrored to NVS on every write** (events are rare, a write costs
+  milliseconds; the mirror survives a battery swap). Never heartbeats. Full →
+  drop the oldest non-ALARM.
+- Drained **oldest first at the start of the next wake that has a parent,
+  before the heartbeat**, each with its **original `DEV_SEQ` and `TIMESTAMP`**
+  and its original flags (a late first delivery is not a re-announcement, so
+  `F_RETX` stays clear). The board journals them in order and dedupes.
+- An **active** alarm is never "in the outbox": it is live (tier 2–3). If the
+  condition clears before anyone acknowledged, **both** the ALARM and its
+  RESTORE go to the outbox, so the panel still learns it happened.
+
+### 12.7 Leaf TOPOLOGY — parent candidates
+
+Sent once after every bind (§12.3), the §7.4 layout with:
+
+| Field | Leaf value |
+|---|---|
+| NODE_ROLE | 2 (leaf) |
+| LAYER | parent's layer + 1 |
+| PARENT_MAC / RSSI_TO_PARENT | the bound parent / its link (§12.3) |
+| CHILD_COUNT | number of **candidate parents** heard in the probe (≤ 16) |
+| CHILD_MAC[i] / CHILD_RSSI[i] | candidate parent / its link |
+
+The tablet draws the leaf under its parent and flags, in the walk-test report,
+any leaf with **fewer than 2 candidates** or a link **below −85 dBm**
+(blueprint §6.4).
+
+### 12.8 Button, LED and the installer verdict
+
+The single button on GPIO 21 (§7.1.2) is also the wake pin. **A press always
+transmits** — a manual press is negligible against 1 440 timer wakes a day —
+and the LED answers at once:
+
+| Step | LED | What is sent |
+|---|---|---|
+| Press | **blue 100 ms immediately** ("heard you, sending"). No dark / locked period on a leaf | — |
+| BOUND and the last ACK had no `NO_PATH` | **blue 500 ms** when sent; **cyan 500 ms** when the central's ACK arrives (board → mesh → parent → leaf, `SRC_MAC` = central) within ≈ 3 s; otherwise **one red blink** | `EVENT ALERT MANUAL_TEST`, `F_ACK_REQ` — the **walk test**, ticked on the tablet with time and RSSI |
+| Unbound | first one **discovery** (`PURPOSE = 0`, 200 ms, one blink per answering unit); bound with a path → continue as the row above | `PARENT_PROBE {PURPOSE = 0}` |
+| Otherwise (still unbound, or `NO_PATH`) | **one blink per answering unit** (400 ms) in that link's colour: green ≥ −75 dBm · yellow ≥ −85 · red below; **one red blink** = nobody | `PARENT_PROBE {PURPOSE = 1}` ×4 — the **survey** (§7.14, lifecycle §6). Only the test EVENT pulses blue; probe copies never do |
+| Then | sleep | |
+
+Hold **5 s** = factory reset (unchanged). Double tap = bench ALARM (as on nodes).
+The installer never chooses a mode: **cyan = the panel confirmed; coloured
+blinks = neighbours answered; red = nothing came back.**
+
+**Verdict right after provisioning.** On `/provision` → `stored` the leaf stays
+awake **≤ 30 s**: probe → bind → `NAME_ANNOUNCE` + `TOPOLOGY` + `HEARTBEAT` →
+one blink per candidate (as above) → **green solid 3 s** if the parent ACKed
+without `NO_PATH` (radio path proven) or **one red blink** (nobody, or nobody
+with a path; the leaf sleeps and retries on its own, §12.3) → sleep. "Green =
+mounted, red = move it or add an AC device."
+
+**COMM_FAULT:** on each wake one short **red blink + trouble chirp** (the
+conventional detector behaviour; colours not final).
+
+**Survey is run *from* the leaf, never *to* it:** a sleeping leaf answers
+nothing; an awake one answers but nobody relies on it. AC devices and the board
+are always awake to answer a leaf's probe.
+
+### 12.9 Setup window and provisioning
+
+- No code (factory, factory reset, `DECOMMISSION`): the setup network
+  `SIOT-SETUP-<id>` for **2 minutes** (was 10; blueprint §2 amended 2026-09-28).
+  **Activity** restarts the 2-minute clock: an HTTP request on the setup
+  network (`/info`, `/identify`, `/provision`, …) or a phone joining. A phone
+  that merely stays associated is **not** activity — phones reconnect on their
+  own and must not keep a detector awake. Two minutes without activity, or
+  **10 minutes after boot whatever happens** (the battery backstop) → **deep
+  sleep with the button as the only wake source, no timer**; the radio is
+  stopped first. A short press opens a new window.
+- `/provision` → `stored` → the verdict of §12.8 → sleep at `HB_INTERVAL`.
+- `NAME_ANNOUNCE` once after provisioning with `ROLE = 2` (§7.11). From that
+  frame (or the first `TOPOLOGY`) the board knows the role and applies the
+  3 × 60 s = 180 s missing rule (§9.2).
+
+### 12.10 Numbers
+
+| Quantity | Value | Where |
+|---|---|---|
+| `HB_INTERVAL` | 60 s, fixed | §12.2, §12.12 |
+| Wake budget / ACK wait / probe listen | 500 ms / 100 ms / ≈ 200 ms | §12.2, §12.3 |
+| Post-provisioning verdict window | ≤ 30 s awake | §12.8 |
+| Bind preference / weak-link flag | link ≥ −85 dBm / < −75 dBm reported, < −85 flagged | §12.3, §12.7 |
+| Re-probe | 2nd consecutive miss; next wake after `NO_PATH`; every 24 h | §12.3 |
+| Unbound back-off | every wake (nodes heard) / every 5 min (nobody) | §12.3 |
+| Missing at the board | 3 × 60 s = 180 s (NFPA 72 200 s, EN 54-25 300 s) | §9.2 |
+| Mailbox | 4 per leaf, same-`CMD` replace, drain ≤ 4 per wake, expiry 180 s | §12.5 |
+| Custody queue | 32 per node, ALARM never dropped | §12.6 |
+| Outbox | 16 entries ≈ 40 B, NVS-mirrored | §12.6 |
+| Alarm | awake until the board's ACK; 3 × 2 s retries; broadcast on MAC failure; re-announce 60 s | §12.6, §7.2 |
+| Walk-test cyan timeout | ≈ 3 s | §12.8 |
+| Setup window | 2 min, then button-only sleep | §12.9 |
+| ESP-NOW peers per parent | 20 total, 6 encrypted; add-answer-drop | §12.1 |
+
+### 12.11 Parent duties (AC node) — checklist
+
+1. Offer on `PARENT_PROBE {0}` always: `LAYER` when ONLINE, `0xFF` when there is no path to the board; echo `RSSI_SEEN`. (The board never offers on `{0}`.)
+2. Add the leaf as an unencrypted peer on its frame, answer, drop the peer.
+3. ACK every leaf `HEARTBEAT` / `EVENT` at once with the 9-byte leaf ACK: set
+   `PENDING` + `DETAIL` from the mailbox, `NO_PATH` when the board is silent
+   (§9.3), `EPOCH` from its clock, `CHANNEL`.
+4. Keep a leaf table (per leaf: MAC, the ESP-NOW address it sends from, last
+   seen, battery, replay counters, mailbox); drop entries silent for 180 s.
+   Replay = same boot, counter not newer; duplicate = same boot, same `MSG_ID`
+   (a leaf's `MSG_ID` restarts on every wake) — ACK again, forward once.
+5. Custody: forward every leaf EVENT upward with §9.1 retries until the board's
+   ACK; queue bounded, ALARM never dropped.
+6. Forward an ALARM received by **broadcast** from any leaf, bound or not, and
+   relay the board's ACK back to it.
+7. Queue downlink frames for leafs it knows; drain after `PENDING`; expire as
+   §12.5.
+8. Relay the central's ACK for a leaf `MANUAL_TEST` (the cyan of §12.8).
+9. Never `TIME_SYNC` a leaf; never accept an ESP-NOW frame as a mesh child.
+
+### 12.12 Why 60 s fixed, and the battery question
+
+The missing rule (§9.2) is **3 × interval**, so under NFPA 72's 200 s the
+interval is capped at ≈ 66 s; the blueprint's former "60–150 s configurable"
+cannot coexist with it (150 s × 3 = 450 s fails both standards). A 1-miss rule
+would allow longer intervals but turns one lost ESP-NOW frame into a trouble.
+v3.4 therefore fixes **60 s** and drops the range until measured.
+
+Energy, rough: one wake ≈ 300 ms at ≈ 90 mA ≈ 7.5 µAh; 1 440 wakes/day ≈
+11 mAh/day; deep sleep is negligible against it → ≈ 7 months on 2 500 mAh.
+The standards' minimum battery life for radio devices (NFPA 72 ≥ 1 year,
+EN 54-25 ≥ 3 years — verify against the purchased editions) is therefore a
+**hardware + cadence decision (POC D)**, not a protocol one. What the protocol
+guarantees is that a wake costs one frame and one ACK, and that nothing but the
+alarm keeps the radio on.
 
 ---
 

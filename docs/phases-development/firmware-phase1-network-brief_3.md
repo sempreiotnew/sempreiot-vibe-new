@@ -405,9 +405,10 @@ reopen frozen files:
   SAFR v3; `TTL`/`HOPS` are the diagnostics).
 - `PWR_FLAGS` bit 0 (`AC_OK`) is read from GPIO 5 and reported; the role switch it will drive is Phase 2.
 - `LEN ≤ 250` is already enforced, so every Phase 1 frame is ESP-NOW-legal.
-- The blueprint's leaf design (`PARENT_PROBE` / `PARENT_OFFER {mac, level, load}`, ACK `PENDING` bit
-  0x04, parent mailbox, 60–150 s cadence, leaf HEARTBEAT ACKed by its parent) has **no wire layout in
-  the spec yet**. Writing that v3.1 section is the first task of Phase 2, not a Phase 1 item.
+- The blueprint's leaf design (`PARENT_PROBE` / `PARENT_OFFER`, ACK `PENDING` bit 0x04, parent mailbox,
+  leaf HEARTBEAT ACKed by its parent) is **specified since 2026-09-28 in protocol §12 (v3.4)** — 60 s
+  fixed cadence, 9-byte leaf ACK, custody + outbox, alarm broadcast fallback. Plan:
+  `docs/phases-development/phase2-leaf-brief.md`. Not a Phase 1 item.
 
 ### 6.5 `link_serial` (board ↔ tablet)
 
@@ -635,8 +636,10 @@ Closed on 2026-09-22 and removed from this list: identity scheme (id + pop in `n
 
 **Phase 2 prerequisites (recorded here so they are not forgotten; not Phase 1 work):**
 
-15. ESP-NOW leaf wire format (§6.4): `PARENT_PROBE`, `PARENT_OFFER`, ACK `PENDING` bit, mailbox, the
-    leaf-heartbeat-is-ACKed exception; `COMMAND SOUND`, `SET_CHANNEL`.
+15. ~~ESP-NOW leaf wire format~~ — **closed 2026-09-28**: protocol §12 (v3.4) — `PENDING` / `NO_PATH`
+    ACK bits, the leaf ACK `EPOCH` + `CHANNEL` extension (which is how `SET_CHANNEL` reaches a leaf), mailbox,
+    custody + outbox, leaf-heartbeat-is-ACKed exception. Still open: `COMMAND SOUND`, `SET_CHANNEL` for
+    AC nodes, the OTA offer fields.
 16. Channel pinning with the board absent (sniffer check) and Mesh-Lite + ESP-NOW coexistence on the S3.
 
 **Product decisions still open (blueprint §11):**

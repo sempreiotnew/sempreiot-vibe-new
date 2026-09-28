@@ -12,8 +12,13 @@ Produces, under --out-dir/<id>/:
                   §1); flash it with tools/flash.sh.
   - sticker.json  the sticker QR payload as raw JSON (always written, so the
                   QR contents are inspectable even without the `qrcode` lib)
-  - sticker.png   QR code PNG for the physical label (requires `pip install
-                  qrcode[pil]`; skipped with a warning if not installed)
+  - sticker.png   QR code PNG for the physical label, with the id and MAC
+                  printed under the code (requires `pip install qrcode[pil]`;
+                  skipped with a warning if not installed — tools/flash.sh
+                  installs it into the IDF python env on first use)
+
+  --qr-only DIR   regenerate only sticker.png from an existing DIR/sticker.json
+                  (units created before the PNG existed, or after a MAC fix)
 
 `id`/`pop` are generated (secrets-random) unless overridden. The real MAC is
 NEVER generated here — it's read from hardware at firmware boot
@@ -147,7 +152,20 @@ def generate_qr_png(payload: dict, png_path: Path) -> bool:
             file=sys.stderr,
         )
         return False
-    img = qrcode.make(json.dumps(payload, separators=(",", ":")))
+    img = qrcode.make(json.dumps(payload, separators=(",", ":"))).convert("RGB")
+    try:  # id + MAC under the code so the printed label is readable by a human too
+        from PIL import Image, ImageDraw, ImageFont
+        font = ImageFont.load_default()
+        lines = [f"id  {payload.get('id') or ''}", f"mac {payload.get('mac') or '(not set)'}"]
+        line_h = 14
+        canvas = Image.new("RGB", (img.width, img.height + line_h * len(lines) + 8), "white")
+        canvas.paste(img, (0, 0))
+        draw = ImageDraw.Draw(canvas)
+        for i, text in enumerate(lines):
+            draw.text((16, img.height + 2 + i * line_h), text, fill="black", font=font)
+        img = canvas
+    except Exception as e:  # noqa: BLE001 — the bare QR is still a valid sticker
+        print(f"WARNING: label text skipped ({e})", file=sys.stderr)
     img.save(str(png_path))
     return True
 
@@ -158,6 +176,8 @@ def main() -> int:
     ap.add_argument("--pop", default=None, help="factory pop secret (default: random 24 chars)")
     ap.add_argument("--mac", default=None, help="unit's real MAC, AA:BB:CC:DD:EE:FF (for the sticker only)")
     ap.add_argument("--out-dir", default="./stickers", help="output root (default ./stickers)")
+    ap.add_argument("--qr-only", default=None, metavar="DIR",
+                    help="only (re)write DIR/sticker.png from DIR/sticker.json; nothing else is touched")
     ap.add_argument(
         "--nvs-size",
         default=hex(DEFAULT_NVS_SIZE),
@@ -165,6 +185,16 @@ def main() -> int:
         "— must match your project's partitions.csv 'nvs' entry",
     )
     args = ap.parse_args()
+
+    if args.qr_only:
+        d = Path(args.qr_only)
+        json_path, png_path = d / "sticker.json", d / "sticker.png"
+        if not json_path.is_file():
+            print(f"error: no {json_path}", file=sys.stderr)
+            return 1
+        ok = generate_qr_png(json.loads(json_path.read_text()), png_path)
+        print(f"png:  {png_path if ok else '(skipped — see warning above)'}")
+        return 0 if ok else 1
 
     try:
         id_ = validate_id(args.id or gen_id())

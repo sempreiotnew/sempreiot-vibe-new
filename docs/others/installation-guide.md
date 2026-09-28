@@ -90,8 +90,13 @@ What the LED tells you after that (one language for every unit):
 If the scan says **"Este dispositivo já foi configurado"** **[Phase 1]**: another installer already did
 it, or it holds an old installation. To redo it, hold its button 5 s (§10) and start again.
 
-**Battery detectors:** same steps. Their setup Wi-Fi stays up 10 minutes after power-up; press the
-button once to bring it back if it timed out.
+**Battery detectors:** same steps, but do not dawdle: the setup Wi-Fi sleeps **2 minutes after the last
+step of the wizard** (or after power-up / a button press if you never start), and always **10 minutes
+after power-up**. Asleep = LED dark; press the button once to bring the setup Wi-Fi back. Your phone
+staying connected does not keep it awake — that is on purpose, to save the battery. Right after "gravado" the detector checks itself for up to 30 s: it blinks **once per AC
+device it can hear** (green / yellow / red = signal), then **green solid 3 s** = bound to an AC device
+that reached it, or **one red blink** = none yet (it keeps trying on its own; move it or power an AC
+device nearby). Its LED is off while it sleeps — that is normal, not a fault.
 
 ---
 
@@ -128,6 +133,14 @@ Optional, useful on large sites or thick walls, and possible **before** the boar
    answer with both directions' dBm.
 
 Once a unit is online, TEST goes back to being the site-wide walk test.
+
+**Battery detectors:** press the detector, not a neighbour towards it — a sleeping detector answers
+nothing, while AC units and the board are always awake to answer it. The press wakes it: an immediate
+blue blink, then it tries to join the network (one blink per AC unit that answers, in its colour); if it
+joined and the board is reachable you get the walk test (blue = sent, **cyan** = the panel confirmed),
+otherwise the survey blinks above (one per unit that heard it, red = nobody). No dark period on a
+detector. It then goes back to sleep. Green blinks with no cyan = an AC unit hears you, but the board is
+not on the network yet.
 
 ---
 
@@ -220,5 +233,6 @@ network for the duration.
 - Excluding a compromised unit that is still online without wiping it: retire only makes the board
   ignore it. Re-key (Phase 4) will address lost units, not live ones.
 - More than 120 units on one board until the OTA phase fixes the production partition table.
-- Renaming or wiping a sleeping battery detector instantly (waits for its next wake / the parent
-  mailbox).
+- Renaming or wiping a sleeping battery detector instantly: it is applied on the detector's next
+  wake, within about a minute, through its parent's mailbox (protocol §12.5) — and only once the
+  battery-detector firmware exists.

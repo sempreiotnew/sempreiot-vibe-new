@@ -229,13 +229,20 @@ else; re-key excludes lost or offline units, not live ones.
   authenticated end to end, and populate the table like any other.
 - **Retire, replace, forget are immediate** for leafs — they are board-side.
 - **Rename and decommission are never immediate** for a leaf: it is awake only briefly after its own
-  heartbeat. These ride the parent mailbox + ACK `PENDING` bit (blueprint §9.2, brief §14 item 15). Until
-  the mailbox exists, the board keeps `PENDING_RENAME` / `PENDING_DECOMMISSION` in the table, the tablet
-  shows "pendente: aplica quando o detector acordar", and remote wipe of a leaf is best effort — retire
-  plus the physical 5 s hold is the reliable path.
+  heartbeat. These ride the parent mailbox + ACK `PENDING` bit — **specified in protocol §12.5
+  (2026-09-28)**: the parent queues ≤ 4 frames per leaf, flags them in the heartbeat ACK with the count,
+  and sends them right after; the board's table stays the truth and re-originates every pending
+  `SET_DEVICE` / `DECOMMISSION` on the leaf's first frame through **any** parent, so a stale mailbox on
+  a dead parent is harmless. Until the leaf firmware exists, the board keeps `PENDING_RENAME` /
+  `PENDING_DECOMMISSION` in the table, the tablet shows "pendente: aplica quando o detector acordar",
+  and remote wipe of a leaf is best effort — retire plus the physical 5 s hold is the reliable path.
+- **Events raised while no parent answers are never lost:** the leaf keeps them in an outbox (16
+  entries, NVS-mirrored) and delivers them, original timestamps and sequence numbers, on the next wake
+  that finds a parent; the parent then holds them in custody until the board ACKs (protocol §12.6). An
+  active alarm is never parked: the leaf stays awake, broadcasts if its parent is gone, and sounds.
 - A leaf sends `NAME_ANNOUNCE` **once after provisioning**, not on every deep-sleep wake (a wake is a
   reboot); the "announced" flag lives in RTC memory. Leaf names otherwise come from hints or `SET_DEVICE`.
-- Provisioning is unchanged: setup network for 10 minutes, re-armed by a button press (blueprint §2).
+- Provisioning: same flow; the setup network stays up **2 minutes** (protocol §12.9, was 10), then the leaf sleeps with the button as its only wake source; a short press re-arms 2 minutes. After `stored` the leaf gives its verdict on the spot (§6 below, protocol §12.8).
 
 ---
 
@@ -250,6 +257,14 @@ provisioned unit holding the same code within reach: AC nodes, leafs that happen
 board** if it is already powered (it answers on the installation channel even though it is not a mesh
 node — node-to-board reach is the link that matters most). Once a unit is ONLINE, its TEST button is the
 walk-test event again (reference §3.5 row 5.3).
+
+**Leafs (protocol §12.8):** the survey is run **from** a leaf, never *to* it — a sleeping leaf answers
+nothing, so the installer presses the detector, and the AC devices and the board, always awake, answer.
+A press wakes the leaf and **always transmits**: an immediate blue blink, then either the walk test
+(bound, parent has a path: blue sent → **cyan** = the panel confirmed, within ≈ 3 s) or the survey
+(unbound or no path: one blink per answering unit in its colour, one red = nobody). No dark period on a
+leaf and no white breathe: a leaf shows no LED while asleep. Right after provisioning the leaf does the
+same on its own for ≤ 30 s and ends with **green solid 3 s** (bound and acknowledged) or one red blink.
 
 1. Short press → the LED goes **dark at once: the button is locked** for the whole survey. The unit
    broadcasts an authenticated `PARENT_PROBE {purpose = 1 (survey)}` over ESP-NOW, four times 1.2 s
@@ -267,7 +282,7 @@ walk-test event again (reference §3.5 row 5.3).
    returns = unlocked**. A press while the LED is dark is ignored (logged as locked). The console lists
    every answer with both directions' dBm.
 
-The installer's whole rule: **dark = wait, breathing = press.**
+The installer's whole rule: **dark = wait, breathing = press** on a node; on a detector, **press once and read the blinks** (cyan = panel, colours = neighbours, red = nothing).
 
 What it proves: the radios reach each other at the mounted distance, and both units hold the same code
 (an answer needs the key). What it does not prove: mesh throughput — a Mesh-Lite link needs a better

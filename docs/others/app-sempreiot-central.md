@@ -219,6 +219,7 @@ SupervisionNotifier [supervision_provider.dart]  every 5 s + on MeshDevices chan
    offline if now − lastSeenAt > 45 s (root/relay) or 180 s (leaf, or unknown role with layer ≥ 2); edges persist supervisionState and insert synthetic TROUBLE COMM_FAULT 'device_missing' / OK 'device_restored'
 meshLinkStateProvider: 'connected' iff serial link connected and the root device (role 0 or layer 0) is online
 topologyProvider [topology_provider.dart]: nodes from supervision; role fallback layer0→root, has-children→node, else leaf; online = linkUp && online; leaf "sleeping" if online and silent > 20 s
+   Leaf states per protocol §12 (2026-09-28, `docs/devices/leaf.md` §8b): `awake` (< 3 s since a frame, or alarm latched) / `sleeping` = leaf && online && !awake, with `nextWakeInSeconds` on the 60 s cadence / offline with "há X"; `parentCandidates` (Drift v9, from a leaf's bind-time TOPOLOGY) → `singleParent` / `weakLink` warnings on the sheet. Ingest keeps a known leaf's role across heartbeats and reads the NAME_ANNOUNCE role byte
 ```
 
 **Latching.** `MeshDevices.alarmLatched` is set on any accepted ALARM (live or journaled) and cleared only by `AppDatabase.clearAlarmLatch`, called from `SafrDownlink.sendReset` after the root ACKs the RESET COMMAND (alarm-hold banner on Principal — `latched_alarm_banner.dart`, broadcast — or per device from the Rede node sheet). The Eventos tab was removed on 2026-09-23. RESTORE events never touch it; the latch survives restarts. Test: `test/safr/safr_ingest_test.dart` "ALARM latches; RESTORE does NOT clear".

@@ -23,7 +23,7 @@
 
 | Tool | What it does |
 |---|---|
-| `make_sticker.py` | One unit's factory identity: `{id, pop}` → `stickers/<id>/sticker.csv` + `sticker.bin` (image of the `nvs_factory` partition, 0x8000) + `sticker.json` / `sticker.png` (the QR: `{id, mac, pop}`). |
+| `make_sticker.py` | One unit's factory identity: `{id, pop}` → `stickers/<id>/sticker.csv` + `sticker.bin` (image of the `nvs_factory` partition, 0x8000) + `sticker.json` / `sticker.png` (the QR: `{id, mac, pop}`, with id and MAC printed under it). `--qr-only stickers/<id>` rewrites just the PNG. `flash.sh` calls it and guarantees the PNG on every flash (installs `qrcode[pil]` into the IDF env on first use). |
 | `recover_sticker.py` | `recover_sticker.py <port>` — reads the `{id, pop}` a unit already holds (POC `nvs` or Phase 1 `nvs_factory`) and its MAC, then regenerates `stickers/<id>/` with the same identity. For the round-1 units whose ids were never written down. |
 | `flash.sh` | `flash.sh <board\|node> <port> [<sticker-id>] [--flash 4mb\|8mb] [--bench] [--erase]` — the one command per unit: reads the chip's MAC, creates `stickers/<MAC>/` on first use (random `pop`, QR) or reuses it, then writes bootloader + partition table + otadata + app + `nvs_factory` from the variant directory `firmware/build.sh` made with the same flags. Give a `<sticker-id>` only to flash an identity made by hand (`make_sticker.py`) or recovered from a POC unit (`recover_sticker.py`). |
 | `pinmap/pinmap.yaml`, `pinmap/gen_board_def.py` | The pin map; generates `siot_board_def` at configure time. Edit the YAML, never the C. |

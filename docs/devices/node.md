@@ -79,7 +79,7 @@ mesh.
 | 2.3 | **Root failover** | If the root dies another AC device becomes root; the mesh also survives the board being off (nodes form a mesh among themselves) and re-homes when it returns. Target < 60 s, max 120 s. **v3.3:** a node whose level changed re-sends `HEARTBEAT` + `TOPOLOGY` only once the new path is proven (root: board session up; child: a downlink frame arrived), then restarts its timers | POC (numbers not recorded) · announce-on-proven-path Implemented |
 | 2.4 | Uplink path | Own and relayed frames → root (Mesh-Lite raw message to root) → board over TCP `:5340` (root only) | POC |
 | 2.5 | Downlink path | Root receives from the board, broadcasts to children; **every node re-broadcasts one hop further and dedupes** by MSG_ID; acts only on frames addressed to it or broadcast | POC |
-| 2.7 | ESP-NOW parent for leafs | Answers `PARENT_PROBE purpose = 0` when ONLINE; holds a per-leaf **mailbox** and sets the ACK `PENDING` bit; stores-and-forwards a leaf's ALARM / TROUBLE with SAFR retries until the board ACKs | Planned Phase 2 (wire format not written) |
+| 2.7 | **ESP-NOW parent for leafs** | Offers on `PARENT_PROBE {0}` only while ONLINE; adds the leaf as an unencrypted peer, answers, drops it; ACKs every leaf `HEARTBEAT` / `EVENT` at once with the 9-byte leaf ACK (`PENDING` + count, `NO_PATH` while the board is silent, `EPOCH`, `CHANNEL`); takes **custody** of leaf events (queue 32, ALARM never dropped) and retries upward until the board ACKs; forwards a **broadcast** ALARM from any leaf; keeps a leaf table (≈ 128 B per leaf, expiry 180 s) and a **mailbox** (≤ 4 frames per leaf, same-`CMD` replace, drained after `PENDING`); relays the board's / central's ACKs back to the leaf; never `TIME_SYNC`s a leaf | **Coded 2026-09-28 (`features/siot_leafmgr`, bench pending)** |
 | 2.8 | Site separation | Wrong `NET_PSK` cannot join; wrong `SAFR_PSK` fails CCM; other `SYSTEM_ID` dropped before decrypt | POC |
 
 ### 4.3 Protocol and delivery assurance
@@ -164,7 +164,8 @@ three blues 2 s apart and no cyan = no ACK (tablet not connected or link down).
 | Up (own) | `ACK` 0x04 | For every `COMMAND` addressed to it (`IDENTIFY`, `TEST`, `RESET`, `SILENCE`, `SET_DEVICE`, `DECOMMISSION`…); `LINK_CHECK` is ACKed by the root on behalf of the mesh |
 | Up (relay, root and relays) | Everything from the subtree | Copied without decrypting; root → board over TCP |
 | Down (relay) | `COMMAND`, `TIME_SYNC`, board `HEARTBEAT`, tablet `ACK` | Re-broadcast one hop, dedupe by MSG_ID; act only if `DST_MAC` = own or broadcast |
-| ESP-NOW | `PARENT_PROBE` 0x0D (prober) / `PARENT_OFFER` 0x0E (answerer) | Survey today (`purpose = 1`); leaf parent discovery in Phase 2 (`purpose = 0`, only when ONLINE). Through `esp_mesh_lite_espnow_*` with data-type byte `0xD2` because Mesh-Lite owns `esp_now_init` |
+| ESP-NOW | `PARENT_PROBE` 0x0D (prober) / `PARENT_OFFER` 0x0E (answerer) | Survey today (`purpose = 1`); leaf parent discovery (`purpose = 0`, only when ONLINE, spec §12.3). Through `esp_mesh_lite_espnow_*` with data-type byte `0xD2` because Mesh-Lite owns `esp_now_init` |
+| ESP-NOW (parent role, spec §12) | Leaf `HEARTBEAT` / `EVENT` in; 9-byte leaf `ACK` + mailbox frames out | Unicast from a bound leaf, or a broadcast ALARM from any leaf; the node ACKs, takes custody, forwards up; queues downlink for leafs it heard within 180 s |
 
 ## 7. Storage
 
@@ -188,6 +189,7 @@ three blues 2 s apart and no cyan = no ACK (tablet not connected or link down).
 | Root failover | target < 60 s, max 120 s; POC code: 25 s beacon timeout, ~60 s blocking connect, ~11 s keepalive — **5× series not yet run** | ref 2.3, brief §14 item 5 |
 | Mesh depth | up to 4 levels; `CHILD_COUNT` ≤ 16 in `TOPOLOGY` | blueprint §4, spec §7.4 |
 | ESP-NOW peers (Phase 2) | 20 total, 6 encrypted — a parent adds a leaf as an unencrypted peer on wake, answers, drops it; SAFR does the encryption | ref §4.1 item 4 (`esp_now.h`, IDF 5.5.2) |
+| Parent role (spec §12) | leaf ACK within the leaf's 100 ms wait; mailbox 4 per leaf; custody queue 32; leaf table expiry 180 s | spec §12.10, §12.11 |
 | Survey probe | 4 copies 1.2 s apart; window 4.5 s; green ≥ −75 dBm, yellow ≥ −85 dBm | lifecycle §6 |
 | Root heap pass mark | min free heap above ~100 KB under 250-device load with an OTA in flight | ref §4.1 |
 | Cold start to all-green | about 2 min for 50 units | blueprint §4 |
@@ -199,7 +201,7 @@ three blues 2 s apart and no cyan = no ACK (tablet not connected or link down).
 3. The 5× failover series, 24 h soak, `hil/phase1.py` (Phase 1 step 5; ref 2.3 numbers).
 4. The `journal` partition in the first fielded table; `CONFIG_SPIRAM_IGNORE_NOTFOUND` build (ref §4.1).
 5. Heap fields in `TOPOLOGY`; the root-heap load-mode test that closes the N4 purchase (ref §4.1).
-6. Phase 2 parent role: `PARENT_OFFER purpose = 0`, leaf HEARTBEAT ACK with `PENDING`, mailbox, store-and-forward (ref 2.7; brief §6.4, §14 item 15).
+6. Parent role bench pass (brief items L3–L13); the alarm broadcast fallback end to end (leaf step 4).
 7. Sensing, sirens / `COMMAND SOUND`, relay, power / tamper troubles (ref 5.5–5.8).
 8. `SET_CHANNEL`, OTA pull, factory identity station (ref 7.3–7.5).
 9. `siot_console` (brief §11); bench passes 3, 4, 6–8, 10 of the lifecycle brief.
@@ -214,5 +216,5 @@ three blues 2 s apart and no cyan = no ACK (tablet not connected or link down).
 - Build / flash: `firmware/build.sh node`, `tools/flash.sh node <port> [--erase]`.
 - Reference implementation (read-only): `pocs/node`, `pocs/patinha` (GPIO / LED / button), `mocked-device/`.
 - Specs: reference §2, §3, §4.1; blueprint §0, §1, §4, §5.2, §6, §7; lifecycle §3.2, §5, §6, §9; protocol §1, §7.1–§7.5,
-  §7.11, §7.14–§7.15, §9; Phase 1 brief §3, §4, §6.3, §6.4, §9, §14; OTA blueprint §1.1, §1.4, §3.4;
+  §7.11, §7.14–§7.15, §9, **§12.11 (parent duties)**; Phase 1 brief §3, §4, §6.3, §6.4, §9, §14; OTA blueprint §1.1, §1.4, §3.4;
   PCB map `docs/spec/definition-detector.md`.

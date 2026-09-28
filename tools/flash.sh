@@ -2,7 +2,7 @@
 # tools/flash.sh — flash ONE unit: bootloader + partition table + otadata + app
 # + its factory identity (nvs_factory), from the product firmware build.
 #
-#   tools/flash.sh <board|node> <port> [<sticker-id>] [--flash 4mb|8mb | --module n8r8|n4] [--bench] [--erase] [--force]
+#   tools/flash.sh <board|node|leaf> <port> [<sticker-id>] [--flash 4mb|8mb | --module n8r8|n4] [--bench] [--erase] [--force]
 #
 #   Modules (supplier recommendation, 2026-09-25; table in firmware/tools/build_summary.py):
 #     8mb = ESP32-S3-WROOM-1-N8R8  8 MB flash + 8 MB PSRAM  -> the board (product)
@@ -15,6 +15,9 @@
 #                    e.g. 5A4652000001); tools/stickers/<id>/ is created on first
 #                    use (random pop, QR) and reused afterwards. Given: an existing
 #                    directory from make_sticker.py or recover_sticker.py.
+#                    Every flash leaves tools/stickers/<id>/sticker.png (the QR the
+#                    installer app scans) next to sticker.bin; the `qrcode[pil]`
+#                    python package is installed into the IDF env on first use.
 #   --flash, --bench the variant built by firmware/build.sh with the same flags
 #   --module         (board: build, build-4mb, build-4mb-bench, build-8mb-bench)
 #   --erase          erase the whole flash first (also wipes "nvs": the unit
@@ -45,9 +48,9 @@ while [[ $# -gt 0 ]]; do
 done
 TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FW_DIR="$TOOLS_DIR/../firmware"
-case "$APP" in board|node) ;; *) usage ;; esac
+case "$APP" in board|node|leaf) ;; *) usage ;; esac
 case "$FLASH" in 4mb|8mb) ;; *) usage ;; esac
-[[ "$APP" == "node" ]] && FLASH=4mb   # the node image is only ever built for the N4
+[[ "$APP" == "node" || "$APP" == "leaf" ]] && FLASH=4mb   # node and leaf images are only ever built for the N4
 
 # Same variant → directory rule as firmware/build.sh.
 DIR="build"
@@ -76,6 +79,15 @@ MAC=$(echo "$CHIP_OUT" | sed -n 's/^MAC: *\([0-9a-fA-F:]\{17\}\).*/\1/p' | head 
 [[ -n "$MAC" ]] || { echo "$CHIP_OUT" >&2; echo "no MAC in esptool output" >&2; exit 1; }
 CHIP_FLASH=$(echo "$CHIP_OUT" | sed -n 's/^Detected flash size: *\([0-9]*MB\).*/\1/p' | head -n 1)
 
+# ---- sticker QR: the .png must exist next to sticker.bin (the installer scans it) ----
+ensure_qr_lib() {
+    python3 -c 'import qrcode, PIL' 2>/dev/null && return 0
+    echo "installing qrcode[pil] into the IDF python env (for sticker.png)" >&2
+    python3 -m pip install -q "qrcode[pil]" \
+        || { echo "warning: pip install qrcode[pil] failed — sticker.png skipped (sticker.json has the payload)" >&2; return 1; }
+}
+ensure_qr_lib || true
+
 # ---- identity: from the chip's eFuse MAC unless a sticker id was given ----
 if [[ -z "$STICKER_ID" ]]; then
     STICKER_ID="${MAC//:/}"
@@ -88,6 +100,10 @@ if [[ -z "$STICKER_ID" ]]; then
 fi
 STICKER_BIN="$TOOLS_DIR/stickers/$STICKER_ID/sticker.bin"
 [[ -f "$STICKER_BIN" ]] || { echo "no $STICKER_BIN — run tools/make_sticker.py --id $STICKER_ID ... or omit the id" >&2; exit 1; }
+STICKER_PNG="$TOOLS_DIR/stickers/$STICKER_ID/sticker.png"
+if [[ ! -f "$STICKER_PNG" && -f "$TOOLS_DIR/stickers/$STICKER_ID/sticker.json" ]]; then
+    python3 "$TOOLS_DIR/make_sticker.py" --qr-only "$TOOLS_DIR/stickers/$STICKER_ID" >/dev/null || true
+fi
 
 # Everything idf.py flash would write, as "offset file" pairs, plus flash settings.
 read -r FLASH_SIZE FLASH_MODE FLASH_FREQ < <(python3 - "$BUILD/flasher_args.json" <<'PY'
@@ -141,3 +157,4 @@ python3 -m esptool --chip esp32s3 -p "$PORT" -b 460800 --before default_reset --
     "${args[@]}" "$NVS_FACTORY_OFF" "$STICKER_BIN"
 
 echo "flashed sempreiot-$APP ($FLASH_SIZE, $MODULE) + identity $STICKER_ID on $PORT"
+if [[ -f "$STICKER_PNG" ]]; then echo "sticker QR: $STICKER_PNG"; else echo "sticker QR: not generated (see warnings above); payload in $TOOLS_DIR/stickers/$STICKER_ID/sticker.json"; fi
