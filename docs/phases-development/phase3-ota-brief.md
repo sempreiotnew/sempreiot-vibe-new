@@ -73,17 +73,23 @@ know each unit's product and version (`version` appended too) — additive, pre-
 
 ## 5. Steps (each ends with something you can see)
 
+**The goal of this phase is milestone M1 = steps 0–2: send a firmware from the tablet and have it
+reach only the intended units.** Steps 3–6 polish, extend to leafs, automate the release and produce
+the evidence; none of them is needed for M1.
+
 | Step | What | You see | Status |
 |---|---|---|---|
 | **0. Spec + signing** | Protocol v3.5 (§4), host tests for every codec; dev signing key, stage-1 config on all three images, CI refuses an unsigned image; `NAME_ANNOUNCE` model + version; board table + tablet show model and version per unit | Rede sheet shows "SIOT-LEAF-01 · 0.1.0"; an unsigned `.bin` will not install | — |
-| **1. Board self-update over USB** | `ota_usb` on the board (BEGIN / CHUNK / END, 921600 switch, inactive slot, verify, reboot, self-test §4.4, mark valid / rollback, `OTA_PUSH_RESULT`); tablet: pick a `.bin` (file, later a release), push with progress + resume | The board reboots into the pushed version and the tablet shows it; a deliberately broken image rolls back and reports `selftest_fail` | — |
-| **2. Node rollout through the mesh** | `fw_store` (FAT, wear-levelled) with `/fw/node.bin` + manifest; `ota_server` (HTTP, installation AP, on only while a rollout runs); `ota_client` on the node (offer rules, pull via `esp_https_ota`, `project_name` + version check, reboot, self-test, result); `ota_scheduler` on the board (queue by filter, one at a time, root last, PAUSED on alarm, UPDATING, retries, `rollout.json` survives a reboot); `OTA_ROLLOUT` to the tablet | Two nodes update one after the other from one push, root last; the map shows UPDATING; an alarm pauses it; power cut mid-download → old firmware, retry | — |
-| **3. Tablet Atualização screen** | §6 | Release card, push progress, rollout table by model, failure feed, pause / resume / abort | — |
+| **1. Push over USB, any image** | `ota_usb` on the board (BEGIN / CHUNK / END, 921600 switch, resume, `OTA_PUSH_RESULT`): the board's **own** image goes to the inactive slot → verify, reboot, self-test §4.4, mark valid / rollback; a **node or leaf** image lands in `fw_store` (FAT, wear-levelled, `/fw/<family>.bin` + manifest) and is verified there. Tablet: pick a `.bin` (file; a release in step 5), push with progress + resume | The board reboots into a pushed board image and the tablet shows it; a broken one rolls back with `selftest_fail`; a pushed node image reads "staged on the board", visible at `http://192.168.4.1/fw/manifest.json` | — |
+| **2. Rollout to the intended units** | `ota_server` (HTTP on the installation AP, on only while a rollout runs); `ota_client` on the node (offer rules, pull via `esp_https_ota`, `project_name` + version check, reboot, self-test, result); `ota_scheduler` on the board (queue **filtered by model / zone / unit**, one at a time, root last, PAUSED on alarm, UPDATING, retries, `rollout.json` survives a reboot); `OTA_ROLLOUT` to the tablet and a **minimal rollout table + failure list** on the tablet (enough to run the bench checks; the full screen is step 3) | Two nodes update one after the other from one push, root last; a release for `SIOT-SIREN-01` leaves a `SIOT-PBS-01` untouched; the map shows UPDATING; an alarm pauses it; power cut mid-download → old firmware, retry | — |
+| **3. Tablet Atualização screen** | §6 in full | Release card, push progress, rollout table by model, failure feed persisted, pause / resume / abort, numbers | — |
 | **4. Leaf pull on wake** | Offer in the leaf ACK's appended fields; leaf: accept rules (version, battery ≥ 60 %, not in alarm), Wi-Fi STA join for the pull, `esp_https_ota`, reboot, self-test on the next wake, `OTA_RESULT`, backoff (next wake, then 6 h, max 5); awake time in the result | A leaf updates within two wakes; its awake time and the battery cost are on the tablet | — |
 | **5. Release pipeline** | Tag → CI builds, signs, size-checks, writes the manifest, uploads; tablet lists and downloads releases; channel promotion | Tag `fw-0.2.0` → the tablet offers it | — |
 | **6. Freeze + evidence** | Written release / rollout procedure (OTA blueprint §7 Phase 6 item 2); per-unit update log exportable | The document a lab asks for | — |
 
-Steps 0–2 are one bench set: the 8 MB board, two node devkits, the tablet. Step 4 adds the leaf devkit.
+Steps 0–2 (M1) are one bench set: the 8 MB board, two node devkits stamped with two different models
+(`tools/flash.sh node <port> --model SIOT-SIREN-01` / `--model SIOT-PBS-01`), the tablet. Step 4 adds the
+leaf devkit.
 
 ## 6. The Atualização screen (tablet)
 
