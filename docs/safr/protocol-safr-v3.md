@@ -738,8 +738,14 @@ case with fast retries) → the central raises a link TROUBLE ("falha no enlace
 de descida") — well inside 200 s.
 
 The central's **USB link status** additionally follows the stricter local rule:
-the link is "connected" only when the port is open **and** a CRC+auth-valid
-frame arrived within the last 10 s.
+the link is "connected" only when the port is open **and** a structurally valid
+frame arrived within the last **20 s** (one 15 s board HEARTBEAT plus margin;
+was 10 s, which would flap on a healthy link). Past that the link is
+**stalled**: the port is open — a USB-UART adapter stays enumerated when the
+board behind it dies — but the board is silent. Every device is then offline at
+once and the central raises one TROUBLE ("placa sem resposta"), restored when
+the board's frames return. *(v3.3, 2026-09-27; before, a dead board behind an
+open port was only noticed by LINK_CHECK ≤ 36 s and per-device silence 45 s.)*
 
 **Node-side board supervision (v3.3).** A node counts the board as reachable
 while any downlink frame arrived within the last 90 s — in steady state the
