@@ -57,7 +57,7 @@ class SafrIngestService {
   /// Journal replay bookkeeping (spec §7.9) — the downlink service persists
   /// the JRN_SEQ high-water mark and paginates with further EVENT_LOG_REQs.
   final void Function(SafrEventLogDataPayload log)? onJournalData;
-  final void Function(String mac, int severity)? onTraffic;
+  final void Function(String mac, int severity, String? parentMac)? onTraffic;
 
   /// A frame whose header SYSTEM_ID is not ours (spec §3.1 "neighbouring
   /// system"). Null = ours again (a valid frame arrived). Feeds the
@@ -122,7 +122,12 @@ class SafrIngestService {
     final severity = frame.payload is SafrEventPayload
         ? (frame.payload as SafrEventPayload).eventType.severity
         : 0;
-    onTraffic?.call(frame.srcMac, severity);
+    final framedParent = switch (frame.payload) {
+      SafrHeartbeatPayload p => p.parentMac,
+      SafrTopologyPayload p => p.parentMac,
+      _ => null,
+    };
+    onTraffic?.call(frame.srcMac, severity, framedParent);
 
     if (frame.msgType == SafrMsgType.ack && frame.payload is SafrAckPayload) {
       onAckReceived?.call(frame.payload as SafrAckPayload);
@@ -610,10 +615,11 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
     onAckRequired: downlink.sendAck,
     onAckReceived: downlink.handleAck,
     onJournalData: downlink.handleJournalData,
-    onTraffic: (mac, severity) => traffic.emit(SafrTrafficTick(
+    onTraffic: (mac, severity, parentMac) => traffic.emit(SafrTrafficTick(
       mac: mac,
       direction: SafrTrafficDirection.uplink,
       severity: severity,
+      parentMac: parentMac,
     )),
   );
 

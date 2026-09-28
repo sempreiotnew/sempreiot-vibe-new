@@ -157,7 +157,10 @@ Nodes in root election keep their amber dashed line; a link whose end is offline
 LED shows for it: **blue** = a frame sent (heartbeat, walk test, name, a command going down) · **cyan**
 = the tablet's ACK travelling back to the unit · **red** = ALARM · **orange** = TROUBLE. Never amber:
 an ALERT such as the walk test is "blue up, cyan down", on the unit and on the tablet alike. AC nodes
-animate events and the ACKs they wait for; a battery leaf animates every uplink frame (row 6.8).
+animate events and the ACKs they wait for; a battery leaf animates every uplink frame (row 6.8). One wake = one
+packet: frames a unit sends within 1.2 s merge into the packet in flight; the packet follows the parent the
+frame itself names, so a leaf that re-bound is drawn on its new line from the first frame; the cyan ACK
+packet exists only for an EVENT's acknowledgement, never for a heartbeat's.
 
 ### 3.7 Maintenance, updates, production
 

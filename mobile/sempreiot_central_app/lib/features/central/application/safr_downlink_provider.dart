@@ -271,12 +271,18 @@ class SafrDownlink {
       dstMac: safrMacToBytes(source.srcMac),
     );
     await _write(frame);
-    _ref.read(safrTrafficProvider).emit(SafrTrafficTick(
-          mac: source.srcMac,
-          direction: SafrTrafficDirection.downlink,
-          severity: 0,
-          ack: true,
-        ));
+    // The cyan packet going down = the unit's cyan LED: the tablet's ACK for
+    // an EVENT it sent. Heartbeats are ACKed on the wire too (spec §7.5) but
+    // the parent never hands those to a leaf, so they never light a LED and
+    // never travel the map.
+    if (source.msgType == SafrMsgType.event) {
+      _ref.read(safrTrafficProvider).emit(SafrTrafficTick(
+            mac: source.srcMac,
+            direction: SafrTrafficDirection.downlink,
+            severity: 0,
+            ack: true,
+          ));
+    }
   }
 
   /// Root confirmed one of our F_ACK_REQ frames.

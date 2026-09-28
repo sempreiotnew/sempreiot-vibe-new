@@ -209,9 +209,17 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
     final ackDown = tick.ack && tick.direction == SafrTrafficDirection.downlink;
     if (tick.severity < 1 && !leafRoutine && !ackDown) return;
 
-    // Path from the device up to the central, following parent links.
+    // Path from the device up to the central, following parent links. The
+    // first hop is the parent the frame itself named when it did (a leaf
+    // that just re-bound: the registry still holds the old parent until this
+    // very frame is stored); the rest follows the registry.
     final path = <String>[tick.mac];
-    var cursor = nodes[tick.mac];
+    final firstParent =
+        tick.parentMac != null && nodes.containsKey(tick.parentMac)
+            ? tick.parentMac
+            : origin.parentMac;
+    var cursor = firstParent != null ? nodes[firstParent] : null;
+    if (cursor != null) path.add(cursor.mac);
     var guard = 0;
     while (cursor?.parentMac != null &&
         nodes.containsKey(cursor!.parentMac) &&
@@ -221,7 +229,32 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
     }
     path.add(_centralKey);
 
+    final color = switch (tick.severity) {
+      3 => AppColors.error,
+      1 => AppColors.trouble,
+      _ => ackDown ? AppColors.ledCyan : AppColors.ledBlue,
+    };
+    // One wake = one packet: a unit that sends several frames in a burst
+    // (name, topology, heartbeat after a bind; the outbox on reconnection)
+    // shows one packet, which takes on the event colour if an event is in
+    // the burst — the unit's LED shows one pulse too.
+    final now = DateTime.now();
+    for (final d in _dots) {
+      if (d.origin == tick.mac &&
+          d.uplink == (tick.direction == SafrTrafficDirection.uplink) &&
+          now.difference(d.startedAt).inMilliseconds < 1200) {
+        if (tick.severity > d.severity) {
+          d.color = color;
+          d.severity = tick.severity;
+        }
+        return;
+      }
+    }
+
     _dots.add(_TrafficDot(
+      origin: tick.mac,
+      uplink: tick.direction == SafrTrafficDirection.uplink,
+      severity: tick.severity,
       path: tick.direction == SafrTrafficDirection.uplink
           ? path
           : path.reversed.toList(),
@@ -229,11 +262,7 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
       // red alarm · orange trouble · cyan = the tablet's ACK · blue = a
       // frame sent (heartbeat, test, name, command). No amber: an ALERT such
       // as the walk test is "blue then cyan" on the unit, so here too.
-      color: switch (tick.severity) {
-        3 => AppColors.error,
-        1 => AppColors.trouble,
-        _ => ackDown ? AppColors.ledCyan : AppColors.ledBlue,
-      },
+      color: color,
       startedAt: DateTime.now(),
       // A leaf's packet crosses each hop a little slower: one hop more than a
       // node (leaf → parent) and the eye should be able to follow it.
@@ -716,15 +745,21 @@ class _ZoomControls extends StatelessWidget {
 // ── Traveling dot model ──────────────────────────────────────────────────────
 
 class _TrafficDot {
-  const _TrafficDot({
+  _TrafficDot({
+    required this.origin,
+    required this.uplink,
+    required this.severity,
     required this.path,
     required this.color,
     required this.startedAt,
     required this.duration,
   });
 
+  final String origin;
+  final bool uplink;
+  int severity;
   final List<String> path;
-  final Color color;
+  Color color;
   final DateTime startedAt;
   final Duration duration;
 

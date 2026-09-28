@@ -12,7 +12,12 @@ class SafrTrafficTick {
     required this.direction,
     required this.severity,
     this.ack = false,
+    this.parentMac,
   });
+
+  /// Uplink: the parent the frame itself names (HEARTBEAT / TOPOLOGY
+  /// PARENT_MAC), so the packet follows the link the unit actually used —
+  /// the registry may still hold the previous parent when the tick fires.
 
   /// The frame is an ACK — downlink: the tablet's confirmation travelling to
   /// the unit (drawn cyan, like the unit's LED when it arrives).
@@ -24,6 +29,7 @@ class SafrTrafficTick {
   /// 0 ok · 1 trouble · 2 alert · 3 alarm — colors the traveling packet.
   final int severity;
   final bool ack;
+  final String? parentMac;
 }
 
 class SafrTrafficBus {
