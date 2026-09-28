@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/safr/safr_v2_payloads.dart';
@@ -21,6 +23,7 @@ class TopologyNode {
     this.zone,
     this.boardState,
     this.boardFlags = 0,
+    this.parentCandidates = const [],
   });
 
   final String mac;
@@ -43,6 +46,10 @@ class TopologyNode {
   final SafrDeviceState? boardState;
   final int boardFlags;
 
+  /// A battery leaf's parents in reach at its last bind (spec §12.7), with
+  /// the link RSSI (the weaker direction). Empty for nodes.
+  final List<({String mac, int rssi})> parentCandidates;
+
   bool get retired => boardState == SafrDeviceState.retired;
   bool get expected => boardState == SafrDeviceState.expected;
   bool get pendingRename => boardFlags & SafrDeviceFlags.pendingRename != 0;
@@ -51,11 +58,34 @@ class TopologyNode {
   bool get heardWhileRetired =>
       boardFlags & SafrDeviceFlags.heardWhileRetired != 0;
 
-  /// Leaves sleep between wakes: online but silent for a while.
-  bool get sleeping =>
-      role == SafrNodeRole.leaf &&
+  bool get isLeaf => role == SafrNodeRole.leaf;
+
+  /// A leaf is awake for the moments after a frame (a press, a wake) and the
+  /// whole time an alarm is latched — it stays up until the RESET (§12.6).
+  bool get awake =>
+      isLeaf &&
       online &&
-      DateTime.now().toUtc().difference(lastSeenAt).inSeconds > 20;
+      (alarmLatched ||
+          DateTime.now().toUtc().difference(lastSeenAt).inSeconds <
+              leafAwakeWindow.inSeconds);
+
+  /// Leaves sleep between wakes: online, not awake — the normal state of a
+  /// healthy detector (spec §12.2, 60 s cadence).
+  bool get sleeping => isLeaf && online && !awake;
+
+  /// Seconds until the leaf's next timer wake (spec §12.2), or null when it is
+  /// awake / not a leaf / already late (it then reads as "a qualquer momento").
+  int? get nextWakeInSeconds {
+    if (!sleeping) return null;
+    final since = DateTime.now().toUtc().difference(lastSeenAt).inSeconds;
+    final left = leafHeartbeatInterval.inSeconds - since;
+    return left > 0 ? left : null;
+  }
+
+  /// Walk-test flags (spec §12.7): fewer than two parents in reach, or the
+  /// bound link weaker than −85 dBm.
+  bool get singleParent => isLeaf && parentCandidates.length < 2;
+  bool get weakLink => isLeaf && (rssi ?? 0) < leafWeakLinkDbm;
 
   /// Unheard for a long time (beyond the offline threshold). The node stays
   /// on the map, dimmed, until the operator clears the registry by hand.
@@ -66,6 +96,27 @@ class TopologyNode {
 
 /// Silence after which an offline device is drawn dimmed on the map.
 const topologyStaleAfter = Duration(minutes: 10);
+
+/// Battery leaf timing (protocol §12.2 / §12.8): fixed 60 s cadence; a frame
+/// within the last 3 s means it is still up (walk test, verdict).
+const leafHeartbeatInterval = Duration(seconds: 60);
+const leafAwakeWindow = Duration(seconds: 3);
+const leafWeakLinkDbm = -85;
+
+List<({String mac, int rssi})> _decodeCandidates(String? json) {
+  if (json == null || json.isEmpty) return const [];
+  try {
+    final list = jsonDecode(json);
+    if (list is! List) return const [];
+    return [
+      for (final e in list)
+        if (e is Map && e['mac'] is String && e['rssi'] is int)
+          (mac: e['mac'] as String, rssi: e['rssi'] as int),
+    ];
+  } catch (_) {
+    return const [];
+  }
+}
 
 /// Graph derived from the trusted device registry + supervision status.
 /// Role falls back to a topology heuristic when the device never reported
@@ -105,6 +156,7 @@ final topologyProvider = Provider<List<TopologyNode>>((ref) {
             ? null
             : SafrDeviceState.fromWire(s.device.boardState!),
         boardFlags: s.device.boardFlags,
+        parentCandidates: _decodeCandidates(s.device.parentCandidates),
       ),
   ]..sort((a, b) {
       final byLayer = a.layer.compareTo(b.layer);

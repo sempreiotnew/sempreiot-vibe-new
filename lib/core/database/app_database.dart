@@ -74,6 +74,10 @@ class MeshDevices extends Table {
   IntColumn get boardState => integer().nullable()();
   IntColumn get boardFlags => integer().withDefault(const Constant(0))();
   DateTimeColumn get tableSyncedAt => dateTime().nullable()();
+  // v3.4 (spec §12.7): a battery leaf's parent candidates from its bind-time
+  // TOPOLOGY, JSON [{"mac":..,"rssi":..}] — "pais ao alcance" on the sheet and
+  // the walk-test flags (fewer than 2, link below −85 dBm). Null for nodes.
+  TextColumn get parentCandidates => text().nullable()();
 
   @override
   Set<Column> get primaryKey => {mac};
@@ -113,7 +117,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 9;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -158,6 +162,10 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(meshDevices, meshDevices.boardState);
             await m.addColumn(meshDevices, meshDevices.boardFlags);
             await m.addColumn(meshDevices, meshDevices.tableSyncedAt);
+          }
+          if (from < 9) {
+            // SAFR v3.4 leaf link (protocol §12.7): parent candidates.
+            await m.addColumn(meshDevices, meshDevices.parentCandidates);
           }
         },
       );

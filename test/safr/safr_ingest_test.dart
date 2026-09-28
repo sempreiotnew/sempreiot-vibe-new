@@ -20,6 +20,18 @@ Uint8List _eventPayload({
       (devSeq >> 8) & 0xFF, devSeq & 0xFF,
     ]);
 
+/// TOPOLOGY (spec §7.4) as a battery leaf sends it after a bind (§12.7):
+/// role 2, layer 2, parent 5A:46:52:00:00:03, link −40, two candidates.
+Uint8List _leafTopologyPayload() => Uint8List.fromList([
+      0x68, 0x6E, 0x2F, 0x01, // timestamp
+      0x02, 0x02, // NODE_ROLE leaf, LAYER 2
+      0x5A, 0x46, 0x52, 0x00, 0x00, 0x03, // PARENT_MAC
+      0xD8, // RSSI_TO_PARENT −40
+      0x02, // CHILD_COUNT
+      0x5A, 0x46, 0x52, 0x00, 0x00, 0x03, 0xD8, // candidate 1, −40
+      0x5A, 0x46, 0x52, 0x00, 0x00, 0x04, 0xB0, // candidate 2, −80
+    ]);
+
 Uint8List _heartbeatPayload({int layer = 0}) => Uint8List.fromList([
       0x68, 0x6E, 0x2F, 0x01, 0x00, 0x00, 0x0E, 0x10,
       0x01, 0x64, 0x00, 0xFA, 0xBE,
@@ -280,6 +292,35 @@ void main() {
     expect(await db.select(db.meshDevices).get(), isEmpty);
     expect(await db.select(db.deviceEvents).get(), isEmpty);
   });
+
+  test('leaf: TOPOLOGY stores parent candidates; a later HEARTBEAT keeps the leaf role',
+      () async {
+    final leaf = SafrEncoder(srcMac: safrMacToBytes('5A:46:52:00:00:77'), bootCtr: 3);
+    await ingest.handleFrame(
+      leaf.encode(msgType: SafrMsgType.topology, payload: _leafTopologyPayload()),
+      deviceId: 'test',
+    );
+    var row = await (db.select(db.meshDevices)
+          ..where((t) => t.mac.equals('5A:46:52:00:00:77')))
+        .getSingle();
+    expect(row.role, SafrNodeRole.leaf.wire);
+    expect(row.parentMac, '5A:46:52:00:00:03');
+    expect(row.parentCandidates, contains('5A:46:52:00:00:04'));
+    expect(row.parentCandidates, contains('-80'));
+
+    // Heartbeat from layer 3 (parent + 1): a node would read as "node", a
+    // known leaf must stay a leaf (spec §12 — TOPOLOGY comes only on a bind).
+    await ingest.handleFrame(
+      leaf.encode(msgType: SafrMsgType.heartbeat, payload: _heartbeatPayload(layer: 3)),
+      deviceId: 'test',
+    );
+    row = await (db.select(db.meshDevices)
+          ..where((t) => t.mac.equals('5A:46:52:00:00:77')))
+        .getSingle();
+    expect(row.role, SafrNodeRole.leaf.wire);
+    expect(row.parentCandidates, contains('5A:46:52:00:00:04'),
+        reason: 'candidates survive heartbeats');
+  });
 }
 
 void _fixCrc(Uint8List f) {
@@ -294,4 +335,5 @@ void _fixCrc(Uint8List f) {
   }
   f[f.length - 2] = (crc >> 8) & 0xFF;
   f[f.length - 1] = crc & 0xFF;
+
 }

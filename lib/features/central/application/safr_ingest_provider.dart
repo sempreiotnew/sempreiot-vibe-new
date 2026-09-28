@@ -271,6 +271,7 @@ class SafrIngestService {
     var lastDevSeq = existing?.lastDevSeq ?? 0;
     var alarmLatched = existing?.alarmLatched ?? 0;
     var alarmLatchedAt = existing?.alarmLatchedAt;
+    var parentCandidates = existing?.parentCandidates;
 
     switch (payload) {
       case SafrHeartbeatPayload p:
@@ -282,13 +283,23 @@ class SafrIngestService {
         // Role tracks layer from the 15 s heartbeat so a root change shows
         // fast; TOPOLOGY (every 60 s) also carries role and refines it. Board
         // (layer 0) and the mesh root (layer 1) are "root"; layer 2+ are
-        // relays/children. (Phase 1 has no sleeping leaves on this path.)
-        role = p.layer <= 1 ? SafrNodeRole.root.wire : SafrNodeRole.node.wire;
+        // relays/children. A battery leaf (spec §12) heartbeats from layer
+        // parent+1 and sends TOPOLOGY only when it binds: once known as a
+        // leaf it stays one — its heartbeats never demote it to "node".
+        role = existing?.role == SafrNodeRole.leaf.wire
+            ? SafrNodeRole.leaf.wire
+            : (p.layer <= 1 ? SafrNodeRole.root.wire : SafrNodeRole.node.wire);
       case SafrTopologyPayload p:
         role = p.role.wire;
         layer = p.layer;
         parentMac = p.parentMac;
         rssi = p.rssiToParent ?? rssi;
+        if (p.role == SafrNodeRole.leaf) {
+          // Spec §12.7: a leaf's "children" are the parents it heard.
+          parentCandidates = jsonEncode([
+            for (final c in p.children) {'mac': c.mac, 'rssi': c.rssi},
+          ]);
+        }
       case SafrEventPayload p:
         battery = p.batteryPct ?? battery;
         if (p.devSeq != null && p.devSeq! > lastDevSeq) {
@@ -313,6 +324,8 @@ class SafrIngestService {
     if (payload case SafrNameAnnouncePayload p) {
       name = p.name;
       zone = p.zone;
+      // v3.2 trailing ROLE byte: a leaf says so on its very first frame.
+      if (p.role != SafrNodeRole.unknown) role = p.role.wire;
     }
     // Hearing directly from a device (any frame) means it's live — supersedes
     // the 'enrolled' marker INSTALLATION may have set before this ever arrived.
@@ -340,6 +353,7 @@ class SafrIngestService {
             lastDevSeq: Value(lastDevSeq),
             alarmLatched: Value(alarmLatched),
             alarmLatchedAt: Value(alarmLatchedAt),
+            parentCandidates: Value(parentCandidates),
           ),
         );
   }

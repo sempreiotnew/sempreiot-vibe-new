@@ -1550,7 +1550,27 @@ class _NodeDetailSheetState extends ConsumerState<_NodeDetailSheet> {
             _fact(context, 'Papel', roleLabel),
             _fact(context, 'Camada', 'L${node.layer}'),
             if (node.parentMac != null) _fact(context, 'Pai', node.parentMac!),
-            if (node.rssi != null) _fact(context, 'Sinal', '${node.rssi} dBm'),
+            if (node.rssi != null)
+              _fact(context, 'Sinal', '${node.rssi} dBm',
+                  valueColor: node.weakLink ? AppColors.warning : null),
+            if (node.isLeaf)
+              _fact(
+                context,
+                'Pais ao alcance',
+                node.parentCandidates.isEmpty
+                    ? 'nenhum informado ainda'
+                    : node.parentCandidates
+                        .map((c) => '${c.mac} (${c.rssi} dBm)')
+                        .join(' · '),
+                valueColor: node.singleParent ? AppColors.warning : null,
+              ),
+            if (node.isLeaf && node.singleParent && node.online)
+              _fact(context, 'Atenção',
+                  'só um pai ao alcance — instale um dispositivo AC mais perto',
+                  valueColor: AppColors.warning),
+            if (node.isLeaf && node.weakLink && node.online)
+              _fact(context, 'Atenção', 'sinal fraco com o pai (abaixo de −85 dBm)',
+                  valueColor: AppColors.warning),
             if (node.batteryPct != null)
               _fact(context, 'Bateria', '${node.batteryPct}%'),
             if (node.zone?.isNotEmpty == true) _fact(context, 'Zona', node.zone!),
@@ -1589,10 +1609,16 @@ class _NodeDetailSheetState extends ConsumerState<_NodeDetailSheet> {
                 context,
                 'Estado',
                 node.online
-                    ? (node.sleeping ? 'Dormindo' : 'Online')
+                    ? (node.sleeping
+                        ? 'Dormindo · último despertar ${relativeTime(node.lastSeenAt)}'
+                            '${node.nextWakeInSeconds != null ? ' · próximo em ~${node.nextWakeInSeconds} s' : ' · próximo a qualquer momento'}'
+                        : node.isLeaf
+                            ? (node.alarmLatched ? 'Acordado — em alarme' : 'Acordado')
+                            : 'Online')
                     : node.stale
-                        ? 'Sem comunicação há muito tempo'
-                        : 'Sem comunicação'),
+                        ? 'Sem comunicação há muito tempo (${relativeTime(node.lastSeenAt)})'
+                        : 'Sem comunicação (${relativeTime(node.lastSeenAt)})',
+                valueColor: !node.online ? AppColors.error : null),
             const SizedBox(height: 16),
             Text(
               'COMANDOS — CENTRAL → DISPOSITIVO',
