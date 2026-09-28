@@ -1,0 +1,37 @@
+menu "SempreIoT SAFR (siot_safr)"
+
+    config SIOT_SAFR_DEDUP_CAP
+        int "Dedupe table entries (SRC_MAC, MSG_ID)"
+        default 16
+        range 4 64
+        help
+            Recent (SRC_MAC, MSG_ID) pairs kept for SIOT_SAFR_DEDUP_TTL_MS so a
+            fast retransmission (same MSG_ID, fresh MSG_CTR - spec 9.1) is
+            processed once and ACKed every time. 16 was the POC value
+            (pocs/node/main/node_mesh.c DEDUP_CAP).
+
+    config SIOT_SAFR_DEDUP_TTL_MS
+        int "Dedupe window (ms)"
+        default 30000
+        help
+            Spec 9.1: "within a 30 s window".
+
+    config SIOT_SAFR_PEERS_MAX
+        int "Replay table entries (one per SRC_MAC)"
+        default 32
+        range 4 128
+        help
+            Last (BOOT_CTR, MSG_CTR) kept per SRC_MAC for the replay check of
+            spec 4. The board sees every device on site (blueprint target 50
+            units => set higher there); a node sees the board and the central.
+            Least-recently-heard entry is evicted when full.
+
+    config SIOT_SAFR_HANDLERS_MAX
+        int "Dispatcher slots (one per MSG_TYPE)"
+        default 16
+        range 4 64
+        help
+            Phase 1 registers at most 10 (MSG_TYPE 0x01..0x0A); features add
+            new types (features/README.md).
+
+endmenu

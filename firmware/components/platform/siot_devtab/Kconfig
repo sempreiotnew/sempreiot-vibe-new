@@ -1,0 +1,13 @@
+menu "SempreIoT device table (siot_devtab)"
+
+    config SIOT_DEVTAB_CAP
+        int "Maximum devices in the board's table"
+        default 120
+        range 8 250
+        help
+            One NVS blob per device (~57 bytes = 3 NVS entries) in the 24 KB
+            "nvs" partition shared with Wi-Fi. 120 leaves headroom; 250 needs
+            the partition decision recorded in the OTA blueprint §8
+            (installation-lifecycle-v1.md §3.1). Never raise it in the field.
+
+endmenu

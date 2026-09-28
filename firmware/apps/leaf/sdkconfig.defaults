@@ -1,0 +1,43 @@
+# sempreiot-leaf — from apps/node/sdkconfig.defaults minus Mesh-Lite, plus sleep.
+CONFIG_IDF_TARGET="esp32s3"
+
+# 4 MB flash, the node's partition table (OTA blueprint §1.1 / §1.4). Image cap 1.75 MB.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_leaf.csv"
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# mbedtls_hkdf() for the provisioning envelope (brief §7).
+CONFIG_MBEDTLS_HKDF_C=y
+
+# Every wake is a reboot: PHY calibration data cached in NVS keeps the radio
+# bring-up short (protocol §12.2 budget); RTC keeps the wall clock across
+# deep sleep so EPOCH from the parent ACK survives (§12.4).
+CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE=y
+CONFIG_ESP_TIME_FUNCS_USE_RTC_TIMER=y
+
+# Same timer-task stacks as the node (the IDF defaults are 2048 / 3584): one
+# less difference between an image whose setup network works and this one.
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
+CONFIG_ESP_TIMER_TASK_STACK_SIZE=4096
+
+# Console on UART0 only. The native USB-Serial-JTAG drops on every deep sleep,
+# and as a *secondary* console it can stall the log when the devkit's USB is
+# plugged in with nothing reading it. A battery unit never logs over USB.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# Bootloader chatter costs awake time on every wake: keep it quiet.
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+
+# Identity: model string reported in /info and used to pick the pin map
+# (tools/pinmap/pinmap.yaml). The app wizard treats anything not "SIOT-BOARD" as a unit.
+CONFIG_SIOT_DEV_MODEL="SIOT-LEAF-01"
+
+# Leaf runtime (components/net/siot_leafcore/Kconfig): deep sleep, 60 s, 2-minute setup window.
+CONFIG_SIOT_LEAF_SLEEP_DEEP=y
+CONFIG_SIOT_LEAF_HB_INTERVAL_S=60
+CONFIG_SIOT_LEAF_SETUP_WINDOW_S=120
+CONFIG_SIOT_SENSOR_MOCK=y
+CONFIG_SIOT_LEAF_SETUP_MAX_S=600

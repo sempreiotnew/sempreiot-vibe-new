@@ -1,0 +1,8 @@
+## IDF Component Manager Manifest File — sempreiot-node
+## Pin copied from pocs/node (brief §2: espressif/mesh_lite 1.0.2, which pulls
+## iot_bridge 1.0.1). The headers in managed_components/ are the exact API for
+## this version; dependencies.lock is copied from pocs/node too.
+dependencies:
+  idf:
+    version: '>=5.5.2'
+  espressif/mesh_lite: "==1.0.2"

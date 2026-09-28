@@ -1,0 +1,19 @@
+menu "SempreIoT serial link peripheral (siot_hal_serial)"
+
+    choice SIOT_SERIAL_LINK
+        prompt "Peripheral carrying the SAFR byte stream to the tablet"
+        default SIOT_SERIAL_LINK_USB_SERIAL_JTAG
+        help
+            Product board: the S3's native USB on GPIO 19/20 (USB-Serial-JTAG,
+            seen as /dev/cu.usbmodem*). Round-1 bench: UART0 on GPIO 43/44
+            through the USB-TTL adapter (no USB connector populated) — also
+            the console/flash port, so the text console must be off
+            (CONFIG_ESP_CONSOLE_NONE) when UART0 carries the link.
+
+        config SIOT_SERIAL_LINK_UART0
+            bool "UART0 via the USB-UART bridge (GPIO 43/44)"
+        config SIOT_SERIAL_LINK_USB_SERIAL_JTAG
+            bool "Native USB-Serial-JTAG (GPIO 19/20)"
+    endchoice
+
+endmenu

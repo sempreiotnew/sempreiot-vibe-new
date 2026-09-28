@@ -1,0 +1,20 @@
+menu "SempreIoT identity (siot_identity)"
+
+    config SIOT_DEV_MODEL
+        string "Device model string"
+        default "SIOT-NODE-01"
+        help
+            Reported in /info and INSTALLATION and used to select the pin map
+            (siot_board_def, tools/pinmap/pinmap.yaml). A board image must use
+            a model starting with "SIOT-BOARD" so the installer app's wizard
+            recognises it (pocs/APP-BRIEF.md section 5).
+
+    config SIOT_FACTORY_PARTITION
+        string "NVS partition holding the factory identity"
+        default "nvs_factory"
+        help
+            Written once by tools/make_sticker.py + nvs_partition_gen.py,
+            read-only in firmware, survives a full erase of "nvs"
+            (OTA blueprint section 1, brief section 4.1).
+
+endmenu

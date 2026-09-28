@@ -1,0 +1,23 @@
+menu "SempreIoT sensors (siot_sensor)"
+
+    config SIOT_SENSOR_MOCK
+        bool "Mock backend (no detector hardware)"
+        default y
+        help
+            Scripted smoke / temperature / humidity values and a fixed battery
+            percentage, for devkits without the detector PCB
+            (docs/phases-development/phase2-leaf-brief.md section 3). The
+            real ADPD188BI / HDC2080 / ADC backend is the sensing phase.
+
+    config SIOT_SENSOR_MOCK_BATTERY_PCT
+        int "Mock battery percentage reported in HEARTBEAT / EVENT"
+        depends on SIOT_SENSOR_MOCK
+        default 100
+        range 0 100
+
+    config SIOT_SENSOR_MOCK_TEMP_X10
+        int "Mock temperature, tenths of a degree C"
+        depends on SIOT_SENSOR_MOCK
+        default 250
+
+endmenu

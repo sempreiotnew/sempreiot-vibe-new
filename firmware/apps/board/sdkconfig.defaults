@@ -1,0 +1,27 @@
+# sempreiot-board — from pocs/board/sdkconfig.defaults + OTA blueprint §1.2/§1.3.
+CONFIG_IDF_TARGET="esp32s3"
+
+# 8 MB flash, custom partition table (OTA blueprint §1.2).
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_board.csv"
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# mbedtls_hkdf() (RFC 5869) is not compiled in by default; the provisioning
+# envelope key derivation needs it (brief §7, POC-BRIEF §5).
+CONFIG_MBEDTLS_HKDF_C=y
+
+# The board's tablet-facing link is a raw SAFR byte stream: no console, no
+# secondary console, no bootloader log on either serial peripheral (brief §6.5).
+CONFIG_ESP_CONSOLE_NONE=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+CONFIG_BOOTLOADER_LOG_LEVEL_NONE=y
+# The link runs on UART0 (GPIO 43/44, USB-UART bridge) on every module, N4 or
+# N8R8 (decided 2026-09-27). Only sdkconfig.bench moves it to native USB,
+# because the text console takes UART0 there.
+CONFIG_SIOT_SERIAL_LINK_UART0=y
+
+# Identity: model string reported in /info and used to pick the pin map
+# (tools/pinmap/pinmap.yaml). "SIOT-BOARD" prefix = the app's wizard treats
+# the unit as the board (pocs/APP-BRIEF.md §5).
+CONFIG_SIOT_DEV_MODEL="SIOT-BOARD-01"
