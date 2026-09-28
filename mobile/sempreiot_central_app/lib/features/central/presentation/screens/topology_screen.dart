@@ -239,13 +239,24 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
     // shows one packet, which takes on the event colour if an event is in
     // the burst — the unit's LED shows one pulse too.
     final now = DateTime.now();
+    final uplink = tick.direction == SafrTrafficDirection.uplink;
     for (final d in _dots) {
       if (d.origin == tick.mac &&
-          d.uplink == (tick.direction == SafrTrafficDirection.uplink) &&
+          d.uplink == uplink &&
           now.difference(d.startedAt).inMilliseconds < 1200) {
         if (tick.severity > d.severity) {
           d.color = color;
           d.severity = tick.severity;
+        }
+        // The burst's first frame may not name a parent (NAME_ANNOUNCE) while
+        // a later one does (TOPOLOGY after a re-bind): re-route the packet
+        // while it is still on its first hop, so it never rides the old line.
+        final newPath = uplink ? path : path.reversed.toList();
+        final onFirstHop = d.progress * (d.path.length - 1) < 1.0;
+        if (tick.parentMac != null && onFirstHop && !_samePath(d.path, newPath)) {
+          d.path = newPath;
+          d.duration = Duration(
+              milliseconds: (leafRoutine || origin.isLeaf ? 700 : 550) * (newPath.length - 1));
         }
         return;
       }
@@ -744,6 +755,14 @@ class _ZoomControls extends StatelessWidget {
 
 // ── Traveling dot model ──────────────────────────────────────────────────────
 
+bool _samePath(List<String> a, List<String> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
 class _TrafficDot {
   _TrafficDot({
     required this.origin,
@@ -758,10 +777,10 @@ class _TrafficDot {
   final String origin;
   final bool uplink;
   int severity;
-  final List<String> path;
+  List<String> path;
   Color color;
   final DateTime startedAt;
-  final Duration duration;
+  Duration duration;
 
   double get progress {
     final elapsed = DateTime.now().difference(startedAt).inMilliseconds;

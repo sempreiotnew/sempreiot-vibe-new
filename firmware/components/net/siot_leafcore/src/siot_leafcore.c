@@ -567,8 +567,11 @@ static bool discover(void)
         ESP_LOGW(TAG, "no parent %s → COMM_FAULT (chirp)", n ? "with a path to the board (nodes heard, board not there yet)" : "in reach");
         return false;
     }
-    if (!s_rtc.announced && emit_name_announce()) s_rtc.announced = true;
+    /* TOPOLOGY first: the first frame after a bind names the new parent, so
+     * every receiver (board table, tablet map) re-homes the leaf on that
+     * frame; the name follows. */
     emit_topology();
+    if (!s_rtc.announced && emit_name_announce()) s_rtc.announced = true;
     return true;
 }
 
