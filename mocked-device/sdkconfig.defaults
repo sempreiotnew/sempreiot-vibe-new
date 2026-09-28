@@ -1,8 +1,0 @@
-# SAFR v2: UART0 carries raw binary frames — no console allowed on it.
-# The console VFS translates 0x0A -> 0x0D 0x0A on TX, which corrupted the
-# v1 binary stream (docs/protocol-safr-v2.md §2).
-# After editing this file: rm sdkconfig && idf.py reconfigure
-CONFIG_ESP_CONSOLE_NONE=y
-CONFIG_LOG_DEFAULT_LEVEL_NONE=y
-# Frame building nests mbedTLS CCM under the scheduler loop — keep headroom.
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
