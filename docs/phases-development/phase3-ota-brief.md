@@ -86,8 +86,11 @@ tablet in `DEVICE_TABLE` (format 1); the tablet stores and shows them. **The pro
 code (`family byte ‖ product byte`), not as the model string** — so wherever this brief says "model" on
 the wire (`OTA_ROLLOUT`'s `model_len ‖ model`, the `OTA_CONTROL` filter) read `product u16`, and wherever
 it says `family u8` (0 board · 1 node · 2 leaf) read the PRODUCT family byte (`0x01` · `0x02` · `0x03`).
-The draft rows above are to be rewritten that way when the OTA messages enter the protocol. Still open
-from this step: the board's own product and version are not in any frame yet.
+**The rows above are the 2026-09-28 draft; the layouts that count are protocol §13** (written
+2026-09-29), which differ where this note says and in three more places: the leaf image is addressed by
+its family like the others; `OTA_PUSH_RESULT` carries `PHASE` and `NEXT_SEQ` (it is also the resume
+answer); `OTA_RESULT` carries `AWAKE_S`. The board announces its own product and version with a
+`NAME_ANNOUNCE` after each `DEVICE_TABLE` it sends to a v3.5 tablet.
 
 ## 5. Steps (each ends with something you can see)
 
@@ -97,7 +100,7 @@ the evidence; none of them is needed for M1.
 
 | Step | What | You see | Status |
 |---|---|---|---|
-| **0. Spec + signing** | Protocol v3.5 (§4), host tests for every codec; dev signing key, stage-1 config on all three images, CI refuses an unsigned image; `NAME_ANNOUNCE` model + version; board table + tablet show model and version per unit | Rede sheet shows "SIOT-LEAF-01 · 0.1.0"; an unsigned `.bin` will not install | — |
+| **0. Spec + signing** | Protocol v3.5 (§4), host tests for every codec; dev signing key, stage-1 config on all three images, CI refuses an unsigned image; `NAME_ANNOUNCE` model + version; board table + tablet show model and version per unit | Rede sheet shows "SIOT-LEAF-01 · 0.1.0"; an unsigned `.bin` will not install | **Done in code 2026-09-29** — protocol §13 written; `siot_ota_proto` codecs + version rule, 8 host tests; stage-1 signing on the three images, key outside git (`docs/ota/signing-key.md`), `ci/check.sh` fails an unsigned image; product + version in `NAME_ANNOUNCE`, the board table and the tablet; the board announces itself. **Bench pending:** O1 needs step 1 (nothing installs over the air yet). Dart codecs for the push come with step 1 |
 | **1. Push over USB, any image** | `ota_usb` on the board (BEGIN / CHUNK / END, 921600 switch, resume, `OTA_PUSH_RESULT`): the board's **own** image goes to the inactive slot → verify, reboot, self-test §4.4, mark valid / rollback; a **node or leaf** image lands in `fw_store` (FAT, wear-levelled, `/fw/<family>.bin` + manifest) and is verified there. Tablet: pick a `.bin` (file; a release in step 5), push with progress + resume | The board reboots into a pushed board image and the tablet shows it; a broken one rolls back with `selftest_fail`; a pushed node image reads "staged on the board", visible at `http://192.168.4.1/fw/manifest.json` | — |
 | **2. Rollout to the intended units** | `ota_server` (HTTP on the installation AP, on only while a rollout runs); `ota_client` on the node (offer rules, pull via `esp_https_ota`, `project_name` + version check, reboot, self-test, result); `ota_scheduler` on the board (queue **filtered by model / zone / unit**, one at a time, root last, PAUSED on alarm, UPDATING, retries, `rollout.json` survives a reboot); `OTA_ROLLOUT` to the tablet and a **minimal rollout table + failure list** on the tablet (enough to run the bench checks; the full screen is step 3) | Two nodes update one after the other from one push, root last; a release for `SIOT-SIREN-01` leaves a `SIOT-PBS-01` untouched; the map shows UPDATING; an alarm pauses it; power cut mid-download → old firmware, retry | — |
 | **3. Tablet Atualização screen** | §6 in full | Release card, push progress, rollout table by model, failure feed persisted, pause / resume / abort, numbers | — |

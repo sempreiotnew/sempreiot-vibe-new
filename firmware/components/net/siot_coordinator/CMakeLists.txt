@@ -5,4 +5,5 @@
 idf_component_register(SRCS "src/siot_coordinator.c" "src/coord_installation.c" "src/coord_devtable.c" "src/coord_setup.c" "src/coord_admin.c"
                        INCLUDE_DIRS "include"
                        PRIV_REQUIRES esp_timer siot_safr siot_util siot_evbus siot_config siot_identity siot_link
-                                     siot_devtab siot_survey siot_provisioning esp_system)
+                                     siot_devtab siot_survey siot_provisioning esp_system
+                                     siot_board_def siot_version)

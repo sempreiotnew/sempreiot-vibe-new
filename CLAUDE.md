@@ -100,7 +100,9 @@ A schema change is not done until the reference says the same thing as the code.
 - `docs/others/system-blueprint-v1.md` — rules, vocabulary, installation, network formation, operation.
   Wins over every other doc except the protocol. `docs/others/app-sempreiot-central.md` — the Flutter
   app as it is.
-- `docs/ota/` — OTA + production blueprint, secure-signed-firmware how-to.
+- `docs/ota/` — OTA + production blueprint, secure-signed-firmware how-to, and **`signing-key.md`**: every
+  firmware image is signed with a key that lives **outside the repository**
+  (`~/.sempreiot/keys/`, or `SIOT_SIGNING_KEY`); never commit a key, never build a release unsigned.
 - `docs/spec/` — PCB GPIO maps (central, detector).
 - `docs/phases-development/firmware-phase1-network-brief_3.md` — what Phase 1 of the product firmware
   builds, the `firmware/` tree, exit checklist, open items, implementation order.

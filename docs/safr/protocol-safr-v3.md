@@ -17,8 +17,9 @@ here. Do **not** keep divergent layout comments in code — cite this file inste
   button verdict and the 2-minute setup window — all additive, `VER` unchanged. Revision **3.5**
   (2026-09-29, first part) adds the **unit identity**: `PRODUCT` ‖ `HW_REV` ‖ `FW` appended to
   `NAME_ANNOUNCE` (§7.11) and, on request, to every `DEVICE_TABLE` entry (§7.12, `GET_DEVICE_TABLE`
-  format byte); a leaf's `MSG_ID` continues across wakes (§12.2) — additive, `VER` unchanged. The OTA
-  messages of 3.5 follow with `docs/phases-development/phase3-ota-brief.md`.
+  format byte), the board announcing itself; a leaf's `MSG_ID` continues across wakes (§12.2); and the
+  **firmware update messages** (§13: push to the board, offer / status / result, rollout table) —
+  additive, `VER` unchanged.
 - Status: implemented (uplink + downlink + journal backfill); v3.2 additions: implemented, bench pending;
   v3.3: implemented; **v3.4: specified, firmware Phase 2 (`docs/phases-development/phase2-leaf-brief.md`)**
 - Supersedes: SAFR v2 (`VER = 0x02` — decode-only for stored packets) and
@@ -697,8 +698,11 @@ and uses it for the unsolicited push too; a pre-v3.5 tablet never sends the
 byte and keeps receiving the v3.2 entries. A pre-v3.5 board ignores the byte
 and answers with bit 7 clear. The board learns the fields from each unit's
 `NAME_ANNOUNCE` and keeps them in its device table (NVS), written only when
-they change. **Not in the table yet:** the board itself (its own product and
-version reach the tablet with the OTA messages).
+they change. **The board is not an entry of its own table:** after the pages
+of a `format = 1` request it sends **its own `NAME_ANNOUNCE`** (§7.11) on the
+serial link — its name and zone, `ROLE = 0xFF` (it has no mesh role), and its
+`PRODUCT`, `HW_REV` and `FW`. That is how the tablet knows what the board runs,
+before and after the board updates itself (§13.3).
 
 ### 7.13 CODE — `MSG_TYPE 0x0C` (uplink, board → central, **setup channel only**) — variable, ≤ 90 bytes
 
@@ -1201,6 +1205,163 @@ EN 54-25 ≥ 3 years — verify against the purchased editions) is therefore a
 **hardware + cadence decision (POC D)**, not a protocol one. What the protocol
 guarantees is that a wake costs one frame and one ACK, and that nothing but the
 alarm keeps the radio on.
+
+---
+
+## 13. Firmware update *(v3.5, 2026-09-29)*
+
+The messages that carry a firmware image from the tablet to the board and
+from the board to every unit. Design and reasons: `docs/ota/ota-and-production-blueprint-v1.md`
+§3–§4; plan and bench checklist: `docs/phases-development/phase3-ota-brief.md`.
+**Status: specified; codecs written and host-tested (`siot_ota_proto`,
+`test_ota_proto.c`); no transfer, scheduler or client exists yet** (brief
+steps 1 and 2). All additive, `VER` unchanged: a unit that does not know a
+message answers nothing (`NO_HANDLER`) and a board treats that as "cannot be
+updated over the air".
+
+### 13.1 Rules
+
+1. **Three images, by family** (§7.11): `0x01` board, `0x02` node, `0x03`
+   leaf. An image is installed only by a unit of its family
+   (`esp_app_desc_t.project_name` = `sempreiot-board` / `-node` / `-leaf`).
+   The **product** never selects an image; it selects which units a rollout
+   reaches (§13.6).
+2. **Every image is signed** and a unit refuses one that is not signed by the
+   key it trusts (`docs/ota/signing-key.md`). Nothing in this section replaces
+   that check: `SHA256` and `CRC32` below detect damage, the signature detects
+   forgery.
+3. **The tablet never talks to a unit about firmware.** It pushes to the board
+   and steers the rollout; the board offers, the unit pulls over HTTP from the
+   board (`http://<gateway>/fw/<family>.bin` on the installation network).
+4. **Alarms win.** A unit in alarm or trouble refuses an offer
+   (`BUSY_ALARM`); a rollout pauses while any alarm is latched on the site.
+5. **One unit at a time, the root last**; a battery unit is never queued, it
+   is offered the image in its parent's ACK (§13.5).
+
+### 13.2 Version
+
+ASCII, at most 24 bytes, `LEN ‖ bytes` on the wire:
+`MAJOR.MINOR.PATCH`, optionally `-PRERELEASE` (letters, digits, `.` and `-`);
+anything after `+` is build metadata and is ignored. One version per
+**release** = the three images built from one tag (`firmware/VERSION`).
+
+Order: numbers compare as numbers (`0.2.0 < 0.10.0`); a pre-release is older
+than its release (`0.2.0-dev < 0.2.0`); two pre-releases of the same number
+compare as text. **A unit installs an image only if `offered > running`.**
+`FLAGS` bit 0 `FORCE` lifts that rule for the bench (a downgrade, the same
+version again); a production build answers `FORCE_REFUSED`. A unit that
+cannot read its own version accepts.
+
+### 13.3 Push to the board (serial link only, never relayed)
+
+| Message | `MSG_TYPE` | Dir | Payload |
+|---|---|---|---|
+| `OTA_PUSH_BEGIN` | `0x0F` | ↓ `F_ACK_REQ` | `FAMILY u8 ‖ SIZE u32 ‖ SHA256[32] ‖ CHUNK u16 ‖ FLAGS u8 ‖ VER_LEN u8 ‖ VERSION` |
+| `OTA_PUSH_CHUNK` | `0x10` | ↓ `F_ACK_REQ` | `SEQ u32 ‖ LEN u16 ‖ CRC32 u32`, **then `LEN` raw bytes on the wire, outside the frame** |
+| `OTA_PUSH_END` | `0x11` | ↓ `F_ACK_REQ` | — |
+| `OTA_PUSH_RESULT` | `0x12` | ↑ | `PHASE u8 ‖ REASON u8 ‖ FAMILY u8 ‖ NEXT_SEQ u32 ‖ VER_LEN u8 ‖ VERSION` |
+| `OTA_BAUD` | `COMMAND 0x1A` | ↓ | `BAUD u32` |
+
+- `SIZE` = the signed `.bin` in bytes; `SHA256` = of that file; `CHUNK` =
+  bytes per chunk, 1…4096 (4096 is the design value); the last chunk is
+  shorter. `SEQ` counts from 0.
+- **Where it goes:** `FAMILY 0x01` → the board's inactive app slot;
+  `0x02` / `0x03` → `/fw/node.bin` / `/fw/leaf.bin` in `fw_store`.
+- **Why the data is outside the frame:** a frame holds 202 payload bytes; a
+  900 KB image would be ≈ 4 800 acknowledged frames. The 10-byte header is
+  encrypted and authenticated like any frame; the raw bytes that follow are
+  covered by `CRC32` (IEEE 802.3, check value `0xCBF43926`), then by `SHA256`
+  over the whole image, then by the signature. After a valid `OTA_PUSH_CHUNK`
+  the receiver reads exactly `LEN` bytes as data — they are not scanned for
+  `SOF`.
+- **Acknowledgement:** the board ACKs `BEGIN`, every `CHUNK` and `END` (§7.5).
+  ACK `ERROR`: `BAD_CRC` → the tablet sends the same chunk again;
+  `OUT_OF_ORDER` → the board also sends `OTA_PUSH_RESULT {RECEIVING,
+  NEXT_SEQ}` and the tablet continues from `NEXT_SEQ`.
+- **Resume:** a `BEGIN` with the `FAMILY`, `SIZE` and `SHA256` of a transfer
+  the board already holds part of is answered with `OTA_PUSH_RESULT
+  {RECEIVING, NEXT_SEQ = first chunk it lacks}`. Anything else starts at 0.
+- **`END`:** the board checks `SHA256`, the signature and `project_name`, then
+  answers `OTA_PUSH_RESULT`: `PHASE 1` (OK) or `2` (FAILED) with `REASON`. For
+  its own image it then reboots into it, runs the self-test and confirms or
+  rolls back; the tablet learns the outcome from the board's next
+  `NAME_ANNOUNCE` (§7.11: the version it runs).
+- **`OTA_BAUD`:** the board ACKs at the current speed, then switches; the
+  tablet switches after the ACK. 20 s of silence at the new speed → both fall
+  back to 115200 (§9.3). 921600 is the design value.
+- `PHASE`: `0` receiving · `1` ok · `2` failed.
+
+### 13.4 Offer, progress and result (mesh)
+
+| Message | How it travels | Dir | Payload |
+|---|---|---|---|
+| `OTA_OFFER` | `COMMAND 0x1B`, `DST_MAC` = one unit, `F_ACK_REQ` | ↓ | `FAMILY u8 ‖ SIZE u32 ‖ SHA256[32] ‖ DEADLINE_S u16 ‖ FLAGS u8 ‖ VER_LEN u8 ‖ VERSION` |
+| `OTA_STATUS` | `MSG_TYPE 0x13` | ↑ | `STATE u8 ‖ PERCENT u8` |
+| `OTA_RESULT` | `MSG_TYPE 0x14`, `F_ACK_REQ` | ↑ | `OK u8 ‖ REASON u8 ‖ AWAKE_S u16 ‖ VER_LEN u8 ‖ VERSION` |
+
+- The unit ACKs the offer at once: `OK` = it will pull; `ERROR` = refused,
+  followed by `OTA_RESULT {OK = 0, REASON}`. Refusals: `WRONG_FAMILY`,
+  `NOT_NEWER`, `BUSY_ALARM`, `LOW_BATTERY`, `FORCE_REFUSED`, `BAD_VERSION`.
+- `DEADLINE_S` (design value 300): for that long the board shows the unit as
+  **UPDATING**, not missing (§9.2) — the only exception to supervision.
+- `OTA_STATUS`: on every state change and every 10 % while downloading; never
+  acknowledged, never retried. `STATE`: `0` waiting · `1` offered ·
+  `2` downloading · `3` verifying · `4` rebooting · `5` self-test · `6` done ·
+  `7` failed · `8` skipped.
+- `OTA_RESULT`: once per offer, by the image that is running when the matter
+  is settled — the new one after its self-test passed (`OK = 1`), or the old
+  one after a refusal, a failed download or a rollback (`OK = 0`,
+  `SELFTEST_FAIL`). `VERSION` = what the unit runs **now**. `AWAKE_S` =
+  seconds a battery unit stayed awake for this update, `0` on a mains unit.
+  The board journals it; the tablet keeps it (§13.6).
+
+### 13.5 Battery units *(brief step 4 — layout reserved, not final)*
+
+A leaf is offered the image in the **leaf ACK** (§12.4), which is versioned by
+its length: bytes after the 9 known ones are
+`SIZE u32 ‖ SHA256[32] ‖ FLAGS u8 ‖ VER_LEN u8 ‖ VERSION`. Never a mailbox
+frame. A leaf pulls on that wake if its battery is ≥ 60 %, it is not in
+alarm and the version is newer; it answers `OTA_RESULT` through its parent.
+
+### 13.6 Rollout (serial link, board ↔ tablet)
+
+| Message | How it travels | Dir | Payload |
+|---|---|---|---|
+| `OTA_CONTROL` | `COMMAND 0x1D`, `F_ACK_REQ` | ↓ | `ACTION u8 ‖ FAMILY u8 ‖ FILTER u8 ‖ filter data` |
+| `GET_ROLLOUT` | `COMMAND 0x1C` | ↓ | `PAGE u8` (`0` = all pages) |
+| `OTA_ROLLOUT` | `MSG_TYPE 0x15` | ↑ | header, then `COUNT` entries |
+
+`ACTION`: `1` start · `2` pause · `3` resume · `4` abort.
+`FILTER`: `0` all units of the family (no data) · `1` one product
+(`PRODUCT u16`, which must belong to `FAMILY`) · `2` one zone
+(`ZONE_LEN u8 ‖ ZONE`) · `3` one unit (`MAC[6]`, never broadcast).
+"Update only the sirens" = `{start, 0x02, 1, 0x0201}`: a push-button station
+runs the same node image and is left alone.
+
+`OTA_ROLLOUT` header: `PAGE u8 ‖ PAGE_COUNT u8 ‖ TOTAL u16 ‖ COUNT u8 ‖
+STATE u8 ‖ FAMILY u8 ‖ VER_LEN u8 ‖ TARGET`. `STATE`: `0` idle · `1` staged ·
+`2` rolling · `3` paused · `4` done · `5` partial (some unit failed).
+
+Each entry: `MAC[6] ‖ PRODUCT u16 ‖ STATE u8 ‖ PERCENT u8 ‖ ATTEMPTS u8 ‖
+REASON u8 ‖ AGE_S u16 ‖ VER_LEN u8 ‖ VERSION` — `STATE` as in `OTA_STATUS`,
+`AGE_S` = seconds since this entry last changed (`0xFFFF` never), `VERSION` =
+what the unit runs now. 15 to 39 bytes: at least 4 entries per page.
+
+Sent in reply to `GET_ROLLOUT`, on every change, and every 5 s while
+`rolling`.
+
+### 13.7 `REASON`
+
+| | | | |
+|---|---|---|---|
+| `0` none | `1` `NOT_NEWER` | `2` `BUSY_ALARM` | `3` `LOW_BATTERY` |
+| `4` `SIG_FAIL` | `5` `SHA_FAIL` | `6` `WRONG_FAMILY` | `7` `NO_SPACE` |
+| `8` `HTTP_ERR` | `9` `SELFTEST_FAIL` | `10` `TIMED_OUT` | `11` `ABORTED` |
+| `12` `BAD_ARGS` | `13` `BUSY` | `14` `BAD_CRC` | `15` `OUT_OF_ORDER` |
+| `16` `BAD_VERSION` | `17` `FORCE_REFUSED` | | |
+
+An ACK `ERROR` to any message of this section carries the `REASON` in its
+`DETAIL` byte. A reason is never renumbered.
 
 ---
 

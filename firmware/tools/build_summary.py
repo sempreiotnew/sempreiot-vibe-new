@@ -58,6 +58,11 @@ def main():
     with open(os.path.join(build, "flasher_args.json")) as f:
         fa = json.load(f)
     flash_size_str = fa["flash_settings"]["flash_size"]        # "4MB" / "8MB"
+    if flash_size_str == "keep":
+        # Signed images (docs/ota/signing-key.md): esptool is told to keep the
+        # flash size of the image header, so the number is in the config.
+        with open(os.path.join(build, "config", "sdkconfig.json")) as f:
+            flash_size_str = json.load(f)["ESPTOOLPY_FLASHSIZE"]
     flash_total = int(flash_size_str.rstrip("B").rstrip("M")) << 20
     files = {int(off, 16): rel for off, rel in fa["flash_files"].items()}
     sizes = {off: os.path.getsize(os.path.join(build, rel)) for off, rel in files.items()}

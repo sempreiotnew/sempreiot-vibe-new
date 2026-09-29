@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 
 #include "coord_internal.h"
+#include "siot_board_def.h"
 #include "siot_config.h"
 #include "siot_devtab.h"
 #include "siot_evbus.h"
@@ -17,6 +18,7 @@
 #include "siot_safr.h"
 #include "siot_survey.h"
 #include "siot_util.h"
+#include "siot_version.h"
 
 static const char *TAG = "siot_coord";
 
@@ -215,6 +217,26 @@ static void send_installation(const uint8_t dst[6], int64_t t)
     send_to_tablet(SAFR_MSG_INSTALLATION, dst, 0, p, plen);
 }
 
+/* The board's own identity (spec §7.11, v3.5): it is not an entry of its own
+ * device table, so it tells the tablet what it is and what it runs with the
+ * same frame every unit uses. ROLE 0xFF: the board has no mesh role. */
+static void send_board_announce(const uint8_t dst[6])
+{
+    const siot_installation_t *code = siot_config_code();
+    uint8_t p[1 + SIOT_NAME_MAX_LEN + 1 + SIOT_ZONE_MAX_LEN + 1 + SAFR_PRODUCT_MAX_LEN];
+    const uint8_t name_len = (uint8_t)strnlen(code->name, SIOT_NAME_MAX_LEN);
+    const uint8_t zone_len = (uint8_t)strnlen(code->zone, SIOT_ZONE_MAX_LEN);
+    size_t off = 0;
+    p[off++] = name_len;
+    memcpy(&p[off], code->name, name_len); off += name_len;
+    p[off++] = zone_len;
+    memcpy(&p[off], code->zone, zone_len); off += zone_len;
+    p[off++] = SIOT_DEV_ROLE_UNKNOWN;
+    off += siot_safr_put_product(&p[off], siot_board_def_product(), siot_board_def()->hw_rev,
+                                 siot_version_string());
+    send_to_tablet(SAFR_MSG_NAME_ANNOUNCE, dst, 0, p, off);
+}
+
 /* The layout the tablet on the link understands: set by its last
  * GET_DEVICE_TABLE (format byte, v3.5) and used for the unsolicited push too.
  * A pre-v3.5 tablet never sends the byte and keeps getting the v3.2 entries. */
@@ -373,6 +395,7 @@ static bool handle_lifecycle_command(const siot_safr_frame_t *f, const uint8_t *
     case SAFR_CMD_GET_DEVICE_TABLE:
         s_dt_product = alen >= 2 && a[1] == 1; /* v3.5 format byte; absent = v3.2 entries */
         send_device_table(alen >= 1 ? a[0] : 0, f->src_mac, t);
+        if (s_dt_product) send_board_announce(f->src_mac); /* a v3.5 tablet: and this is me */
         return true;
 
     case SAFR_CMD_SET_DEVICE: {

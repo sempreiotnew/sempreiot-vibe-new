@@ -15,5 +15,9 @@ list(APPEND EXTRA_COMPONENT_DIRS
 file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../../VERSION" PROJECT_VER LIMIT_COUNT 1)
 string(STRIP "${PROJECT_VER}" PROJECT_VER)
 
+# Every image is signed (stage 1, OTA brief decision 8); the key lives outside
+# the repository — docs/ota/signing-key.md.
+include("${CMAKE_CURRENT_LIST_DIR}/../../tools/cmake/siot_signing.cmake")
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(sempreiot-leaf)

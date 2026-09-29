@@ -3,6 +3,7 @@
 #
 #   1. idf.py build apps/board, apps/node and apps/leaf (esp32s3, ESP-IDF v5.5.2)
 #   2. fail if sempreiot-node.bin or sempreiot-leaf.bin > 1.75 MB (OTA blueprint §1.1)
+#      and if any image is not signed with the key in use (docs/ota/signing-key.md)
 #   3. build test/host for the linux target and run the Unity tests
 #
 # Usage: ci/check.sh            (from anywhere; uses ~/.espressif/tools/activate_idf_v5.5.2.sh)
@@ -60,6 +61,15 @@ log "sempreiot-leaf.bin = $LEAF_BYTES bytes (limit $NODE_MAX_BYTES)"
 (( LEAF_BYTES <= NODE_MAX_BYTES )) || fail "leaf image $LEAF_BYTES B exceeds 1.75 MB"
 BOARD_BYTES=$(wc -c < "$FW_DIR/apps/board/build/sempreiot-board.bin" | tr -d ' ')
 log "sempreiot-board.bin = $BOARD_BYTES bytes"
+
+# Every image that could be released is signed (docs/ota/signing-key.md): an
+# unsigned or wrongly signed .bin fails the gate here, before it reaches a unit.
+for img in board/build/sempreiot-board.bin board/build-4mb/sempreiot-board.bin \
+           node/build/sempreiot-node.bin leaf/build/sempreiot-leaf.bin; do
+    log "signature of apps/$img"
+    "$FW_DIR/tools/signing_key.sh" verify "$FW_DIR/apps/$img" > /dev/null 2>&1 \
+        || fail "apps/$img is not signed with the key in use (tools/signing_key.sh status)"
+done
 
 log "build test/host (linux target)"
 ( cd "$FW_DIR/test/host"

@@ -56,6 +56,14 @@ extern "C" {
 #define SAFR_MSG_CODE           0x0C /* v3.2 -- spec §7.13 (setup channel only) */
 #define SAFR_MSG_PARENT_PROBE   0x0D /* v3.2 -- spec §7.14 (ESP-NOW) */
 #define SAFR_MSG_PARENT_OFFER   0x0E /* v3.2 -- spec §7.15 (ESP-NOW) */
+/* v3.5 firmware update -- spec §13; codecs in siot_ota_proto */
+#define SAFR_MSG_OTA_PUSH_BEGIN  0x0F /* tablet → board, serial only */
+#define SAFR_MSG_OTA_PUSH_CHUNK  0x10 /* tablet → board, serial only; raw bytes follow the frame */
+#define SAFR_MSG_OTA_PUSH_END    0x11 /* tablet → board, serial only */
+#define SAFR_MSG_OTA_PUSH_RESULT 0x12 /* board → tablet */
+#define SAFR_MSG_OTA_STATUS      0x13 /* unit → board */
+#define SAFR_MSG_OTA_RESULT      0x14 /* unit → board, F_ACK_REQ */
+#define SAFR_MSG_OTA_ROLLOUT     0x15 /* board → tablet, paged */
 
 /* FLAGS */
 #define SAFR_F_ENC      0x01
@@ -137,6 +145,10 @@ extern "C" {
 #define SAFR_CMD_FORGET_DEVICE    0x17 /* v3.2 -- board only, retired entries */
 #define SAFR_CMD_GET_DEVICE_TABLE 0x18 /* v3.2 -- board only: page u8 (0 = all) */
 #define SAFR_CMD_GET_CODE         0x19 /* v3.2 -- setup channel only, provisioned board */
+#define SAFR_CMD_OTA_BAUD         0x1A /* v3.5 -- board only: baud u32 for the push (§13.3) */
+#define SAFR_CMD_OTA_OFFER        0x1B /* v3.5 -- board → one unit (§13.4) */
+#define SAFR_CMD_GET_ROLLOUT      0x1C /* v3.5 -- board only: page u8 (0 = all) */
+#define SAFR_CMD_OTA_CONTROL      0x1D /* v3.5 -- board only: start / pause / resume / abort */
 
 /* PARENT_PROBE / PARENT_OFFER purpose (spec §7.14) */
 #define SAFR_PROBE_PARENT 0x00

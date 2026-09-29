@@ -122,11 +122,18 @@ if [[ ! -f "$STICKER_PNG" && -f "$TOOLS_DIR/stickers/$STICKER_ID/sticker.json" ]
 fi
 
 # Everything idf.py flash would write, as "offset file" pairs, plus flash settings.
-read -r FLASH_SIZE FLASH_MODE FLASH_FREQ < <(python3 - "$BUILD/flasher_args.json" <<'PY'
-import json, sys
-d = json.load(open(sys.argv[1]))
-s = d["flash_settings"]
-print(s["flash_size"], s["flash_mode"], s["flash_freq"])
+# A signed build (docs/ota/signing-key.md) tells esptool to "keep" the flash size written in
+# the image header: ESPTOOL_FLASH_SIZE is what esptool is given, FLASH_SIZE is the build's
+# real size (from its config), used for the check against the chip and for the messages.
+read -r ESPTOOL_FLASH_SIZE FLASH_SIZE FLASH_MODE FLASH_FREQ < <(python3 - "$BUILD" <<'PY'
+import json, os, sys
+b = sys.argv[1]
+s = json.load(open(os.path.join(b, "flasher_args.json")))["flash_settings"]
+size = s["flash_size"]
+real = size
+if size == "keep":
+    real = json.load(open(os.path.join(b, "config", "sdkconfig.json")))["ESPTOOLPY_FLASHSIZE"]
+print(size, real, s["flash_mode"], s["flash_freq"])
 PY
 )
 FLASH_FILES=$(python3 - "$BUILD/flasher_args.json" <<'PY'
@@ -169,7 +176,7 @@ fi
 args=()
 while read -r off f; do args+=("$off" "$BUILD/$f"); done <<< "$FLASH_FILES"
 python3 -m esptool --chip esp32s3 -p "$PORT" -b 460800 --before default_reset --after hard_reset \
-    write_flash --flash_mode "$FLASH_MODE" --flash_size "$FLASH_SIZE" --flash_freq "$FLASH_FREQ" \
+    write_flash --flash_mode "$FLASH_MODE" --flash_size "$ESPTOOL_FLASH_SIZE" --flash_freq "$FLASH_FREQ" \
     "${args[@]}" "$NVS_FACTORY_OFF" "$STICKER_BIN"
 
 echo "flashed sempreiot-$APP ($FLASH_SIZE, $MODULE) + identity $STICKER_ID on $PORT"
