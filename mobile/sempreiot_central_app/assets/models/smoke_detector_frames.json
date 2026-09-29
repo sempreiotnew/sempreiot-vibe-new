@@ -1,0 +1,1552 @@
+{
+ "size": 160,
+ "yaws": [
+  0,
+  15,
+  30,
+  45,
+  60,
+  75,
+  90,
+  105,
+  120,
+  135,
+  150,
+  165,
+  180,
+  195,
+  210,
+  225,
+  240,
+  255,
+  270,
+  285,
+  300,
+  315,
+  330,
+  345
+ ],
+ "pitches": [
+  -15,
+  0,
+  15,
+  30,
+  45,
+  60,
+  75
+ ],
+ "frames": [
+  {
+   "yaw": 0,
+   "pitch": -15,
+   "led": [
+    0.5,
+    0.651
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 15,
+   "pitch": -15,
+   "led": [
+    0.4659,
+    0.6522
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 30,
+   "pitch": -15,
+   "led": [
+    0.4341,
+    0.6556
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 45,
+   "pitch": -15,
+   "led": [
+    0.4067,
+    0.661
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 60,
+   "pitch": -15,
+   "led": [
+    0.3858,
+    0.6681
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 75,
+   "pitch": -15,
+   "led": [
+    0.3726,
+    0.6763
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 90,
+   "pitch": -15,
+   "led": [
+    0.3681,
+    0.6851
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 105,
+   "pitch": -15,
+   "led": [
+    0.3726,
+    0.694
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 120,
+   "pitch": -15,
+   "led": [
+    0.3858,
+    0.7022
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 135,
+   "pitch": -15,
+   "led": [
+    0.4067,
+    0.7093
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 150,
+   "pitch": -15,
+   "led": [
+    0.4341,
+    0.7147
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 165,
+   "pitch": -15,
+   "led": [
+    0.4659,
+    0.7181
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 180,
+   "pitch": -15,
+   "led": [
+    0.5,
+    0.7193
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 195,
+   "pitch": -15,
+   "led": [
+    0.5341,
+    0.7181
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 210,
+   "pitch": -15,
+   "led": [
+    0.5659,
+    0.7147
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 225,
+   "pitch": -15,
+   "led": [
+    0.5933,
+    0.7093
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 240,
+   "pitch": -15,
+   "led": [
+    0.6142,
+    0.7022
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 255,
+   "pitch": -15,
+   "led": [
+    0.6274,
+    0.694
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 270,
+   "pitch": -15,
+   "led": [
+    0.6319,
+    0.6851
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 285,
+   "pitch": -15,
+   "led": [
+    0.6274,
+    0.6763
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 300,
+   "pitch": -15,
+   "led": [
+    0.6142,
+    0.6681
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 315,
+   "pitch": -15,
+   "led": [
+    0.5933,
+    0.661
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 330,
+   "pitch": -15,
+   "led": [
+    0.5659,
+    0.6556
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 345,
+   "pitch": -15,
+   "led": [
+    0.5341,
+    0.6522
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 0,
+   "pitch": 0,
+   "led": [
+    0.5,
+    0.6917
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 15,
+   "pitch": 0,
+   "led": [
+    0.4659,
+    0.6917
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 30,
+   "pitch": 0,
+   "led": [
+    0.4341,
+    0.6917
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 45,
+   "pitch": 0,
+   "led": [
+    0.4067,
+    0.6917
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 60,
+   "pitch": 0,
+   "led": [
+    0.3858,
+    0.6917
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 75,
+   "pitch": 0,
+   "led": [
+    0.3726,
+    0.6917
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 90,
+   "pitch": 0,
+   "led": [
+    0.3681,
+    0.6917
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 105,
+   "pitch": 0,
+   "led": [
+    0.3726,
+    0.6917
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 120,
+   "pitch": 0,
+   "led": [
+    0.3858,
+    0.6917
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 135,
+   "pitch": 0,
+   "led": [
+    0.4067,
+    0.6917
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 150,
+   "pitch": 0,
+   "led": [
+    0.4341,
+    0.6917
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 165,
+   "pitch": 0,
+   "led": [
+    0.4659,
+    0.6917
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 180,
+   "pitch": 0,
+   "led": [
+    0.5,
+    0.6917
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 195,
+   "pitch": 0,
+   "led": [
+    0.5341,
+    0.6917
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 210,
+   "pitch": 0,
+   "led": [
+    0.5659,
+    0.6917
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 225,
+   "pitch": 0,
+   "led": [
+    0.5933,
+    0.6917
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 240,
+   "pitch": 0,
+   "led": [
+    0.6142,
+    0.6917
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 255,
+   "pitch": 0,
+   "led": [
+    0.6274,
+    0.6917
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 270,
+   "pitch": 0,
+   "led": [
+    0.6319,
+    0.6917
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 285,
+   "pitch": 0,
+   "led": [
+    0.6274,
+    0.6917
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 300,
+   "pitch": 0,
+   "led": [
+    0.6142,
+    0.6917
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 315,
+   "pitch": 0,
+   "led": [
+    0.5933,
+    0.6917
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 330,
+   "pitch": 0,
+   "led": [
+    0.5659,
+    0.6917
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 345,
+   "pitch": 0,
+   "led": [
+    0.5341,
+    0.6917
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 0,
+   "pitch": 15,
+   "led": [
+    0.5,
+    0.7193
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 15,
+   "pitch": 15,
+   "led": [
+    0.4659,
+    0.7181
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 30,
+   "pitch": 15,
+   "led": [
+    0.4341,
+    0.7147
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 45,
+   "pitch": 15,
+   "led": [
+    0.4067,
+    0.7093
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 60,
+   "pitch": 15,
+   "led": [
+    0.3858,
+    0.7022
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 75,
+   "pitch": 15,
+   "led": [
+    0.3726,
+    0.694
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 90,
+   "pitch": 15,
+   "led": [
+    0.3681,
+    0.6851
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 105,
+   "pitch": 15,
+   "led": [
+    0.3726,
+    0.6763
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 120,
+   "pitch": 15,
+   "led": [
+    0.3858,
+    0.6681
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 135,
+   "pitch": 15,
+   "led": [
+    0.4067,
+    0.661
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 150,
+   "pitch": 15,
+   "led": [
+    0.4341,
+    0.6556
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 165,
+   "pitch": 15,
+   "led": [
+    0.4659,
+    0.6522
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 180,
+   "pitch": 15,
+   "led": [
+    0.5,
+    0.651
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 195,
+   "pitch": 15,
+   "led": [
+    0.5341,
+    0.6522
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 210,
+   "pitch": 15,
+   "led": [
+    0.5659,
+    0.6556
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 225,
+   "pitch": 15,
+   "led": [
+    0.5933,
+    0.661
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 240,
+   "pitch": 15,
+   "led": [
+    0.6142,
+    0.6681
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 255,
+   "pitch": 15,
+   "led": [
+    0.6274,
+    0.6763
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 270,
+   "pitch": 15,
+   "led": [
+    0.6319,
+    0.6851
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 285,
+   "pitch": 15,
+   "led": [
+    0.6274,
+    0.694
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 300,
+   "pitch": 15,
+   "led": [
+    0.6142,
+    0.7022
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 315,
+   "pitch": 15,
+   "led": [
+    0.5933,
+    0.7093
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 330,
+   "pitch": 15,
+   "led": [
+    0.5659,
+    0.7147
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 345,
+   "pitch": 15,
+   "led": [
+    0.5341,
+    0.7181
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 0,
+   "pitch": 30,
+   "led": [
+    0.5,
+    0.7319
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 15,
+   "pitch": 30,
+   "led": [
+    0.4659,
+    0.7297
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 30,
+   "pitch": 30,
+   "led": [
+    0.4341,
+    0.7231
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 45,
+   "pitch": 30,
+   "led": [
+    0.4067,
+    0.7126
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 60,
+   "pitch": 30,
+   "led": [
+    0.3858,
+    0.699
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 75,
+   "pitch": 30,
+   "led": [
+    0.3726,
+    0.6831
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 90,
+   "pitch": 30,
+   "led": [
+    0.3681,
+    0.666
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 105,
+   "pitch": 30,
+   "led": [
+    0.3726,
+    0.6489
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 120,
+   "pitch": 30,
+   "led": [
+    0.3858,
+    0.633
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 135,
+   "pitch": 30,
+   "led": [
+    0.4067,
+    0.6194
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 150,
+   "pitch": 30,
+   "led": [
+    0.4341,
+    0.6089
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 165,
+   "pitch": 30,
+   "led": [
+    0.4659,
+    0.6023
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 180,
+   "pitch": 30,
+   "led": [
+    0.5,
+    0.6001
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 195,
+   "pitch": 30,
+   "led": [
+    0.5341,
+    0.6023
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 210,
+   "pitch": 30,
+   "led": [
+    0.5659,
+    0.6089
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 225,
+   "pitch": 30,
+   "led": [
+    0.5933,
+    0.6194
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 240,
+   "pitch": 30,
+   "led": [
+    0.6142,
+    0.633
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 255,
+   "pitch": 30,
+   "led": [
+    0.6274,
+    0.6489
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 270,
+   "pitch": 30,
+   "led": [
+    0.6319,
+    0.666
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 285,
+   "pitch": 30,
+   "led": [
+    0.6274,
+    0.6831
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 300,
+   "pitch": 30,
+   "led": [
+    0.6142,
+    0.699
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 315,
+   "pitch": 30,
+   "led": [
+    0.5933,
+    0.7126
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 330,
+   "pitch": 30,
+   "led": [
+    0.5659,
+    0.7231
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 345,
+   "pitch": 30,
+   "led": [
+    0.5341,
+    0.7297
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 0,
+   "pitch": 45,
+   "led": [
+    0.5,
+    0.7288
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 15,
+   "pitch": 45,
+   "led": [
+    0.4659,
+    0.7256
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 30,
+   "pitch": 45,
+   "led": [
+    0.4341,
+    0.7163
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 45,
+   "pitch": 45,
+   "led": [
+    0.4067,
+    0.7015
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 60,
+   "pitch": 45,
+   "led": [
+    0.3858,
+    0.6822
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 75,
+   "pitch": 45,
+   "led": [
+    0.3726,
+    0.6597
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 90,
+   "pitch": 45,
+   "led": [
+    0.3681,
+    0.6355
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 105,
+   "pitch": 45,
+   "led": [
+    0.3726,
+    0.6114
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 120,
+   "pitch": 45,
+   "led": [
+    0.3858,
+    0.5889
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 135,
+   "pitch": 45,
+   "led": [
+    0.4067,
+    0.5696
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 150,
+   "pitch": 45,
+   "led": [
+    0.4341,
+    0.5548
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 165,
+   "pitch": 45,
+   "led": [
+    0.4659,
+    0.5455
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 180,
+   "pitch": 45,
+   "led": [
+    0.5,
+    0.5423
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 195,
+   "pitch": 45,
+   "led": [
+    0.5341,
+    0.5455
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 210,
+   "pitch": 45,
+   "led": [
+    0.5659,
+    0.5548
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 225,
+   "pitch": 45,
+   "led": [
+    0.5933,
+    0.5696
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 240,
+   "pitch": 45,
+   "led": [
+    0.6142,
+    0.5889
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 255,
+   "pitch": 45,
+   "led": [
+    0.6274,
+    0.6114
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 270,
+   "pitch": 45,
+   "led": [
+    0.6319,
+    0.6355
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 285,
+   "pitch": 45,
+   "led": [
+    0.6274,
+    0.6597
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 300,
+   "pitch": 45,
+   "led": [
+    0.6142,
+    0.6822
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 315,
+   "pitch": 45,
+   "led": [
+    0.5933,
+    0.7015
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 330,
+   "pitch": 45,
+   "led": [
+    0.5659,
+    0.7163
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 345,
+   "pitch": 45,
+   "led": [
+    0.5341,
+    0.7256
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 0,
+   "pitch": 60,
+   "led": [
+    0.5,
+    0.7101
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 15,
+   "pitch": 60,
+   "led": [
+    0.4659,
+    0.7062
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 30,
+   "pitch": 60,
+   "led": [
+    0.4341,
+    0.6948
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 45,
+   "pitch": 60,
+   "led": [
+    0.4067,
+    0.6766
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 60,
+   "pitch": 60,
+   "led": [
+    0.3858,
+    0.653
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 75,
+   "pitch": 60,
+   "led": [
+    0.3726,
+    0.6254
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 90,
+   "pitch": 60,
+   "led": [
+    0.3681,
+    0.5958
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 105,
+   "pitch": 60,
+   "led": [
+    0.3726,
+    0.5663
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 120,
+   "pitch": 60,
+   "led": [
+    0.3858,
+    0.5387
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 135,
+   "pitch": 60,
+   "led": [
+    0.4067,
+    0.5151
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 150,
+   "pitch": 60,
+   "led": [
+    0.4341,
+    0.4969
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 165,
+   "pitch": 60,
+   "led": [
+    0.4659,
+    0.4855
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 180,
+   "pitch": 60,
+   "led": [
+    0.5,
+    0.4816
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 195,
+   "pitch": 60,
+   "led": [
+    0.5341,
+    0.4855
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 210,
+   "pitch": 60,
+   "led": [
+    0.5659,
+    0.4969
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 225,
+   "pitch": 60,
+   "led": [
+    0.5933,
+    0.5151
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 240,
+   "pitch": 60,
+   "led": [
+    0.6142,
+    0.5387
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 255,
+   "pitch": 60,
+   "led": [
+    0.6274,
+    0.5663
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 270,
+   "pitch": 60,
+   "led": [
+    0.6319,
+    0.5958
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 285,
+   "pitch": 60,
+   "led": [
+    0.6274,
+    0.6254
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 300,
+   "pitch": 60,
+   "led": [
+    0.6142,
+    0.653
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 315,
+   "pitch": 60,
+   "led": [
+    0.5933,
+    0.6766
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 330,
+   "pitch": 60,
+   "led": [
+    0.5659,
+    0.6948
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 345,
+   "pitch": 60,
+   "led": [
+    0.5341,
+    0.7062
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 0,
+   "pitch": 75,
+   "led": [
+    0.5,
+    0.677
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 15,
+   "pitch": 75,
+   "led": [
+    0.4659,
+    0.6727
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 30,
+   "pitch": 75,
+   "led": [
+    0.4341,
+    0.6599
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 45,
+   "pitch": 75,
+   "led": [
+    0.4067,
+    0.6397
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 60,
+   "pitch": 75,
+   "led": [
+    0.3858,
+    0.6133
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 75,
+   "pitch": 75,
+   "led": [
+    0.3726,
+    0.5826
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 90,
+   "pitch": 75,
+   "led": [
+    0.3681,
+    0.5496
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 105,
+   "pitch": 75,
+   "led": [
+    0.3726,
+    0.5166
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 120,
+   "pitch": 75,
+   "led": [
+    0.3858,
+    0.4859
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 135,
+   "pitch": 75,
+   "led": [
+    0.4067,
+    0.4595
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 150,
+   "pitch": 75,
+   "led": [
+    0.4341,
+    0.4393
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 165,
+   "pitch": 75,
+   "led": [
+    0.4659,
+    0.4265
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 180,
+   "pitch": 75,
+   "led": [
+    0.5,
+    0.4222
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 195,
+   "pitch": 75,
+   "led": [
+    0.5341,
+    0.4265
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 210,
+   "pitch": 75,
+   "led": [
+    0.5659,
+    0.4393
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 225,
+   "pitch": 75,
+   "led": [
+    0.5933,
+    0.4595
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 240,
+   "pitch": 75,
+   "led": [
+    0.6142,
+    0.4859
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 255,
+   "pitch": 75,
+   "led": [
+    0.6274,
+    0.5166
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 270,
+   "pitch": 75,
+   "led": [
+    0.6319,
+    0.5496
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 285,
+   "pitch": 75,
+   "led": [
+    0.6274,
+    0.5826
+   ],
+   "ledVisible": false
+  },
+  {
+   "yaw": 300,
+   "pitch": 75,
+   "led": [
+    0.6142,
+    0.6133
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 315,
+   "pitch": 75,
+   "led": [
+    0.5933,
+    0.6397
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 330,
+   "pitch": 75,
+   "led": [
+    0.5659,
+    0.6599
+   ],
+   "ledVisible": true
+  },
+  {
+   "yaw": 345,
+   "pitch": 75,
+   "led": [
+    0.5341,
+    0.6727
+   ],
+   "ledVisible": true
+  }
+ ]
+}

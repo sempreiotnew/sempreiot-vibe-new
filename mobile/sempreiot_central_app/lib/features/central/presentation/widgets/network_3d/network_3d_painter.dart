@@ -1,4 +1,4 @@
-import 'dart:ui' show Tangent;
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -43,9 +43,10 @@ Color packetColor(int severity, bool ackDown) => switch (severity) {
       _ => ackDown ? AppColors.ledCyan : AppColors.ledBlue,
     };
 
-/// Everything under the chips: lane labels, links, pulse rings and the
-/// travelling packets — drawn like the Rede map's `_MeshGraphPainter`,
-/// between projected 3D points.
+/// Everything under the spheres: lane labels, the links as shaded 3D tubes
+/// (a curve in world space, projected point by point — thick when near,
+/// thin when far), dBm pills, pulse rings and the packets riding the same
+/// curves. Colours and rules as the Rede map's `_MeshGraphPainter`.
 class Network3dPainter extends CustomPainter {
   Network3dPainter({
     required this.projector,
@@ -71,22 +72,34 @@ class Network3dPainter extends CustomPainter {
 
   static const _staleOpacity = 0.32;
 
-  /// dBm pills already drawn this frame: a pill that would cover one is
-  /// skipped (the fan of links under a busy parent).
+  /// Tube radius in world units (a sphere is 23): thick enough to read as a
+  /// cable, thin enough not to hide the spheres.
+  static const _tubeRadius = 2.6;
+  static const _samples = 26;
+
   final _pills = <Rect>[];
 
   @override
   void paint(Canvas canvas, Size size) {
     final now = DateTime.now();
+    _pills.clear();
     _paintGrid(canvas, size);
     _paintLevels(canvas);
-    _pills.clear();
 
+    // Far links first, so near tubes pass in front of far ones.
+    final links = <(double, TopologyNode, String, List<Projected>)>[];
     for (final n in nodes.values) {
       final parentKey = graph.parentOf[n.mac];
       if (parentKey == null) continue;
-      final from = projected[n.mac], to = projected[parentKey];
-      if (from == null || to == null) continue;
+      final curve = _curve(n.mac, parentKey);
+      if (curve == null) continue;
+      final depth =
+          curve.map((p) => p.depth).reduce((a, b) => a + b) / curve.length;
+      links.add((depth, n, parentKey, curve));
+    }
+    links.sort((a, b) => b.$1.compareTo(a.$1));
+
+    for (final (depth, n, parentKey, curve) in links) {
       final parentOnline =
           parentKey == graphCentralKey || (nodes[parentKey]?.online ?? false);
       final healthy = n.online && parentOnline;
@@ -95,50 +108,16 @@ class Network3dPainter extends CustomPainter {
           ? AppColors.warning
           : healthy
               ? (n.sleeping ? sleepingLinkColor(isDark) : signalColor(n.rssi))
-              : AppColors.error.withValues(alpha: 0.8);
-      final fade = depthFade((from.depth + to.depth) / 2);
-      final path = _linkPath(from.offset, to.offset);
-      if (candidate) {
-        _drawDashedPath(
-            canvas,
-            path,
-            Paint()
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 1.3
-              ..color = color.withValues(alpha: 0.7 * fade));
-      } else if (healthy) {
-        canvas.drawPath(
-          path,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 5
-            ..color = color.withValues(alpha: 0.10 * fade)
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
-        );
-        canvas.drawPath(
-          path,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.3
-            ..color = color.withValues(alpha: 0.55 * fade),
-        );
-      } else {
-        _drawDashedPath(
-          canvas,
-          path,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.1
-            ..color = color.withValues(
-                alpha: (n.stale ? 0.55 * _staleOpacity : 0.55) * fade),
-        );
-      }
-      // dBm pill as on the 2D map, but only where it can be read: on links
-      // long enough on screen and on the front half of the tree (behind,
-      // the pills would pile up over each other).
-      final onScreen = (from.offset - to.offset).distance;
-      if (n.rssi != null && !n.stale && onScreen > 90 && fade > 0.78) {
-        _linkLabel(canvas, path, '${n.rssi} dBm',
+              : AppColors.error;
+      final fade =
+          depthFade(depth) * (!healthy && n.stale ? _staleOpacity : 1.0);
+      _tube(canvas, curve, color,
+          alpha: (healthy ? 0.95 : 0.7) * fade, dashed: candidate || !healthy);
+
+      // dBm pill at the middle of the tube, where it can be read.
+      final a = curve.first.offset, b = curve.last.offset;
+      if (n.rssi != null && !n.stale && (a - b).distance > 90 && fade > 0.78) {
+        _pill(canvas, curve[curve.length ~/ 2].offset, '${n.rssi} dBm',
             healthy ? color : AppColors.error, fade);
       }
     }
@@ -148,15 +127,15 @@ class Network3dPainter extends CustomPainter {
     final nowMs = now.millisecondsSinceEpoch;
     final phase = (nowMs % 2200) / 2200.0;
     final fast = (nowMs % 1100) / 1100.0;
-    _pulse(canvas, projected[graphCentralKey], AppColors.secondary, phase, 30);
+    _pulse(canvas, projected[graphCentralKey], AppColors.secondary, phase, 32);
     for (final n in nodes.values) {
       if (!n.online) continue;
       if (n.mac == rootMac) {
         _pulse(canvas, projected[n.mac], AppColors.warning, (phase + 0.5) % 1.0,
-            26);
+            28);
       } else if (candidates.contains(n.mac)) {
         _pulse(canvas, projected[n.mac],
-            AppColors.warning.withValues(alpha: 0.6), fast, 22);
+            AppColors.warning.withValues(alpha: 0.6), fast, 24);
       }
     }
 
@@ -164,13 +143,146 @@ class Network3dPainter extends CustomPainter {
       for (var k = 2; k >= 0; k--) {
         final t = p.progress(now) - k * 0.03;
         if (t < 0 || t >= 1) continue;
-        final tan = _tangentAlong(p.path, t);
-        if (tan == null) continue;
-        _drawPacket(canvas, tan.position, tan.angle, p.color,
-            k == 0 ? 1.0 : 0.85 - k * 0.15, k == 0 ? 1.0 : 0.30 - k * 0.10);
+        final at = _along(p.path, t);
+        if (at == null) continue;
+        final s = (at.$3).clamp(0.5, 2.2);
+        _drawPacket(
+            canvas,
+            at.$1,
+            at.$2,
+            p.color,
+            (k == 0 ? 1.0 : 0.85 - k * 0.15) * s,
+            k == 0 ? 1.0 : 0.30 - k * 0.10);
       }
     }
   }
+
+  // ── 3D links ────────────────────────────────────────────────────────────
+
+  /// The link from [from] to [to] as a curve in WORLD space — it leaves
+  /// each device along the level axis (the Rede S-curve, but in 3D) — then
+  /// projected sample by sample. Null if any part is behind the camera.
+  List<Projected>? _curve(String from, String to) {
+    final a = graph.pos[from], b = graph.pos[to];
+    if (a == null || b == null) return null;
+    final dir = graph.axis == GraphAxis.vertical
+        ? const Vec3(0, 1, 0)
+        : const Vec3(1, 0, 0);
+    final along = (b - a).dot(dir);
+    final p1 = a + dir * (along * 0.5);
+    final p2 = b - dir * (along * 0.5);
+    final out = <Projected>[];
+    for (var i = 0; i <= _samples; i++) {
+      final t = i / _samples, u = 1 - t;
+      final p = a * (u * u * u) +
+          p1 * (3 * u * u * t) +
+          p2 * (3 * u * t * t) +
+          b * (t * t * t);
+      final pr = projector.project(p);
+      if (pr == null) return null;
+      out.add(pr);
+    }
+    return out;
+  }
+
+  /// A shaded tube along projected points: width follows each point's
+  /// depth; dark edges, the colour, and a bright highlight toward the light
+  /// (top-left), plus a soft glow. Dashed = drawn in pieces.
+  void _tube(Canvas canvas, List<Projected> pts, Color color,
+      {required double alpha, bool dashed = false}) {
+    if (pts.length < 2) return;
+    final ranges = <(int, int)>[];
+    if (dashed) {
+      for (var i = 0; i < pts.length - 1; i += 3) {
+        ranges.add((i, math.min(i + 2, pts.length - 1)));
+      }
+    } else {
+      ranges.add((0, pts.length - 1));
+    }
+
+    // Glow along the whole link.
+    final glow = Path()..moveTo(pts.first.offset.dx, pts.first.offset.dy);
+    for (final p in pts.skip(1)) {
+      glow.lineTo(p.offset.dx, p.offset.dy);
+    }
+    final midScale = pts[pts.length ~/ 2].scale;
+    canvas.drawPath(
+      glow,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = (_tubeRadius * 5 * midScale).clamp(2.0, 16.0)
+        ..color = color.withValues(alpha: 0.10 * alpha)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
+    );
+
+    for (final (from, to) in ranges) {
+      // Body (dark edges), colour core, highlight — three strips.
+      _strip(canvas, pts, from, to, 1.0, 0,
+          Color.lerp(color, Colors.black, 0.55)!.withValues(alpha: alpha));
+      _strip(
+          canvas, pts, from, to, 0.68, -0.12, color.withValues(alpha: alpha));
+      _strip(
+          canvas,
+          pts,
+          from,
+          to,
+          0.24,
+          -0.42,
+          Color.lerp(color, Colors.white, 0.7)!
+              .withValues(alpha: 0.85 * alpha));
+    }
+  }
+
+  /// A filled strip of half-width `radius × k × scale` around the points,
+  /// shifted by `shift` of the half-width toward the light.
+  void _strip(Canvas canvas, List<Projected> pts, int from, int to, double k,
+      double shift, Color color) {
+    final left = <Offset>[], right = <Offset>[];
+    for (var i = from; i <= to; i++) {
+      final prev = pts[math.max(i - 1, 0)].offset;
+      final next = pts[math.min(i + 1, pts.length - 1)].offset;
+      var d = next - prev;
+      if (d.distance < 1e-6) d = const Offset(1, 0);
+      var n = Offset(-d.dy, d.dx) / d.distance;
+      // Keep the normal pointing toward the light (up / left).
+      if (n.dy > 0 || (n.dy == 0 && n.dx > 0)) n = -n;
+      final w = (_tubeRadius * pts[i].scale).clamp(0.5, 7.0);
+      final c = pts[i].offset + n * (w * shift);
+      left.add(c + n * (w * k));
+      right.add(c - n * (w * k));
+    }
+    final path = Path()..moveTo(left.first.dx, left.first.dy);
+    for (final p in left.skip(1)) {
+      path.lineTo(p.dx, p.dy);
+    }
+    for (final p in right.reversed) {
+      path.lineTo(p.dx, p.dy);
+    }
+    path.close();
+    canvas.drawPath(path, Paint()..color = color);
+  }
+
+  /// Position, heading and scale at [progress] along a multi-hop path,
+  /// riding the same 3D curves as the tubes.
+  (Offset, double, double)? _along(List<String> keys, double progress) {
+    if (keys.length < 2) return null;
+    final hops = keys.length - 1;
+    final t = (progress * hops).clamp(0.0, hops.toDouble());
+    final hop = t.floor().clamp(0, hops - 1);
+    final curve = _curve(keys[hop], keys[hop + 1]);
+    if (curve == null) return null;
+    final f = (t - hop) * (curve.length - 1);
+    final i = f.floor().clamp(0, curve.length - 2);
+    final k = f - i;
+    final a = curve[i], b = curve[i + 1];
+    final pos = Offset.lerp(a.offset, b.offset, k)!;
+    final d = b.offset - a.offset;
+    final angle = d.distance < 1e-6 ? 0.0 : math.atan2(d.dy, d.dx);
+    final scale = a.scale + (b.scale - a.scale) * k;
+    return (pos, angle, scale);
+  }
+
+  // ── Around ──────────────────────────────────────────────────────────────
 
   void _paintGrid(Canvas canvas, Size size) {
     final paint = Paint()
@@ -217,36 +329,8 @@ class Network3dPainter extends CustomPainter {
     }
   }
 
-  // ── Same drawing helpers as the Rede map ─────────────────────────────────
-
-  Path _linkPath(Offset from, Offset to) {
-    if (graph.axis == GraphAxis.wide) {
-      // The Rede S-curve turned sideways: levels run left → right.
-      final mid = Offset.lerp(from, to, 0.5)!;
-      final bend = (to.dy - from.dy).abs() * 0.001 + 0.22;
-      final c1 = Offset(from.dx - (from.dx - mid.dx) * bend * 2, from.dy);
-      final c2 = Offset(to.dx + (mid.dx - to.dx) * bend * 2, to.dy);
-      return Path()
-        ..moveTo(from.dx, from.dy)
-        ..cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, to.dx, to.dy);
-    }
-    // Gentle vertical S-curve: fans siblings out from their shared parent.
-    final mid = Offset.lerp(from, to, 0.5)!;
-    final bend = (to.dx - from.dx).abs() * 0.001 + 0.22;
-    final c1 = Offset(from.dx, from.dy - (from.dy - mid.dy) * bend * 2);
-    final c2 = Offset(to.dx, to.dy + (mid.dy - to.dy) * bend * 2);
-    return Path()
-      ..moveTo(from.dx, from.dy)
-      ..cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, to.dx, to.dy);
-  }
-
-  void _linkLabel(
-      Canvas canvas, Path path, String text, Color color, double fade) {
-    final metrics = path.computeMetrics().toList();
-    if (metrics.isEmpty) return;
-    final m = metrics.first;
-    final pos = m.getTangentForOffset(m.length * 0.5)?.position;
-    if (pos == null) return;
+  /// The Rede map's dBm pill; skipped where it would cover another.
+  void _pill(Canvas canvas, Offset pos, String text, Color color, double fade) {
     final tp = TextPainter(
       text: TextSpan(
         text: text,
@@ -267,7 +351,7 @@ class Network3dPainter extends CustomPainter {
       RRect.fromRectAndRadius(rect, const Radius.circular(7)),
       Paint()
         ..color = (isDark ? const Color(0xFF0B0F1A) : Colors.white)
-            .withValues(alpha: 0.85 * fade),
+            .withValues(alpha: 0.88 * fade),
     );
     canvas.drawRRect(
       RRect.fromRectAndRadius(rect, const Radius.circular(7)),
@@ -279,22 +363,10 @@ class Network3dPainter extends CustomPainter {
     tp.paint(canvas, pos - Offset(tp.width / 2, tp.height / 2));
   }
 
-  void _drawDashedPath(Canvas canvas, Path path, Paint paint) {
-    const dash = 5.0, gap = 4.0;
-    for (final metric in path.computeMetrics()) {
-      var covered = 0.0;
-      while (covered < metric.length) {
-        final end = (covered + dash).clamp(0.0, metric.length);
-        canvas.drawPath(metric.extractPath(covered, end), paint);
-        covered = end + gap;
-      }
-    }
-  }
-
   void _pulse(Canvas canvas, Projected? at, Color color, double phase,
       double baseRadius) {
     if (at == null) return;
-    final k = at.scale / projector.referenceScale;
+    final k = at.scale.clamp(0.2, 2.8); // same scale as the spheres
     canvas.drawCircle(
       at.offset,
       (baseRadius + phase * 16) * k,
@@ -305,6 +377,7 @@ class Network3dPainter extends CustomPainter {
     );
   }
 
+  /// The Rede map's data packet, scaled by depth.
   void _drawPacket(Canvas canvas, Offset pos, double angle, Color color,
       double scale, double alpha) {
     canvas.save();
@@ -333,24 +406,6 @@ class Network3dPainter extends CustomPainter {
         ink..strokeWidth = 0.9);
     canvas.drawLine(const Offset(-4.2, 1.2), const Offset(0.2, 1.2), ink);
     canvas.restore();
-  }
-
-  Tangent? _tangentAlong(List<String> keys, double progress) {
-    final points = [
-      for (final key in keys)
-        if (projected[key] != null) projected[key]!.offset,
-    ];
-    if (points.length < 2) return null;
-    final segments = points.length - 1;
-    final t = (progress * segments).clamp(0.0, segments.toDouble());
-    final seg = t.floor().clamp(0, segments - 1);
-    final metrics =
-        _linkPath(points[seg], points[seg + 1]).computeMetrics().toList();
-    if (metrics.isEmpty) return null;
-    final m = metrics.first;
-    final tan = m.getTangentForOffset(m.length * (t - seg));
-    if (tan == null) return null;
-    return Tangent.fromAngle(tan.position, -tan.angle);
   }
 
   @override

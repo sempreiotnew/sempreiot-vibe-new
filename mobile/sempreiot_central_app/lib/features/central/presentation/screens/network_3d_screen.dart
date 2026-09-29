@@ -13,6 +13,8 @@ import '../../application/safr_traffic_provider.dart';
 import '../../application/topology_provider.dart';
 import '../widgets/device_avatar.dart';
 import '../widgets/device_menu.dart';
+import '../widgets/network_3d/detector_sprites.dart';
+import '../widgets/network_3d/device_3d_chip.dart';
 import '../widgets/network_3d/force_graph_3d.dart';
 import '../widgets/network_3d/network_3d_math.dart';
 import '../widgets/network_3d/network_3d_painter.dart';
@@ -63,6 +65,9 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
   StreamSubscription<SafrTrafficTick>? _trafficSub;
 
   Map<String, TopologyNode> _nodes = const {};
+
+  /// The smoke detector model's sprites (loaded once; spheres until then).
+  DetectorSprites? _sprites;
   TopologyNode? _board;
   String _graphKey = '';
   final _packets = <Packet3d>[];
@@ -88,6 +93,9 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
           ..addListener(_onFrame)
           ..repeat();
     _trafficSub = ref.read(safrTrafficProvider).stream.listen(_onTraffic);
+    DetectorSprites.load().then((s) {
+      if (mounted) setState(() => _sprites = s);
+    });
   }
 
   @override
@@ -593,15 +601,28 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
     final node = _nodes[key];
     final opacity =
         fade(pr.depth) * ((node?.stale ?? false) ? deviceStaleOpacity : 1.0);
+    // Devices as spheres; the light is fixed in the world, so turning the
+    // graph moves their highlight.
+    final light = sphereLightFor(_camera.yaw, _camera.pitch);
+    final sprites = _sprites;
     final child = isCentral
-        ? _Central3dChip(board: _board)
-        : _Node3dChip(
-            node: node!,
-            isRoot: node.online && node.mac == election.rootMac,
-            isCandidate: candidates.contains(node.mac),
-          );
-    final w = isCentral ? 120.0 : 104.0;
-    final top = isCentral ? 27.0 : 26.0;
+        ? Central3dChip(light: light, board: _board)
+        // Sensors are smoke detectors: the Blender model once it is loaded.
+        : node!.isLeaf && sprites != null
+            ? Detector3dChip(
+                node: node,
+                sprites: sprites,
+                yaw: _camera.yaw,
+                pitch: _camera.pitch,
+              )
+            : Device3dChip(
+                node: node,
+                light: light,
+                isRoot: node.online && node.mac == election.rootMac,
+                isCandidate: candidates.contains(node.mac),
+              );
+    final w = isCentral ? Central3dChip.width : Device3dChip.width;
+    final top = isCentral ? central3dAnchorY : device3dAnchorY;
     final dragging = _graph.dragged == key;
     return Positioned(
       key: ValueKey(key),
@@ -644,115 +665,6 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
           ),
         ),
       ),
-    );
-  }
-}
-
-// ── Chips: the Rede map's, unchanged in look ─────────────────────────────────
-
-class _Node3dChip extends StatelessWidget {
-  const _Node3dChip({
-    required this.node,
-    required this.isRoot,
-    required this.isCandidate,
-  });
-
-  final TopologyNode node;
-  final bool isRoot;
-  final bool isCandidate;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasName = node.name?.isNotEmpty == true;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        DeviceAvatar(node: node, isRoot: isRoot, isCandidate: isCandidate),
-        const SizedBox(height: 5),
-        Text(
-          deviceDisplayName(node),
-          maxLines: 1,
-          textAlign: TextAlign.center,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: hasName ? context.textPrimary : context.textSecondary,
-            fontSize: hasName ? 9.5 : 8,
-            fontWeight: FontWeight.w600,
-            fontFamily: hasName ? null : 'monospace',
-            letterSpacing: hasName ? 0 : -0.2,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _Central3dChip extends StatelessWidget {
-  const _Central3dChip({this.board});
-  final TopologyNode? board;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Container(
-              width: 54,
-              height: 54,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [AppColors.primary, Color(0xFF2E6DA4)],
-                ),
-                border: Border.all(
-                  color: AppColors.secondary.withValues(alpha: 0.7),
-                  width: 1.6,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.secondary.withValues(alpha: 0.30),
-                    blurRadius: 16,
-                  ),
-                ],
-              ),
-              child: const Icon(Icons.tablet_mac_rounded,
-                  color: Colors.white, size: 24),
-            ),
-            if (board != null)
-              Positioned(
-                top: -3,
-                left: (54 - 11) / 2,
-                child: DeviceLedDot(node: board!, size: 11),
-              ),
-          ],
-        ),
-        const SizedBox(height: 5),
-        Text(
-          'CENTRAL',
-          style: TextStyle(
-            color: context.textSecondary,
-            fontSize: 9,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 1.0,
-          ),
-        ),
-        if (board != null) ...[
-          const SizedBox(height: 2),
-          Text(
-            board!.mac,
-            style: TextStyle(
-              color: context.textSecondary.withValues(alpha: 0.8),
-              fontSize: 8,
-              fontFamily: 'monospace',
-            ),
-          ),
-        ],
-      ],
     );
   }
 }

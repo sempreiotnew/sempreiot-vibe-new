@@ -57,6 +57,11 @@ flutter:
     - assets/images/logo_no_shadow.png
     - assets/images/google_icon.png
     - assets/images/logo_no_color.png
+    # Rede 3D prototype: the smoke detector pre-rendered from
+    # assets/models/smoke_detector.glb (the .glb itself is not bundled).
+    - assets/models/smoke_detector_atlas.png
+    - assets/models/smoke_detector_rim.png
+    - assets/models/smoke_detector_frames.json
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 
