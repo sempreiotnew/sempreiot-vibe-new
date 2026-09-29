@@ -9,9 +9,10 @@ enum MainTab {
   devices,
   rede;
 
-  static List<MainTab> get tabs => AppConfig.isCentral
-      ? [principal, central, devices, rede]
-      : [principal, centrais];
+  /// Central mode has no "Central" tab: the tablet IS the central, and
+  /// its settings live in the drawer.
+  static List<MainTab> get tabs =>
+      AppConfig.isCentral ? [principal, devices, rede] : [principal, centrais];
 
   /// USER mode drilling into a specific central: the reduced set of tabs
   /// a viewer can navigate inside that central.

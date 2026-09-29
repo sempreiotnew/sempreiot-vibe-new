@@ -9,12 +9,14 @@ import '../../../features/access/domain/entities/saved_central.dart';
 import '../../../features/auth/application/auth_provider.dart';
 import '../../../features/central/application/central_auth_provider.dart';
 import '../../../features/central/application/central_status_publisher.dart';
+import '../../../features/central/application/device_led_provider.dart';
 import '../../../features/central/application/central_storage_publisher.dart';
 import '../../../features/iot/application/presence_provider.dart';
 import '../../../features/centrais/presentation/screens/centrais_list_screen.dart';
 import '../../../core/connectivity/network_status_provider.dart';
 import '../../widgets/iot_network_animation.dart';
 import '../auth/login_screen.dart';
+import '../../../features/central/presentation/screens/devices_screen.dart';
 import '../../../features/central/presentation/screens/topology_screen.dart';
 import '../../../features/central/presentation/widgets/latched_alarm_banner.dart';
 import 'main_tab.dart';
@@ -65,6 +67,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     if (AppConfig.isCentral) {
       ref.watch(centralStatusPublisherProvider);
       ref.watch(centralStoragePublisherProvider);
+      // The on-screen LEDs must hear every frame from the start, whatever
+      // tab is open (read, not watch: its ticks must not rebuild this screen).
+      ref.read(deviceLedProvider);
     }
 
     ref.listen(centralAuthProvider, (prev, next) {
@@ -243,11 +248,15 @@ class _TabBody extends StatelessWidget {
               title: 'Centrais',
               subtitle: 'Lista de centrais cadastradas.',
             ),
-          MainTab.devices => const _PlaceholderTab(
-              icon: Icons.devices_rounded,
-              title: 'Dispositivos',
-              subtitle: 'Nenhum dispositivo conectado ainda.',
-            ),
+          // The device registry lives on the central tablet; a USER viewing
+          // a central remotely has no such list yet.
+          MainTab.devices => AppConfig.isCentral
+              ? const DevicesScreen()
+              : const _PlaceholderTab(
+                  icon: Icons.devices_rounded,
+                  title: 'Dispositivos',
+                  subtitle: 'Nenhum dispositivo conectado ainda.',
+                ),
           MainTab.rede => const TopologyScreen(embedded: true),
         },
       ),

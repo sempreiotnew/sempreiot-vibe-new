@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../domain/safr/safr_v2_frame.dart';
+import '../domain/safr/safr_v2_payloads.dart';
+
 /// One frame movement on the mesh, for the topology animation: uplink ticks
 /// travel node → root → central, downlink ticks the reverse.
 enum SafrTrafficDirection { uplink, downlink }
@@ -13,6 +16,9 @@ class SafrTrafficTick {
     required this.severity,
     this.ack = false,
     this.parentMac,
+    this.msgType,
+    this.eventCode,
+    this.uptimeS,
   });
 
   /// Uplink: the parent the frame itself names (HEARTBEAT / TOPOLOGY
@@ -30,6 +36,17 @@ class SafrTrafficTick {
   final int severity;
   final bool ack;
   final String? parentMac;
+
+  /// The frame's MSG_TYPE — decides the LED pulse it lit on the unit
+  /// (tick 100 ms vs message 500 ms, siot_ui_led.c `is_message`).
+  final SafrMsgType? msgType;
+
+  /// EVENT frames only: a leaf lights its LED for MANUAL_TEST alone.
+  final SafrEventCode? eventCode;
+
+  /// HEARTBEAT only: the unit's UPTIME_S — tells a reboot apart (the alarm
+  /// lives in RAM on the unit, so a reboot ends it).
+  final int? uptimeS;
 }
 
 class SafrTrafficBus {

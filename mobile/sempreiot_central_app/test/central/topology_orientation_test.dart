@@ -304,11 +304,11 @@ void main() {
     expect((moved - const Offset(-50, 70)).distance, lessThan(3));
   });
 
-  testWidgets('a still tap on a chip opens its sheet; a drag does not',
+  testWidgets('a still tap on a chip opens its menu; a drag does not',
       (tester) async {
     await pump(tester, const Size(1280, 800));
     final root = find.text('5A:46:52:00:00:01');
-    // Drag starting on the chip: pans the map, no sheet.
+    // Drag starting on the chip: pans the map, no menu.
     final g =
         await tester.createGesture(pointer: 7, kind: PointerDeviceKind.touch);
     await g.down(tester.getCenter(root));
@@ -318,11 +318,11 @@ void main() {
     }
     await g.up();
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('COMANDOS — CENTRAL → DISPOSITIVO'), findsNothing);
-    // Still tap: sheet opens.
+    expect(find.byTooltip('Fechar'), findsNothing);
+    // Still tap: the device menu drops (its close button is the marker).
     await tester.tap(root);
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('COMANDOS — CENTRAL → DISPOSITIVO'), findsOneWidget);
+    expect(find.byTooltip('Fechar'), findsOneWidget);
   });
 
   testWidgets('clear button sits in the status strip, apart from zoom',

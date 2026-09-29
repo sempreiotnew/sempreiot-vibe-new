@@ -57,7 +57,8 @@ class SafrIngestService {
   /// Journal replay bookkeeping (spec §7.9) — the downlink service persists
   /// the JRN_SEQ high-water mark and paginates with further EVENT_LOG_REQs.
   final void Function(SafrEventLogDataPayload log)? onJournalData;
-  final void Function(String mac, int severity, String? parentMac)? onTraffic;
+  final void Function(String mac, int severity, String? parentMac,
+      SafrMsgType msgType, SafrEventCode? eventCode, int? uptimeS)? onTraffic;
 
   /// A frame whose header SYSTEM_ID is not ours (spec §3.1 "neighbouring
   /// system"). Null = ours again (a valid frame arrived). Feeds the
@@ -127,7 +128,18 @@ class SafrIngestService {
       SafrTopologyPayload p => p.parentMac,
       _ => null,
     };
-    onTraffic?.call(frame.srcMac, severity, framedParent);
+    onTraffic?.call(
+      frame.srcMac,
+      severity,
+      framedParent,
+      frame.msgType,
+      frame.payload is SafrEventPayload
+          ? (frame.payload as SafrEventPayload).eventCode
+          : null,
+      frame.payload is SafrHeartbeatPayload
+          ? (frame.payload as SafrHeartbeatPayload).uptimeS
+          : null,
+    );
 
     if (frame.msgType == SafrMsgType.ack && frame.payload is SafrAckPayload) {
       onAckReceived?.call(frame.payload as SafrAckPayload);
@@ -469,7 +481,8 @@ class SafrIngestService {
   /// board-sourced are pruned.
   final _tableSeen = <String>{};
 
-  Future<void> _handleDeviceTable(SafrDeviceTablePayload page, DateTime now) async {
+  Future<void> _handleDeviceTable(
+      SafrDeviceTablePayload page, DateTime now) async {
     if (page.page == 1) _tableSeen.clear();
     for (final e in page.entries) {
       _tableSeen.add(e.mac);
@@ -615,11 +628,15 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
     onAckRequired: downlink.sendAck,
     onAckReceived: downlink.handleAck,
     onJournalData: downlink.handleJournalData,
-    onTraffic: (mac, severity, parentMac) => traffic.emit(SafrTrafficTick(
+    onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS) =>
+        traffic.emit(SafrTrafficTick(
       mac: mac,
       direction: SafrTrafficDirection.uplink,
       severity: severity,
       parentMac: parentMac,
+      msgType: msgType,
+      eventCode: eventCode,
+      uptimeS: uptimeS,
     )),
   );
 

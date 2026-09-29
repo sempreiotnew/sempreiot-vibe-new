@@ -281,6 +281,7 @@ class SafrDownlink {
             direction: SafrTrafficDirection.downlink,
             severity: 0,
             ack: true,
+            msgType: SafrMsgType.ack,
           ));
     }
   }
@@ -536,6 +537,7 @@ class SafrDownlink {
           mac: targetMac,
           direction: SafrTrafficDirection.downlink,
           severity: 0,
+          msgType: SafrMsgType.command,
         ));
   }
 
