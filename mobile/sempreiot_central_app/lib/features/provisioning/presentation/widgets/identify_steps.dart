@@ -46,7 +46,18 @@ class IdentifyingStep extends ConsumerWidget {
           if (info != null) ...[
             const SizedBox(height: 24),
             Text(
-              '${info.model} · ${info.id}',
+              info.productDisplay,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: context.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              info.fw.isEmpty ? info.id : '${info.id} · fw ${info.fw}',
+              textAlign: TextAlign.center,
               style: TextStyle(
                 color: context.textSecondary,
                 fontSize: 12,

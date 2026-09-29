@@ -14,5 +14,5 @@ else()
                            REQUIRES siot_config
                            PRIV_REQUIRES mbedtls json esp_wifi esp_netif esp_event esp_http_server
                                          esp_hw_support esp_timer
-                                         siot_identity siot_version siot_evbus siot_util)
+                                         siot_identity siot_version siot_evbus siot_util siot_board_def)
 endif()

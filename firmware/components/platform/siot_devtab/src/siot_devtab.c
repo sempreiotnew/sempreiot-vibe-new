@@ -1,5 +1,6 @@
 #include "siot_devtab.h"
 
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -13,7 +14,9 @@
 
 static const char *TAG = "siot_devtab";
 
-/* What goes to NVS (never last_seen / derived state). */
+/* What goes to NVS (never last_seen / derived state). Fields are only ever
+ * appended: a blob written by an older firmware is shorter and loads with the
+ * rest zeroed (DEVTAB_REC_V1_LEN = the record before the product fields). */
 typedef struct __attribute__((packed)) {
     uint8_t  role;
     uint8_t  stored_state; /* SIOT_DEV_EXPECTED or SIOT_DEV_RETIRED */
@@ -21,7 +24,14 @@ typedef struct __attribute__((packed)) {
     uint32_t first_seen;
     char     name[SIOT_NAME_MAX_LEN + 1];
     char     zone[SIOT_ZONE_MAX_LEN + 1];
+    /* v2 (protocol v3.5) */
+    uint16_t product;
+    uint8_t  hw_rev;
+    char     fw[SIOT_DEVTAB_FW_MAX_LEN + 1];
 } devtab_rec_t;
+
+#define DEVTAB_REC_V1_LEN offsetof(devtab_rec_t, product)
+_Static_assert(SIOT_DEVTAB_FW_MAX_LEN == SAFR_FW_MAX_LEN, "devtab fw length follows the wire");
 
 typedef struct {
     bool     used;
@@ -123,9 +133,11 @@ esp_err_t siot_devtab_init(void)
         nvs_entry_info(it, &info);
         uint8_t mac[6];
         devtab_rec_t rec;
+        memset(&rec, 0, sizeof(rec));
         size_t len = sizeof(rec);
         if (mac_from_key(info.key, mac) &&
-            nvs_get_blob(h, info.key, &rec, &len) == ESP_OK && len == sizeof(rec)) {
+            nvs_get_blob(h, info.key, &rec, &len) == ESP_OK &&
+            (len == sizeof(rec) || len == DEVTAB_REC_V1_LEN)) { /* V1: rewritten at its next change */
             slot_t *s = alloc(mac);
             if (s == NULL) {
                 ESP_LOGW(TAG, "table full while loading (%s dropped)", info.key);
@@ -133,6 +145,7 @@ esp_err_t siot_devtab_init(void)
                 s->rec = rec;
                 s->rec.name[SIOT_NAME_MAX_LEN] = '\0';
                 s->rec.zone[SIOT_ZONE_MAX_LEN] = '\0';
+                s->rec.fw[SIOT_DEVTAB_FW_MAX_LEN] = '\0';
             }
         }
         err = nvs_entry_next(&it);
@@ -174,6 +187,9 @@ static void fill(const slot_t *s, int64_t now_ms, siot_devtab_entry_t *out)
     out->last_seen_ms = s->last_seen_ms;
     memcpy(out->name, s->rec.name, sizeof(out->name));
     memcpy(out->zone, s->rec.zone, sizeof(out->zone));
+    out->product = s->rec.product;
+    out->hw_rev = s->rec.hw_rev;
+    memcpy(out->fw, s->rec.fw, sizeof(out->fw));
 }
 
 bool siot_devtab_get(const uint8_t mac[6], int64_t now_ms, siot_devtab_entry_t *out)
@@ -234,6 +250,26 @@ bool siot_devtab_touch(const uint8_t mac[6], int64_t now_ms, uint32_t epoch_now,
     if (dirty) persist(s);
     xSemaphoreGive(s_lock);
     return retired;
+}
+
+esp_err_t siot_devtab_set_product(const uint8_t mac[6], uint16_t product, uint8_t hw_rev, const char *fw)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    slot_t *s = find(mac);
+    if (s == NULL) { xSemaphoreGive(s_lock); return ESP_ERR_NOT_FOUND; }
+    bool dirty = false;
+    if (product != 0 && (s->rec.product != product || s->rec.hw_rev != hw_rev)) {
+        s->rec.product = product;
+        s->rec.hw_rev = hw_rev;
+        dirty = true;
+    }
+    if (fw != NULL && fw[0] != '\0' && strncmp(s->rec.fw, fw, SIOT_DEVTAB_FW_MAX_LEN) != 0) {
+        strlcpy(s->rec.fw, fw, sizeof(s->rec.fw));
+        dirty = true;
+    }
+    const esp_err_t err = dirty ? persist(s) : ESP_OK;
+    xSemaphoreGive(s_lock);
+    return err;
 }
 
 static void copy_name_zone(devtab_rec_t *rec, const char *name, const char *zone)

@@ -42,7 +42,7 @@ lib/
   core/
     config/      app_config.dart (dart-defines), amplify_config.dart (Amplify JSON built from .env)
     connectivity/ connectivity_provider.dart (interface present?), network_status_provider.dart (offline/limited/online)
-    database/    app_database.dart (Drift schema v6 + helpers)
+    database/    app_database.dart (Drift schema v10 + helpers)
     services/    sigv4_signer.dart (presigned WSS URL for AWS IoT)
     theme/       app_theme.dart, theme_provider.dart (+ missing app_colors/theme_ext)
     utils/       mqtt_log.dart (structured debugPrint for MQTT)
@@ -94,14 +94,14 @@ The `CLAUDE.md` rules say AppSync/GraphQL; the code does **not** use AppSync at 
 | `themeProvider`, `statusPanelArcadeProvider`, `sharedPreferencesProvider` | core/theme, presentation/screens/main | per-user prefs |
 | `networkStatusProvider`, `connectivityProvider` | core/connectivity | offline / limited (no MQTT) / online |
 
-### Persistence — Drift DB `sempreiot`, schema v7 (`core/database/app_database.dart`; catalogue of record: system reference §3.6.1)
+### Persistence — Drift DB `sempreiot`, schema v10 (`core/database/app_database.dart`; catalogue of record: system reference §3.6.1)
 
 | Table | Purpose |
 |---|---|
 | `SerialPackets` | every reframed serial frame, raw bytes + hex preview (forensics). Index on `received_at`. Purged >30 days. |
 | `DeviceMetadata` | key/value JSON store. Keys: `info` (name, firmware_version, subId, old_subId, dates), `credentials` (salted hashes: pin, unlock_pin, password, level_pins, salt, hashed flag, root), `access` (mirror of relation list), `iot` (iot_client_id/iot_password **plaintext**), `pin_guard` (rate limiter), `safr_jrn_seq` (journal high-water mark) |
 | `AuditEvents` | append-only security trail: actor (`master`/`admin`/`root`/`system`/`central`), action, JSON detail |
-| `MeshDevices` | trusted registry keyed by MAC: role, layer, parent, RSSI, battery, first/last seen, last heartbeat, replay counters (`lastBootCtr`,`lastMsgCtr`), `supervisionState`, `name`, `lastDevSeq`, `alarmLatched(+At)` |
+| `MeshDevices` | trusted registry keyed by MAC: role, layer, parent, RSSI, battery, first/last seen, last heartbeat, replay counters (`lastBootCtr`,`lastMsgCtr`), `supervisionState`, `name`, `lastDevSeq`, `alarmLatched(+At)`; v3.5 product identity (schema v10, all nullable): `productCode` (16-bit PRODUCT, high byte = family), `hwRev`, `fwVersion` — null until the unit or the board's table reports them, never overwritten by unknown/empty |
 | `DeviceEvents` | humanized feed: severity 0..3, wire eventType/eventCode, `detailJson`, `packetId`, `errorKind` (crc_failed/auth_failed/foreign_system/plaintext_rejected/parse_error), `ackedAt`, `devSeq`. Purged >30 days (see Loose ends). |
 
 Other storage: SharedPreferences (`saved_centrals_<userId>`, theme/panel keys, `iot_identity_id_*`); no secure storage anywhere.
@@ -204,12 +204,14 @@ USB (usb_serial, 115200 8N1, DTR/RTS low)
                   else → _updateTrustedState (transaction):
                         replay check (bootCtr == last && msgCtr <= last → drop, no row)
                         dedupe: EVENT by (mac, devSeq) against DB; others by (mac, msgId) in a 30 s in-memory window
-                        upsert MeshDevices (HEARTBEAT: layer/parent/rssi/battery/lastHb, layer 0 ⇒ root; TOPOLOGY: role/layer/parent/rssi; EVENT: battery, lastDevSeq, ALARM ⇒ alarmLatched=1)
+                        upsert MeshDevices (HEARTBEAT: layer/parent/rssi/battery/lastHb, layer 0 ⇒ root; TOPOLOGY: role/layer/parent/rssi; EVENT: battery, lastDevSeq, ALARM ⇒ alarmLatched=1;
+                                            NAME_ANNOUNCE: name/zone/role + v3.5 productCode/hwRev/fwVersion when the frame carries them and they say something — PRODUCT 0, HW_REV 0 or an empty version keep what is stored)
                         new EVENT ⇒ INSERT DeviceEvents (detailJson with sensors, flags, retx, hops)
                6. F_ACK_REQ ⇒ SafrDownlink.sendAck (ACK every time, even dupes/replays) and stamp ackedAt
   ▲
   └─ SafrDownlink [safr_downlink_provider.dart]  (SafrEncoder: SRC 00:00:00:00:00:01, random BOOT_CTR, MSG_ID/MSG_CTR ++)
        link-up  → TIME_SYNC (F_ACK_REQ, tracked) → EVENT_LOG_REQ(since = safr_jrn_seq, max 0) ; paginate on LAST until EMPTY
+                → GET_INSTALLATION → GET_DEVICE_TABLE args `page, format` = `0, 1` (v3.5: always format 1 = entries with the product fields; an older board ignores the byte and answers in the v3.2 layout)
        hourly   → TIME_SYNC
        every 30 s → COMMAND LINK_CHECK broadcast (tracked, silent) ; edge-triggered synthetic 'link_check_failed' / 'link_check_restored'
        UI       → sendCommand(mac, IDENTIFY[10]/SILENCE/TEST) ; sendReset(broadcast) → clearAlarmLatch only if ACKed
@@ -220,7 +222,10 @@ SupervisionNotifier [supervision_provider.dart]  every 5 s + on MeshDevices chan
 meshLinkStateProvider: 'connected' iff serial link connected and the root device (role 0 or layer 0) is online
 topologyProvider [topology_provider.dart]: nodes from supervision; role fallback layer0→root, has-children→node, else leaf; online = linkUp && online; leaf "sleeping" if online and silent > 20 s
    Leaf states per protocol §12 (2026-09-28, `docs/devices/leaf.md` §8b): `awake` (< 3 s since a frame, or alarm latched) / `sleeping` = leaf && online && !awake, with `nextWakeInSeconds` on the 60 s cadence / offline with "há X"; `parentCandidates` (Drift v9, from a leaf's bind-time TOPOLOGY) → `singleParent` / `weakLink` warnings on the sheet. Ingest keeps a known leaf's role across heartbeats and reads the NAME_ANNOUNCE role byte
+   Product identity (SAFR v3.5, Drift v10): `TopologyNode.productCode` / `hwRev` / `fwVersion`, `product` = `SafrProduct.fromCode` (catalogue in `domain/safr/safr_product.dart`), `productLabel` ("Sirene · SIOT-SIREN-01") and `firmwareLabel` for the UI
 ```
+
+**Product, hardware revision, firmware version (SAFR v3.5).** Two sources, both parsed in `safr_v2_payloads.dart`: the unit's own `NAME_ANNOUNCE` (§7.11; optional `PRODUCT u16 ‖ HW_REV u8 ‖ FW_LEN u8 ‖ FW` right after ROLE — a truncated extension, `FW_LEN > 24` or FW running past the payload is ignored and name/zone/role are still accepted) and the board's `DEVICE_TABLE` (§7.12; bit 7 of the COUNT byte = every entry of the page carries the same four fields after ZONE, real count = `COUNT & 0x7F`; bit clear = the v3.2 layout). `_handleDeviceTable` stores a non-zero product / non-zero revision / non-empty version field by field; every other upsert in `safr_ingest_provider.dart` copies the stored values. The catalogue (`SafrProduct`) maps code → model string, family (`SafrProductFamily`: board 0x01, node 0x02, leaf 0x03) and pt-BR label; `0x0000` = not reported; a code outside the catalogue is kept and shown as "Produto desconhecido 0x0206", with the family from the high byte. Shown as the facts **Produto** and **Firmware** ("—" when not reported) in the device menu (`widgets/device_menu.dart`, opened from Rede, Rede 3D and Dispositivos) and on the Dispositivo screen (`device_settings_screen.dart`, card IDENTIFICAÇÃO, plus "Revisão de hardware" when stated).
 
 **Latching.** `MeshDevices.alarmLatched` is set on any accepted ALARM (live or journaled) and cleared only by `AppDatabase.clearAlarmLatch`, called from `SafrDownlink.sendReset` after the root ACKs the RESET COMMAND (alarm-hold banner on Principal — `latched_alarm_banner.dart`, broadcast — or per device from the Rede node sheet). The Eventos tab was removed on 2026-09-23. RESTORE events never touch it; the latch survives restarts. Test: `test/safr/safr_ingest_test.dart` "ALARM latches; RESTORE does NOT clear".
 
@@ -283,10 +288,10 @@ Entry: drawer "Configurar Dispositivo" (hidden on web: mixed-content and AP-lose
 
 | Call | Request | Success | Failure handling in app |
 |---|---|---|---|
-| `GET /info` | — | 200 `{deviceId, model, firmwareVersion, provisionState}` → `DeviceApInfo` | any error = "not reachable yet", keep polling |
+| `GET /info` | — | 200 `{id, mac, model, fw, product, family, hw_rev, state, nonce}` → `DeviceApInfo` (`product` = the PRODUCT code of reference §2.1; absent on firmware before 2026-09-29, then the catalogue is looked up by `model`) | any error = "not reachable yet", keep polling |
 | `POST /identify` | `{deviceId, signature}` | 200 `{ok:true}` | 403 (`signature_mismatch`) → `SignatureMismatchException` → `identifyFailed`; other errors → back to polling `/info` |
 | `POST /provision` | `{centralId, networkReady}` | 202 (or 200) `{ok:true}` | 409 `not_identified`, 400 `missing_central_id`, timeout → back to `confirm` with error banner |
-| `GET /status` | — | 200 `{state, detail}`; `state ∈ idle\|identified\|stored\|connecting\|connected\|failed` | unreachable counts as "silence" |
+| `GET /status` | — | 200 `{state, detail}`; the firmware answers `idle` \| `identified` \| `stored` (it never reports `joining` / `online` from its setup network); the unit reboots 1 s after the first `stored` reply | unreachable after a `202` from `/provision` = the unit rebooted into normal mode → `resultStored` |
 | `POST /reset` | `{joinResult?, joinDelayMs?}` | mock-only helper | used by the integration test, not the app |
 
 Mock state machine: `idle → identified → stored | connecting → connected | failed`; `JOIN_RESULT=drop` makes the server stop answering after the 202 (simulates the AP channel switch).
@@ -301,7 +306,7 @@ Mock state machine: `idle → identified → stored | connecting → connected |
 | `identifyFailed` | `IdentifyFailedStep` | 403; buttons: rescan or retry with same data |
 | `selectCentral` | `SelectCentralStep` | pick one of the user's ACCEPTED `SavedCentral`s (sends its **subId** as `centralId`) or type any string |
 | `confirm` | `ConfirmStep` | summary + checkbox "A central já está ligada com a rede mesh ativa" (`networkReady`, default true) → `POST /provision` |
-| `provisioning` | `ProvisioningProgressStep` | polls `GET /status` every 2 s: `connected`→`resultSuccess`, `stored`→`resultStored`, `failed`→`resultFailed`; 4 consecutive unreachable polls or 30 polls total (~60 s) → `resultAssumed` |
+| `provisioning` | `ProvisioningProgressStep` ("Enviando informações") | `POST /provision` → `202` (the unit wrote the code to flash: from here `stored` is confirmed) → polls `GET /status` every 2 s: `stored` twice, or the setup network gone → `resultStored`; `failed` → `resultFailed`. `resultFailed` by timeout (30 polls) now only happens when `/provision` itself was never answered. Fixed 2026-09-29: the wizard used to wait for a `/status` the unit never sent (it rebooted first) and always ended on the timeout screen |
 | `result*` | `ResultStep` | success / stored / assumed ("verify on your central") / failed (retry → back to `confirm`) ; "Configurar outro dispositivo" restarts |
 
 What is **not** exchanged with the device today: no Wi-Fi credentials, no mesh ID/password, no SAFR PSK, no SYSTEM_ID, no server endpoint — only `centralId` (a Cognito sub string) and the `networkReady` bit. The device never reports which central it joined back to the cloud, and the central does not learn about the provisioning; the only feedback loop is the device appearing on the serial link. `protocol-safr-v3.md` §4 explicitly makes per-installation PSK+SYSTEM_ID injection by this wizard a launch prerequisite, so the "first setup" redesign has to carry at least those two secrets (and probably the mesh credentials) across this HTTP hop, presumably after `/identify` proves the device.
@@ -329,6 +334,10 @@ Theme: `AppTheme.light/dark` (Material 3, colors from missing `app_colors.dart`)
 | `test/safr/safr_v3_roundtrip_test.dart` | encode→parse for every MSG_TYPE incl. F_RETX, sentinels, signed temp/RSSI, EVENT_LOG_DATA(+EMPTY), plaintext mode; error taxonomy (crcFailed vs authFailed precedence, wrong key, tampered header/SYSTEM_ID, foreignSystem, truncated, badVersion); facade dispatch | nothing |
 | `test/safr/safr_ingest_test.dart` | `SafrIngestService` against in-memory Drift: raw+registry+feed+ACK, latch semantics, F_RETX dedupe-but-ACK, plaintext rejection, foreign SYSTEM_ID, journal replay dedupe, heartbeat silent registry update, auth failure isolation, replay rejection, v1 raw-only | `AppDatabase.forTesting` |
 | `test/safr/safr_v3_captured_test.dart` | reframes a real UART capture `test/fixtures/safr_v3_captured.hex` (skipped if absent), expects zero CRC/auth failures and that the Appendix-A vectors are present byte-for-byte | fixture + `safr_v3_vectors_test.dart` (`buildSpecVectors`) |
+| `test/safr/safr_v35_product_test.dart` | SAFR v3.5: product catalogue (known, unknown, 0); NAME_ANNOUNCE with / without / truncated / oversized extension; DEVICE_TABLE with COUNT bit 7 set and clear; GET_DEVICE_TABLE args `page, 1` | nothing |
+| `test/central/product_ingest_test.dart` | ingest stores product / hardware revision / firmware version from NAME_ANNOUNCE and DEVICE_TABLE and keeps them across frames that lack them (heartbeat, event, older announce, v3.2 table, journal replay) | `AppDatabase.forTesting` |
+| `test/central/database_migration_test.dart` | Drift v9 → v10 on a file database: the three columns are added, rows survive | temp dir |
+| `test/central/device_product_facts_test.dart` | widget: "Produto" / "Firmware" on the Dispositivo screen and in the device menu, tablet and phone, portrait and landscape | nothing |
 | `test/provisioning_wizard_integration_test.dart` | see §7 | running mock |
 | `tool/print_safr_v3_vectors.dart` | prints the three golden frames (`dart run`) for pasting into the spec / firmware | — |
 | `tools/capture-safr.sh` | `stty 115200 raw`, `cat` the port for N s, `xxd -p` into the fixture | macOS device names |

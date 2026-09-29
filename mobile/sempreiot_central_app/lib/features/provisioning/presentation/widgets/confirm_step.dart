@@ -43,8 +43,18 @@ class ConfirmStep extends ConsumerWidget {
           _SummaryCard(
             rows: [
               (Icons.memory_rounded, 'Dispositivo', state.sticker?.id ?? '—'),
-              if (state.deviceInfo != null)
-                (Icons.tag_rounded, 'Modelo', state.deviceInfo!.model),
+              if (state.deviceInfo != null) ...[
+                (
+                  Icons.category_rounded,
+                  'Produto',
+                  state.deviceInfo!.productDisplay
+                ),
+                (
+                  Icons.system_update_alt_rounded,
+                  'Firmware',
+                  state.deviceInfo!.fw.isEmpty ? '—' : state.deviceInfo!.fw
+                ),
+              ],
               (Icons.badge_rounded, 'Nome', state.deviceName ?? '—'),
               (Icons.place_rounded, 'Zona', state.deviceZone ?? '—'),
               (Icons.hub_rounded, 'Instalação', installationName),

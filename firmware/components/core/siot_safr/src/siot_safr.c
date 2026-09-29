@@ -106,6 +106,21 @@ uint16_t siot_safr_next_msg_id(void)
     return id;
 }
 
+uint16_t siot_safr_last_msg_id(void)
+{
+    safr_lock(&s_lock);
+    const uint16_t id = s_msg_id;
+    safr_unlock(&s_lock);
+    return id;
+}
+
+void siot_safr_set_last_msg_id(uint16_t last)
+{
+    safr_lock(&s_lock);
+    s_msg_id = last;
+    safr_unlock(&s_lock);
+}
+
 /* ---- TX -------------------------------------------------------------- */
 
 esp_err_t siot_safr_send(const uint8_t dst_mac[6], uint8_t msg_type, uint16_t msg_id,

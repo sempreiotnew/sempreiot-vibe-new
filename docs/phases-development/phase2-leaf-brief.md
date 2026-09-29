@@ -36,7 +36,7 @@ reasoning and the bench plan so the firmware can start whenever the hardware que
    boot, then deep sleep with the button as the only wake source and the radio stopped first. A phone
    merely associated is not activity (found on the bench 2026-09-28: the first cut slept 120 s after
    boot regardless, then a second cut paused while a phone was associated — both wrong). After `stored`
-   the leaf gives its verdict on the spot (≤ 30 s): blinks per parent, green 3 s or one red.
+   the leaf gives its verdict on the spot (≤ 30 s), the same as a press: the walk test — blue → cyan, or one red — or the survey blinks when there is no path (amended 2026-09-29).
 9. **No LED in sleep, ever.** A press always transmits and the LED answers immediately; the colour tells
    whether the walk test (cyan) or the survey (coloured blinks) ran. Survey from the leaf, never to it.
 10. A leaf sends one **TOPOLOGY per bind** listing its parent candidates — the walk-test report's source.
@@ -95,7 +95,7 @@ leaf and host before any step is called done; never two builds in parallel.
 Legend: `[ ]` pending (bench) · `[x]` done.
 
 - [ ] **L1** Setup window: leaf devkit white-blinks 2 min, then sleeps; button press brings the window back; provisioning from the phone → `stored`.
-- [ ] **L2** Post-provisioning verdict: blinks per candidate, then green 3 s (node devkit online) or one red (node off); leaf sleeps.
+- [ ] **L2** Post-provisioning verdict: blue → cyan (node devkit online, board and tablet up; `MANUAL_TEST` on the tablet) or one red (node off); leaf sleeps.
 - [ ] **L3** Heartbeat: one wake per 60 s, `awake_ms` ≤ 500 logged; tablet shows the leaf under its parent, "Na placa: online", role 2.
 - [ ] **L4** Missing: unplug the leaf → tablet and board mark it missing at ≈ 180 s; plug back → restored on the first frame.
 - [ ] **L5** Parent loss: power off the node → leaf re-probes on the 2nd miss and binds to a second node within ≈ 120 s, no trouble on the panel; with no node at all → COMM_FAULT blink + chirp each wake, 5-min back-off when nobody answers.

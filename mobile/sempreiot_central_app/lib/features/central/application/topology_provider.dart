@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../domain/safr/safr_product.dart';
 import '../domain/safr/safr_v2_payloads.dart';
 import 'serial_link_provider.dart';
 import 'supervision_provider.dart';
@@ -24,6 +25,9 @@ class TopologyNode {
     this.boardState,
     this.boardFlags = 0,
     this.parentCandidates = const [],
+    this.productCode,
+    this.hwRev,
+    this.fwVersion,
   });
 
   final String mac;
@@ -49,6 +53,21 @@ class TopologyNode {
   /// A battery leaf's parents in reach at its last bind (spec §12.7), with
   /// the link RSSI (the weaker direction). Empty for nodes.
   final List<({String mac, int rssi})> parentCandidates;
+
+  /// v3.5 product identity as the unit (or the board's table) reported it;
+  /// null = never reported (firmware older than v3.5).
+  final int? productCode;
+  final int? hwRev;
+  final String? fwVersion;
+
+  /// Catalogue entry (or unknown-product placeholder); null = not reported.
+  SafrProduct? get product => SafrProduct.fromCode(productCode);
+
+  /// The "Produto" fact: "Sirene · SIOT-SIREN-01", or '' when not reported.
+  String get productLabel => product?.display ?? '';
+
+  /// The "Firmware" fact: the version, or '' when not reported.
+  String get firmwareLabel => fwVersion ?? '';
 
   bool get retired => boardState == SafrDeviceState.retired;
   bool get expected => boardState == SafrDeviceState.expected;
@@ -157,6 +176,9 @@ final topologyProvider = Provider<List<TopologyNode>>((ref) {
             : SafrDeviceState.fromWire(s.device.boardState!),
         boardFlags: s.device.boardFlags,
         parentCandidates: _decodeCandidates(s.device.parentCandidates),
+        productCode: s.device.productCode,
+        hwRev: s.device.hwRev,
+        fwVersion: s.device.fwVersion,
       ),
   ]..sort((a, b) {
       final byLayer = a.layer.compareTo(b.layer);

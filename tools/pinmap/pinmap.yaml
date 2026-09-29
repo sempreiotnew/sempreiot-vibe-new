@@ -5,11 +5,17 @@
 # serial_link.c). Phase 2 pins (BOOST 6, CHG 7, TAMPER 11, sensors, relay) are added here when
 # their phase starts — never in C.
 #
-# Every entry: model (matches CONFIG_SIOT_DEV_MODEL), hw_rev (0 = any revision), pins.
+# Every entry: model (matches CONFIG_SIOT_DEV_MODEL), code, hw_rev (0 = any revision), pins.
 # A pin of -1 means "not present on this model".
+#
+# code = the 16-bit PRODUCT on the wire (protocol §7.11, reference §2.1): high byte = family
+# (0x01 board, 0x02 node, 0x03 leaf), low byte = the product inside the family (0xFF = the
+# bench devkit). A CONTRACT: a code is never reused or renumbered once a unit shipped with it.
+# The unit keeps the model string in its factory identity; only the code travels.
 schema: 1
 boards:
   - model: SIOT-BOARD-01
+    code: 0x0100
     family: board
     hw_rev: 0
     default: true          # used, with a warning, when CONFIG_SIOT_DEV_MODEL matches nothing
@@ -25,6 +31,7 @@ boards:
       usb_dm: 19           # native USB-Serial-JTAG (product tablet link)
       usb_dp: 20
   - model: SIOT-NODE-01
+    code: 0x02FF
     family: node          # generic bench AC unit (devkit)
     hw_rev: 0
     pins:
@@ -39,6 +46,7 @@ boards:
       usb_dm: 19
       usb_dp: 20
   - model: SIOT-LEAF-01
+    code: 0x03FF
     family: leaf          # generic bench battery unit (devkit)
     hw_rev: 0
     pins:                  # battery detector: same devkit wiring as the node (docs/spec/definition-detector.md)
@@ -58,14 +66,37 @@ boards:
   # specific peripherals (sounder, station button, sensors) are added here when
   # their feature component lands — never in C.
   - model: SIOT-SIREN-01      # AC siren: node image + sounder driver (features/siot_siren, planned)
+    code: 0x0201
     family: node
     hw_rev: 0
     pins: {led_r: 14, led_g: 47, led_b: 48, led_active_low: false, button: 21, acok: 5, uart0_tx: 43, uart0_rx: 44, usb_dm: 19, usb_dp: 20}
   - model: SIOT-PBS-01        # AC push-button (manual call) station: node image + station input (planned)
+    code: 0x0202
     family: node
     hw_rev: 0
     pins: {led_r: 14, led_g: 47, led_b: 48, led_active_low: false, button: 21, acok: 5, uart0_tx: 43, uart0_rx: 44, usb_dm: 19, usb_dp: 20}
   - model: SIOT-SMOKE-01      # battery smoke detector: leaf image + ADPD188BI / HDC2080 (sensing phase)
+    code: 0x0301
+    family: leaf
+    hw_rev: 0
+    pins: {led_r: 14, led_g: 47, led_b: 48, led_active_low: false, button: 21, acok: 5, uart0_tx: 43, uart0_rx: 44, usb_dm: 19, usb_dp: 20}
+  - model: SIOT-IO-01         # AC I/O module: node image + inputs / relay outputs (planned)
+    code: 0x0203
+    family: node
+    hw_rev: 0
+    pins: {led_r: 14, led_g: 47, led_b: 48, led_active_low: false, button: 21, acok: 5, uart0_tx: 43, uart0_rx: 44, usb_dm: 19, usb_dp: 20}
+  - model: SIOT-REPEATER-01   # AC repeater: node image, nothing else (extends the mesh, parents leafs)
+    code: 0x0204
+    family: node
+    hw_rev: 0
+    pins: {led_r: 14, led_g: 47, led_b: 48, led_active_low: false, button: 21, acok: 5, uart0_tx: 43, uart0_rx: 44, usb_dm: 19, usb_dp: 20}
+  - model: SIOT-SMOKE-AC-01   # AC smoke detector: node image + sensing (planned)
+    code: 0x0205
+    family: node
+    hw_rev: 0
+    pins: {led_r: 14, led_g: 47, led_b: 48, led_active_low: false, button: 21, acok: 5, uart0_tx: 43, uart0_rx: 44, usb_dm: 19, usb_dp: 20}
+  - model: SIOT-HEAT-01       # battery heat detector: leaf image + temperature sensing (planned)
+    code: 0x0302
     family: leaf
     hw_rev: 0
     pins: {led_r: 14, led_g: 47, led_b: 48, led_active_low: false, button: 21, acok: 5, uart0_tx: 43, uart0_rx: 44, usb_dm: 19, usb_dp: 20}

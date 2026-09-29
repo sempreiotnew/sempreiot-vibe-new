@@ -9,6 +9,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
+#include "siot_board_def.h"
 #include "siot_config.h"
 #include "siot_evbus.h"
 #include "siot_identity.h"
@@ -16,6 +17,7 @@
 #include "siot_safr.h"
 #include "siot_survey.h"
 #include "siot_util.h"
+#include "siot_version.h"
 
 static const char *TAG = "siot_netcore";
 
@@ -253,7 +255,7 @@ static void emit_topology(int64_t t)
 static bool emit_name_announce(void)
 {
     const siot_installation_t *code = siot_config_code();
-    uint8_t p[1 + SIOT_NAME_MAX_LEN + 1 + SIOT_ZONE_MAX_LEN + 1];
+    uint8_t p[1 + SIOT_NAME_MAX_LEN + 1 + SIOT_ZONE_MAX_LEN + 1 + SAFR_PRODUCT_MAX_LEN];
     const uint8_t name_len = (uint8_t)strnlen(code->name, SIOT_NAME_MAX_LEN);
     const uint8_t zone_len = (uint8_t)strnlen(code->zone, SIOT_ZONE_MAX_LEN);
     size_t off = 0;
@@ -262,6 +264,8 @@ static bool emit_name_announce(void)
     p[off++] = zone_len;
     memcpy(&p[off], code->zone, zone_len); off += zone_len;
     p[off++] = siot_link_mesh_level() == 1 ? SAFR_ROLE_ROOT : SAFR_ROLE_NODE; /* v3.2 ROLE */
+    off += siot_safr_put_product(&p[off], siot_board_def_product(), siot_board_def()->hw_rev,
+                                 siot_version_string()); /* v3.5: what this unit is and runs */
     return send_uplink(SAFR_MSG_NAME_ANNOUNCE, siot_safr_next_msg_id(), 0, p, off) == ESP_OK;
 }
 

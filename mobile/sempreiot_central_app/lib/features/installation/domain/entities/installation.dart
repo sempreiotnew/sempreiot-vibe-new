@@ -9,6 +9,9 @@ class ProvisionedDevice {
     required this.name,
     required this.zone,
     this.provisionedAt,
+    this.model,
+    this.productCode,
+    this.fw,
   });
 
   final String mac;
@@ -20,6 +23,13 @@ class ProvisionedDevice {
   /// lifecycle Phase 1.
   final DateTime? provisionedAt;
 
+  /// What the unit said it is on its setup network (`/info`): model string,
+  /// PRODUCT code (reference §2.1) and firmware version at provisioning
+  /// time. Null for entries written before 2026-09-29.
+  final String? model;
+  final int? productCode;
+  final String? fw;
+
   Map<String, dynamic> toJson() => {
         'mac': mac,
         'id': id,
@@ -27,6 +37,9 @@ class ProvisionedDevice {
         'zone': zone,
         if (provisionedAt != null)
           'provisionedAt': provisionedAt!.toIso8601String(),
+        if (model != null && model!.isNotEmpty) 'model': model,
+        if (productCode != null) 'productCode': productCode,
+        if (fw != null && fw!.isNotEmpty) 'fw': fw,
       };
 
   factory ProvisionedDevice.fromJson(Map<String, dynamic> json) =>
@@ -38,6 +51,9 @@ class ProvisionedDevice {
         provisionedAt: json['provisionedAt'] is String
             ? DateTime.tryParse(json['provisionedAt'] as String)
             : null,
+        model: json['model'] as String?,
+        productCode: (json['productCode'] as num?)?.toInt(),
+        fw: json['fw'] as String?,
       );
 }
 

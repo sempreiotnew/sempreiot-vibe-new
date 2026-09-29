@@ -116,8 +116,9 @@ void siot_leaf_outbox_pop(siot_leaf_outbox_t *o)
 siot_leaf_rx_kind_t siot_leaf_rx_check(siot_leaf_rx_state_t *st, uint16_t boot_ctr, uint32_t msg_ctr, uint16_t msg_id)
 {
     if (st->seen && boot_ctr == st->boot_ctr && msg_ctr <= st->msg_ctr) return SIOT_LEAF_RX_REPLAY;
-    /* A leaf's MSG_ID restarts with every wake (a wake is a boot): a repeat
-     * is only a duplicate inside the same boot. */
+    /* A wake is a boot: a repeat is only a duplicate inside the same boot
+     * (a leaf continues its MSG_ID across wakes, but after a power cycle or
+     * a 16-bit wrap the same id can come back under another BOOT_CTR). */
     const bool dup = st->seen && boot_ctr == st->boot_ctr && msg_id == st->msg_id;
     st->seen = true;
     st->boot_ctr = boot_ctr;

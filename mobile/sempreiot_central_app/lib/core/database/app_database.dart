@@ -78,6 +78,14 @@ class MeshDevices extends Table {
   // TOPOLOGY, JSON [{"mac":..,"rssi":..}] — "pais ao alcance" on the sheet and
   // the walk-test flags (fewer than 2, link below −85 dBm). Null for nodes.
   TextColumn get parentCandidates => text().nullable()();
+  // v3.5 product identity (spec §7.11 NAME_ANNOUNCE / §7.12 DEVICE_TABLE).
+  // productCode: the 16-bit PRODUCT (high byte = family), catalogue in
+  // safr_product.dart; hwRev: hardware revision; fwVersion: e.g. "0.1.0-dev".
+  // Null = never reported (firmware older than v3.5). A known value is never
+  // replaced by unknown/empty.
+  IntColumn get productCode => integer().nullable()();
+  IntColumn get hwRev => integer().nullable()();
+  TextColumn get fwVersion => text().nullable()();
 
   @override
   Set<Column> get primaryKey => {mac};
@@ -117,7 +125,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 9;
+  int get schemaVersion => 10;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -166,6 +174,12 @@ class AppDatabase extends _$AppDatabase {
           if (from < 9) {
             // SAFR v3.4 leaf link (protocol §12.7): parent candidates.
             await m.addColumn(meshDevices, meshDevices.parentCandidates);
+          }
+          if (from < 10) {
+            // SAFR v3.5 product identity (protocol §7.11/§7.12).
+            await m.addColumn(meshDevices, meshDevices.productCode);
+            await m.addColumn(meshDevices, meshDevices.hwRev);
+            await m.addColumn(meshDevices, meshDevices.fwVersion);
           }
         },
       );

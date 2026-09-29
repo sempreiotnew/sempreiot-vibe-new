@@ -52,6 +52,36 @@ Run that in every shell before any `idf.py` command (`build`, `set-target`, `fla
 
 ---
 
+## 🚨 CRITICAL — one LED language, firmware and app
+
+Every unit (board, node, leaf) speaks the **same LED language**, and the tablet app **mirrors it
+exactly** on screen. Source of truth: `firmware/components/ui/siot_ui_led` (`siot_ui_led.h` /
+`siot_ui_led.c`), catalogued in `docs/sempreiot-system-reference.md` §3.7 row 7.7.
+
+**Rules — non-negotiable:**
+
+1. **One meaning per colour, on every device.** white blink = setup · white breathe = finding the
+   network · blue = a frame this unit sent (100 ms background, 500 ms message) · **cyan = the
+   central confirmed this unit's frame (the ONLY "confirmed" colour — never green)** · green flash =
+   root node · magenta flash = board · red = alarm / fault / nothing came back · green / yellow / red
+   blinks = link quality in a survey · blue blink = IDENTIFY. Do not give a device its own colour
+   for something another device already signals.
+2. **Go through `siot_ui_led`.** Post the bus event (`SIOT_EVT_ACK_RECEIVED`, `SIOT_EVT_SAFR_TX`,
+   `SIOT_EVT_STATE_CHANGED`, …) and let `siot_ui_led` choose the colour and the duration. Call
+   `siot_ui_led_pulse` / `_set` directly only for something no event covers, and with the
+   `SIOT_LED_*_MS` constants — never a private number.
+3. **A firmware LED change is not done until the app shows the same thing.** In the same change,
+   update `mobile/sempreiot_central_app/lib/features/central/domain/led/led_language.dart`
+   (colours, durations, queue), `.../application/device_led_provider.dart` (which frame lights
+   which unit) and `test/central/device_led_test.dart`, then run `flutter test
+   test/central/device_led_test.dart`. Same for the packet colours on the Rede map.
+4. **And the docs:** reference §3.7 row 7.7, protocol §12.8 (leafs), `docs/devices/*.md` LED tables,
+   and the installer texts in the app that name a colour (provisioning wizard, "Entrar pela placa").
+5. What never crosses the wire (survey blinks, setup, button hold) cannot be mirrored; say so in
+   `device_led_provider.dart`'s header instead of guessing.
+
+---
+
 ## Database tables — keep the reference in sync
 
 The tablet app's local database (`mobile/sempreiot_central_app/lib/core/database/app_database.dart`,

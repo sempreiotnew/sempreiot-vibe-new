@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/app_database.dart';
 import '../domain/safr/safr_parser.dart';
+import '../domain/safr/safr_product.dart';
 import '../domain/safr/safr_v2_frame.dart';
 import '../domain/safr/safr_v2_payloads.dart';
 import '../domain/safr/safr_identity.dart';
@@ -338,11 +339,19 @@ class SafrIngestService {
     var name = existing?.name;
     var zone = existing?.zone;
     var registryState = existing?.registryState;
+    // v3.5 product identity: kept across every frame that does not carry it.
+    var productCode = existing?.productCode;
+    var hwRev = existing?.hwRev;
+    var fwVersion = existing?.fwVersion;
     if (payload case SafrNameAnnouncePayload p) {
       name = p.name;
       zone = p.zone;
       // v3.2 trailing ROLE byte: a leaf says so on its very first frame.
       if (p.role != SafrNodeRole.unknown) role = p.role.wire;
+      // v3.5 extension: unknown/empty never replaces a known value.
+      productCode = _knownProduct(p.productCode) ?? productCode;
+      hwRev = _knownHwRev(p.hwRev) ?? hwRev;
+      fwVersion = _knownFw(p.fwVersion) ?? fwVersion;
     }
     // Hearing directly from a device (any frame) means it's live — supersedes
     // the 'enrolled' marker INSTALLATION may have set before this ever arrived.
@@ -371,9 +380,18 @@ class SafrIngestService {
             alarmLatched: Value(alarmLatched),
             alarmLatchedAt: Value(alarmLatchedAt),
             parentCandidates: Value(parentCandidates),
+            productCode: Value(productCode),
+            hwRev: Value(hwRev),
+            fwVersion: Value(fwVersion),
           ),
         );
   }
+
+  // v3.5 product fields: what counts as "the frame says something".
+  static int? _knownProduct(int? code) =>
+      code == null || code == safrProductUnknown ? null : code;
+  static int? _knownHwRev(int? rev) => rev == null || rev == 0 ? null : rev;
+  static String? _knownFw(String? fw) => fw == null || fw.isEmpty ? null : fw;
 
   /// Registry update for a journal-replayed event: the frame counters belong
   /// to the root, so only event-derived fields (battery, DEV_SEQ, latch) are
@@ -413,6 +431,9 @@ class SafrIngestService {
             lastDevSeq: Value(lastDevSeq),
             alarmLatched: Value(alarmLatched),
             alarmLatchedAt: Value(alarmLatchedAt),
+            productCode: Value(existing?.productCode),
+            hwRev: Value(existing?.hwRev),
+            fwVersion: Value(existing?.fwVersion),
           ),
         );
   }
@@ -452,6 +473,9 @@ class SafrIngestService {
               lastDevSeq: Value(existing?.lastDevSeq ?? 0),
               alarmLatched: Value(existing?.alarmLatched ?? 0),
               alarmLatchedAt: Value(existing?.alarmLatchedAt),
+              productCode: Value(existing?.productCode),
+              hwRev: Value(existing?.hwRev),
+              fwVersion: Value(existing?.fwVersion),
             ),
           );
     }
@@ -476,7 +500,8 @@ class SafrIngestService {
 
   /// v3.2 DEVICE_TABLE (spec §7.12, lifecycle §3): mirror the board's table
   /// into the registry. Rows the board lists get its state/flags/name/zone
-  /// (the board's annotation wins over what this tablet guessed); after the
+  /// (the board's annotation wins over what this tablet guessed) and, from
+  /// v3.5, product / hardware revision / firmware version; after the
   /// last page, rows the board no longer lists and that were only ever
   /// board-sourced are pruned.
   final _tableSeen = <String>{};
@@ -518,6 +543,12 @@ class SafrIngestService {
               boardState: Value(e.state.wire),
               boardFlags: Value(e.flags),
               tableSyncedAt: Value(now),
+              // v3.5: only what the board actually knows; a v3.2 page (or
+              // a 0 / empty field) leaves the stored values alone.
+              productCode:
+                  Value(_knownProduct(e.productCode) ?? existing?.productCode),
+              hwRev: Value(_knownHwRev(e.hwRev) ?? existing?.hwRev),
+              fwVersion: Value(_knownFw(e.fwVersion) ?? existing?.fwVersion),
             ),
           );
     }

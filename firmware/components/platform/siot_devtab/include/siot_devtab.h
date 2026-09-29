@@ -45,6 +45,7 @@ typedef enum {
 #define SIOT_DEV_F_PENDING_DECOMMISSION 0x10
 
 #define SIOT_DEV_ROLE_UNKNOWN 0xFF
+#define SIOT_DEVTAB_FW_MAX_LEN 24 /* = SAFR_FW_MAX_LEN */
 
 typedef struct {
     uint8_t  mac[6];
@@ -55,6 +56,9 @@ typedef struct {
     int64_t  last_seen_ms;  /* RAM only; <0 = never this boot */
     char     name[SIOT_NAME_MAX_LEN + 1];
     char     zone[SIOT_ZONE_MAX_LEN + 1];
+    uint16_t product;       /* PRODUCT the unit announced (spec §7.11), 0 = not yet */
+    uint8_t  hw_rev;
+    char     fw[SIOT_DEVTAB_FW_MAX_LEN + 1]; /* firmware version it announced, "" = not yet */
 } siot_devtab_entry_t;
 
 /* Loads every persisted entry into RAM. Call once after nvs_flash_init(). */
@@ -77,6 +81,12 @@ bool siot_devtab_touch(const uint8_t mac[6], int64_t now_ms, uint32_t epoch_now,
 /* NAME_ANNOUNCE: adopt name/zone unless ANNOTATED; when they equal the
  * pending rename, PENDING_RENAME clears. */
 esp_err_t siot_devtab_announce(const uint8_t mac[6], const char *name, const char *zone, uint8_t role);
+
+/* NAME_ANNOUNCE v3.5: what the unit is (PRODUCT, HW_REV) and the firmware
+ * it runs. Stored only when something changed (an OTA changes `fw`); a
+ * product of 0 or an empty `fw` never erases a known value. Creates nothing:
+ * ESP_ERR_NOT_FOUND when the MAC is unknown. */
+esp_err_t siot_devtab_set_product(const uint8_t mac[6], uint16_t product, uint8_t hw_rev, const char *fw);
 
 /* /enroll hint from a phone: creates an `expected` entry (no-op when known). */
 esp_err_t siot_devtab_hint(const uint8_t mac[6], const char *name, const char *zone);

@@ -125,6 +125,27 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
             mono: true,
             trailing: _CopyButton(label: 'MAC', value: node.mac),
           ),
+          const InfoRowDivider(),
+          _Fact(
+            icon: Icons.inventory_2_outlined,
+            label: 'Produto',
+            value: node.productLabel,
+          ),
+          if ((node.hwRev ?? 0) > 0) ...[
+            const InfoRowDivider(),
+            _Fact(
+              icon: Icons.memory_rounded,
+              label: 'Revisão de hardware',
+              value: '${node.hwRev}',
+            ),
+          ],
+          const InfoRowDivider(),
+          _Fact(
+            icon: Icons.system_update_alt_rounded,
+            label: 'Firmware',
+            value: node.firmwareLabel,
+            mono: node.firmwareLabel.isNotEmpty,
+          ),
         ]),
         const SizedBox(height: 24),
         const InfoSectionHeader('REDE'),

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'safr_product.dart';
 import 'safr_v2_frame.dart';
 
 /// Payload models and per-MSG_TYPE fixed-layout codecs.
@@ -696,6 +697,9 @@ class SafrNameAnnouncePayload extends SafrV2Payload {
     required this.name,
     required this.zone,
     this.role = SafrNodeRole.unknown,
+    this.productCode,
+    this.hwRev,
+    this.fwVersion,
   });
 
   final String name;
@@ -703,6 +707,16 @@ class SafrNameAnnouncePayload extends SafrV2Payload {
 
   /// v3.2 optional trailing ROLE byte (spec §7.11); `unknown` when absent.
   final SafrNodeRole role;
+
+  /// v3.5 optional extension after ROLE (spec §7.11): `PRODUCT u16 ‖ HW_REV
+  /// u8 ‖ FW_LEN u8 ‖ FW`. All three are null when the frame does not carry
+  /// it (older firmware) or carries it malformed. As on the wire otherwise:
+  /// PRODUCT 0x0000 = unknown, HW_REV 0 = not stated, FW may be empty.
+  final int? productCode;
+  final int? hwRev;
+  final String? fwVersion;
+
+  bool get hasProductFields => productCode != null;
 
   static SafrNameAnnouncePayload? parse(Uint8List p) {
     if (p.isEmpty) return null;
@@ -719,9 +733,32 @@ class SafrNameAnnouncePayload extends SafrV2Payload {
       if (zoneLen > 16 || off + zoneLen > p.length) return null;
       final zone = utf8.decode(p.sublist(off, off + zoneLen));
       off += zoneLen;
-      final role =
-          off < p.length ? SafrNodeRole.fromWire(p[off]) : SafrNodeRole.unknown;
-      return SafrNameAnnouncePayload(name: name, zone: zone, role: role);
+      if (off >= p.length) {
+        return SafrNameAnnouncePayload(name: name, zone: zone);
+      }
+      final role = SafrNodeRole.fromWire(p[off]);
+      off += 1;
+      // v3.5 extension: all of it or none of it. Truncated, FW_LEN > 24 or
+      // FW running past the payload -> ignored, name/zone/role still count.
+      int? productCode;
+      int? hwRev;
+      String? fwVersion;
+      if (off + 4 <= p.length) {
+        final fwLen = p[off + 3];
+        if (fwLen <= safrFwVersionMaxLen && off + 4 + fwLen <= p.length) {
+          productCode = (p[off] << 8) | p[off + 1];
+          hwRev = p[off + 2];
+          fwVersion = _fwVersion(p.sublist(off + 4, off + 4 + fwLen));
+        }
+      }
+      return SafrNameAnnouncePayload(
+        name: name,
+        zone: zone,
+        role: role,
+        productCode: productCode,
+        hwRev: hwRev,
+        fwVersion: fwVersion,
+      );
     } on RangeError {
       return null;
     } on FormatException {
@@ -733,19 +770,53 @@ class SafrNameAnnouncePayload extends SafrV2Payload {
     required String name,
     required String zone,
     SafrNodeRole? role,
+    int? productCode,
+    int hwRev = 0,
+    String fwVersion = '',
   }) {
     final nameBytes = utf8.encode(name);
     final zoneBytes = utf8.encode(zone);
     assert(nameBytes.length <= 32);
     assert(zoneBytes.length <= 16);
+    // The v3.5 extension only exists after a ROLE byte (spec §7.11).
+    assert(productCode == null || role != null);
     return Uint8List.fromList([
       nameBytes.length,
       ...nameBytes,
       zoneBytes.length,
       ...zoneBytes,
       if (role != null) role.wire,
+      if (role != null && productCode != null)
+        ..._productFields(productCode, hwRev, fwVersion),
     ]);
   }
+}
+
+/// FW bytes -> text (v3.5): ASCII, cut at the first NUL; anything that is not
+/// printable ASCII reads as '?' so a bad unit cannot garble the screen.
+String _fwVersion(Uint8List b) {
+  final out = StringBuffer();
+  for (final c in b) {
+    if (c == 0) break;
+    out.writeCharCode(c >= 0x20 && c <= 0x7E ? c : 0x3F);
+  }
+  return out.toString().trim();
+}
+
+/// `PRODUCT u16 ‖ HW_REV u8 ‖ FW_LEN u8 ‖ FW` (v3.5, spec §7.11/§7.12).
+List<int> _productFields(int productCode, int hwRev, String fwVersion) {
+  final fw = ascii.encode(fwVersion);
+  if (fw.length > safrFwVersionMaxLen) {
+    throw ArgumentError(
+        'firmware version longer than $safrFwVersionMaxLen bytes: "$fwVersion"');
+  }
+  return [
+    (productCode >> 8) & 0xFF,
+    productCode & 0xFF,
+    hwRev & 0xFF,
+    fw.length,
+    ...fw,
+  ];
 }
 
 // ── v3.2 installation lifecycle payloads (spec §7.6, §7.12–§7.15) ──────────
@@ -911,6 +982,24 @@ abstract final class SafrReplaceDeviceArgs {
       : null;
 }
 
+/// `GET_DEVICE_TABLE` ARGS (CMD 0x18): `page u8 ‖ format u8`. `page` 0 = all
+/// pages. `format` (v3.5) 1 = "send the entries with the product fields"; a
+/// pre-v3.5 board ignores the byte and answers in the v3.2 layout.
+abstract final class SafrGetDeviceTableArgs {
+  /// v3.2 entry layout.
+  static const formatLegacy = 0;
+
+  /// v3.5 entry layout (product, hardware revision, firmware version).
+  static const formatProduct = 1;
+
+  static Uint8List build({int page = 0, int format = formatProduct}) =>
+      Uint8List.fromList([page & 0xFF, format & 0xFF]);
+
+  static ({int page, int format})? parse(Uint8List p) => p.isEmpty
+      ? null
+      : (page: p[0], format: p.length > 1 ? p[1] : formatLegacy);
+}
+
 /// One entry of `DEVICE_TABLE` (spec §7.12).
 class SafrDeviceTableEntry {
   const SafrDeviceTableEntry({
@@ -921,6 +1010,9 @@ class SafrDeviceTableEntry {
     required this.lastSeenAgeS,
     required this.name,
     required this.zone,
+    this.productCode = safrProductUnknown,
+    this.hwRev = 0,
+    this.fwVersion = '',
   });
 
   final String mac;
@@ -932,6 +1024,12 @@ class SafrDeviceTableEntry {
   final int? lastSeenAgeS;
   final String name;
   final String zone;
+
+  /// v3.5 product fields, present when the page says so (COUNT bit 7).
+  /// 0x0000 / 0 / '' = the board does not know (yet), or a v3.2 page.
+  final int productCode;
+  final int hwRev;
+  final String fwVersion;
 
   bool get seenEver => flags & SafrDeviceFlags.seenEver != 0;
   bool get annotated => flags & SafrDeviceFlags.annotated != 0;
@@ -949,12 +1047,21 @@ class SafrDeviceTablePayload extends SafrV2Payload {
     required this.pageCount,
     required this.total,
     required this.entries,
+    this.hasProductFields = false,
   });
+
+  /// Bit 7 of the COUNT byte (v3.5): this page's entries carry the product
+  /// fields. The entry count is the low 7 bits.
+  static const countProductFlag = 0x80;
+  static const countMask = 0x7F;
 
   final int page; // 1-based
   final int pageCount;
   final int total;
   final List<SafrDeviceTableEntry> entries;
+
+  /// True for a v3.5 page; false = the v3.2 entry layout (older board).
+  final bool hasProductFields;
 
   bool get isLastPage => page >= pageCount;
 
@@ -964,7 +1071,9 @@ class SafrDeviceTablePayload extends SafrV2Payload {
       final page = r.u8();
       final pageCount = r.u8();
       final total = r.u16();
-      final count = r.u8();
+      final countByte = r.u8();
+      final hasProductFields = countByte & countProductFlag != 0;
+      final count = countByte & countMask;
       final entries = <SafrDeviceTableEntry>[];
       for (var i = 0; i < count; i++) {
         final mac = safrMacToString(r.bytes(6));
@@ -974,6 +1083,18 @@ class SafrDeviceTablePayload extends SafrV2Payload {
         final age = r.u16();
         final name = r.str(32);
         final zone = r.str(16);
+        var productCode = safrProductUnknown;
+        var hwRev = 0;
+        var fwVersion = '';
+        if (hasProductFields) {
+          productCode = r.u16();
+          hwRev = r.u8();
+          final fwLen = r.u8();
+          if (fwLen > safrFwVersionMaxLen) {
+            throw const FormatException('bad length prefix');
+          }
+          fwVersion = _fwVersion(r.bytes(fwLen));
+        }
         entries.add(SafrDeviceTableEntry(
           mac: mac,
           role: role,
@@ -982,6 +1103,9 @@ class SafrDeviceTablePayload extends SafrV2Payload {
           lastSeenAgeS: age == 0xFFFF ? null : age,
           name: name,
           zone: zone,
+          productCode: productCode,
+          hwRev: hwRev,
+          fwVersion: fwVersion,
         ));
       }
       return SafrDeviceTablePayload(
@@ -989,6 +1113,7 @@ class SafrDeviceTablePayload extends SafrV2Payload {
         pageCount: pageCount,
         total: total,
         entries: entries,
+        hasProductFields: hasProductFields,
       );
     } on FormatException {
       return null;
@@ -1002,13 +1127,17 @@ class SafrDeviceTablePayload extends SafrV2Payload {
     required int pageCount,
     required int total,
     required List<SafrDeviceTableEntry> entries,
+    bool productFields = false,
   }) {
+    if (entries.length > countMask) {
+      throw ArgumentError('more than $countMask entries in one page');
+    }
     final out = <int>[
       page & 0xFF,
       pageCount & 0xFF,
       (total >> 8) & 0xFF,
       total & 0xFF,
-      entries.length,
+      entries.length | (productFields ? countProductFlag : 0),
     ];
     for (final e in entries) {
       final age = e.lastSeenAgeS ?? 0xFFFF;
@@ -1021,6 +1150,9 @@ class SafrDeviceTablePayload extends SafrV2Payload {
         ..add(age & 0xFF)
         ..addAll(_str(e.name, 32))
         ..addAll(_str(e.zone, 16));
+      if (productFields) {
+        out.addAll(_productFields(e.productCode, e.hwRev, e.fwVersion));
+      }
     }
     return Uint8List.fromList(out);
   }

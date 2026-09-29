@@ -74,6 +74,9 @@ class ProvisioningWizardNotifier
   /// ~60s waiting for a conclusive /status before giving up.
   static const _maxStatusPolls = 30;
 
+  /// Polls that may answer 'stored' before the result screen is shown.
+  static const _maxStoredPolls = 2;
+
   Timer? _infoTimer;
   Timer? _statusTimer;
   bool _requestInFlight = false;
@@ -335,6 +338,9 @@ class ProvisioningWizardNotifier
           name: name,
           zone: zone,
           provisionedAt: DateTime.now().toUtc(),
+          model: info.model,
+          productCode: info.product?.code,
+          fw: info.fw,
         ),
       );
       // A zone typed in the wizard becomes a suggestion for the next unit.
@@ -350,13 +356,20 @@ class ProvisioningWizardNotifier
       return;
     }
 
-    _lastKnownStatus = null;
+    // The unit answers /provision with 202 only AFTER it wrote the code to
+    // its flash (prov_http.c `handle_provision`), so from here on "stored"
+    // is a fact the unit itself told us. It matters because the setup
+    // network goes away as the unit reboots into normal mode: a /status that
+    // never answers is then the expected end, not a failure.
+    _lastKnownStatus = 'stored';
     _startStatusPolling();
   }
 
   /// The device's SoftAP stays up until /status has been polled once (or
-  /// 30s pass — POC-BRIEF §4.1), specifically so this polling can observe
-  /// the outcome before the device reboots into normal mode.
+  /// 30s pass — POC-BRIEF §4.1), so this polling can read the outcome before
+  /// the device reboots into normal mode. Firmware before 2026-09-29
+  /// rebooted INSIDE the first /status, before replying: the poll below then
+  /// throws and the 202 of /provision is what confirms the result.
   void _startStatusPolling() {
     var attempts = 0;
     _statusTimer?.cancel();
@@ -372,11 +385,13 @@ class ProvisioningWizardNotifier
           case 'online':
             _finish(ProvisioningStep.resultOnline);
           case 'stored':
-            // Not necessarily terminal (spec: stored -> joining -> online),
-            // but the SoftAP can vanish any moment after this per spec —
-            // keep polling a little in case 'online' follows quickly, but
-            // this is already a confirmed, non-fabricated success state.
-            if (attempts >= _maxStatusPolls) _finish(ProvisioningStep.resultStored);
+            // Confirmed. The unit reboots about 1 s after this reply and the
+            // setup network goes with it; a unit never reports 'online' from
+            // its setup network today, so there is nothing more to wait for
+            // than a couple of polls.
+            if (attempts >= _maxStoredPolls) {
+              _finish(ProvisioningStep.resultStored);
+            }
           case 'failed':
             _finish(ProvisioningStep.resultFailed);
           default:

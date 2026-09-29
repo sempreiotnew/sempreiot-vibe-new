@@ -191,6 +191,15 @@ def main() -> int:
     )
     args = ap.parse_args()
 
+    if args.model:
+        # The model must be a catalogue row (reference §2.1): a typo here would give a unit the
+        # firmware cannot identify — it would report PRODUCT 0x0000 and miss every targeted update.
+        pinmap = Path(__file__).resolve().parent / "pinmap" / "pinmap.yaml"
+        known = re.findall(r"^\s*-\s*model:\s*(\S+)", pinmap.read_text(), flags=re.M) if pinmap.is_file() else []
+        if known and args.model not in known:
+            print(f"error: model {args.model!r} is not in {pinmap.name}; known: {', '.join(known)}", file=sys.stderr)
+            return 1
+
     if args.qr_only:
         d = Path(args.qr_only)
         json_path, png_path = d / "sticker.json", d / "sticker.png"

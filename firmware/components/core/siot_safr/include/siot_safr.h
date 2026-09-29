@@ -111,6 +111,15 @@ extern "C" {
 #define SAFR_ROLE_NODE  1
 #define SAFR_ROLE_LEAF  2
 
+/* PRODUCT (v3.5, §7.11 / §7.12): family byte ‖ product byte. The catalogue is
+ * tools/pinmap/pinmap.yaml (reference §2.1); only the family byte is known here. */
+#define SAFR_PRODUCT_UNKNOWN 0x0000
+#define SAFR_FAMILY_BOARD    0x01
+#define SAFR_FAMILY_NODE     0x02
+#define SAFR_FAMILY_LEAF     0x03
+#define SAFR_FW_MAX_LEN      24   /* FW version string, no terminator on the wire */
+#define SAFR_PRODUCT_MAX_LEN (2 + 1 + 1 + SAFR_FW_MAX_LEN)
+
 /* COMMAND CMD */
 #define SAFR_CMD_LINK_CHECK 0x00 /* downlink supervision no-op (§9.3) */
 #define SAFR_CMD_SILENCE    0x01
@@ -259,6 +268,25 @@ void siot_safr_set_level(uint8_t level);
 /* Next MSG_ID for a NEW transmission group (spec §6): fast retries reuse it,
  * a 60 s re-announcement takes a new one. */
 uint16_t siot_safr_next_msg_id(void);
+
+/* The product fields appended to NAME_ANNOUNCE (§7.11) and to a v3.5
+ * DEVICE_TABLE entry (§7.12): PRODUCT u16 ‖ HW_REV u8 ‖ FW_LEN u8 ‖ FW.
+ * put: writes them at `p` (room for SAFR_PRODUCT_MAX_LEN), `fw` cut at
+ *      SAFR_FW_MAX_LEN, NULL = empty; returns the bytes written.
+ * get: reads them from the `len` bytes at `p`; returns the bytes consumed, or
+ *      0 when they are absent, truncated or FW_LEN is out of range (the
+ *      outputs are then unknown / 0 / ""). `fw` holds SAFR_FW_MAX_LEN + 1. */
+size_t siot_safr_put_product(uint8_t *p, uint16_t product, uint8_t hw_rev, const char *fw);
+size_t siot_safr_get_product(const uint8_t *p, size_t len, uint16_t *product, uint8_t *hw_rev,
+                             char fw[SAFR_FW_MAX_LEN + 1]);
+
+/* The last MSG_ID handed out, and a way to continue from one. For a unit whose
+ * every wake is a boot (battery leaf, spec §12.2): siot_safr_init() restarts
+ * at 0, so without this each wake would reuse MSG_ID 1, 2, … and every
+ * receiver's (SRC_MAC, MSG_ID) dedupe window (§9.1, 30 s) would take a new
+ * frame for a repeat of the previous wake's. */
+uint16_t siot_safr_last_msg_id(void);
+void siot_safr_set_last_msg_id(uint16_t last);
 
 /* Builds a frame from this device (fresh MSG_CTR every call — a CCM nonce is
  * never reused, spec §4) and hands it to the TX callback.

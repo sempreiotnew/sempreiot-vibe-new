@@ -96,13 +96,15 @@ after 180 s or when the leaf reappears through another parent. The board's devic
 the leaf's first frame through any parent it re-originates every pending command.
 
 **Button** (spec §12.8): the single GPIO 21 button wakes the leaf and **always transmits**. Immediate blue
-100 ms → unbound: one discovery first (one blink per answering unit) → bound with a path: `MANUAL_TEST`
+100 ms → unbound or `NO_PATH`: one discovery first (no LED) → bound with a path: `MANUAL_TEST`
 (blue sent, **cyan** = the panel's ACK came back within ≈ 3 s, else one red blink) → otherwise: survey
-probe (one blink per answering unit in its colour, one red = nobody) → sleep. Probe copies never pulse blue. Hold 5 s = factory reset. Double tap = bench ALARM. Survey is run *from* a leaf, never
+probe (one blink per answering unit in its colour, 400 ms on / 200 ms dark like a node's, one red = nobody) → sleep. Probe copies never pulse blue. Hold 5 s = factory reset. Double tap = bench ALARM. Survey is run *from* a leaf, never
 *to* it.
 
-**After provisioning** (spec §12.8, §12.9): `stored` → awake ≤ 30 s: probe → bind → announce → one blink
-per candidate → **green solid 3 s** (bound and acknowledged, no `NO_PATH`) or **one red blink** → sleep.
+**After provisioning** (spec §12.8, §12.9): `stored` → awake ≤ 30 s, and the leaf does by itself what a
+press does: probe → bind → announce → the walk test: blue sent → **cyan** (the panel's ACK came back) or
+**one red blink**; with no path to the board, the survey blinks instead → sleep. Same LEDs as a press and
+as every other unit; no green verdict (2026-09-29).
 Setup network 2 minutes; no `/identify` → deep sleep, button-only wake.
 
 **Supervision** (spec §9.2): the board marks a leaf missing after 3 × 60 s = 180 s, inside the 200 s
@@ -159,8 +161,8 @@ and `siot_coordinator` forward any authenticated frame regardless of link (brief
 |---|---|
 | Asleep | **off, always** |
 | Setup (no code, 2 min window) | white blink |
-| Post-provisioning verdict (≤ 30 s) | one blink per candidate parent in its colour → green solid 3 s (bound) or one red blink |
-| Button press | blue 100 ms at once → walk test: blue 500 ms sent, cyan 500 ms confirmed, or one red · survey: one blink per answering unit, one red = nobody |
+| Post-provisioning verdict (≤ 30 s) | the same as a button press, run by the leaf itself |
+| Button press | blue 100 ms at once → (unbound or `NO_PATH`: discovery, no LED) → walk test: blue 500 ms sent, cyan 500 ms confirmed, or one red · survey: one blink per answering unit, one red = nobody |
 | COMM_FAULT | one red blink + trouble chirp per wake |
 | Alarm active | red solid + local sounder, awake |
 | IDENTIFY (from the mailbox) | blue blink N s, then sleep |

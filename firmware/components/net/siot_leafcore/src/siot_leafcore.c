@@ -36,6 +36,7 @@
 #include "siot_sensor.h"
 #include "siot_ui_led.h"
 #include "siot_util.h"
+#include "siot_version.h"
 
 static const char *TAG = "siot_leaf";
 
@@ -47,7 +48,6 @@ static const char *TAG = "siot_leaf";
 #define SURVEY_COPIES      4
 #define SURVEY_SPACING_MS  1200
 #define SURVEY_WINDOW_MS   4500
-#define VERDICT_BLINK_MS   400
 #define HOLD_CHECK_MS      5500      /* button still held after a wake: let the 5 s factory-reset hold run */
 #define NVS_NS             "siot_leaf"
 #define NVS_KEY_OUTBOX     "outbox"
@@ -71,6 +71,7 @@ typedef struct {
     bool     no_path;           /* last ACK said NO_PATH */
     bool     heard_any;         /* last probe got offers (none online) → probe every wake */
     uint16_t wakes_since_probe;
+    uint16_t msg_id;            /* last MSG_ID used: continues across wakes (spec §12.2) */
     uint32_t wake_count;
     siot_leaf_outbox_t outbox;
 } leaf_rtc_t;
@@ -164,6 +165,9 @@ static void rtc_reset(void)
     s_rtc.parent_layer = 0xFF;
     s_rtc.parent_link = (int8_t)SAFR_NA_RSSI;
     s_rtc.verdict_pending = true;
+    /* No RTC state to continue from (power-on): start away from the ids the
+     * previous life may have used in the last 30 s. */
+    s_rtc.msg_id = (uint16_t)(siot_config_boot_ctr() << 4);
     siot_leaf_outbox_init(&s_rtc.outbox);
     outbox_load();
 }
@@ -367,11 +371,12 @@ static void on_offer(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_
         c->link = link;
         c->layer = f->payload[2];
     }
-    if (s_led_allowed) { /* one blink per answering unit, in its link colour (§12.8) */
-        const siot_led_pattern_t col = link >= SIOT_LED_SURVEY_GOOD_DBM ? SIOT_LED_GREEN_SOLID
-                                     : link >= SIOT_LED_SURVEY_WEAK_DBM ? SIOT_LED_YELLOW_SOLID
-                                                                        : SIOT_LED_RED_SOLID;
-        siot_ui_led_pulse(col, VERDICT_BLINK_MS, false);
+    /* Survey only, and through siot_ui_led like a node's (reference §3.7 row
+     * 7.7): one blink per answering unit in its link colour, a dark gap after
+     * each. A parent discovery shows nothing — its result is the walk test. */
+    if (s_led_allowed && s_probe_purpose == SAFR_PROBE_SURVEY) {
+        const siot_evt_rssi_t ans = {.rssi = link};
+        siot_evbus_post(SIOT_EVT_SURVEY_ANSWER, &ans, sizeof(ans));
     }
 }
 
@@ -394,13 +399,15 @@ static void build_event(uint8_t *p, uint8_t evt_type, uint8_t evt_code)
 
 static bool emit_name_announce(void)
 {
-    uint8_t p[1 + SIOT_NAME_MAX_LEN + 1 + SIOT_ZONE_MAX_LEN + 1];
+    uint8_t p[1 + SIOT_NAME_MAX_LEN + 1 + SIOT_ZONE_MAX_LEN + 1 + SAFR_PRODUCT_MAX_LEN];
     const uint8_t name_len = (uint8_t)strnlen(s_code->name, SIOT_NAME_MAX_LEN);
     const uint8_t zone_len = (uint8_t)strnlen(s_code->zone, SIOT_ZONE_MAX_LEN);
     size_t off = 0;
     p[off++] = name_len; memcpy(&p[off], s_code->name, name_len); off += name_len;
     p[off++] = zone_len; memcpy(&p[off], s_code->zone, zone_len); off += zone_len;
     p[off++] = SAFR_ROLE_LEAF;
+    off += siot_safr_put_product(&p[off], siot_board_def_product(), siot_board_def()->hw_rev,
+                                 siot_version_string()); /* v3.5: what this unit is and runs */
     return siot_safr_send(SAFR_BCAST_MAC, SAFR_MSG_NAME_ANNOUNCE, siot_safr_next_msg_id(), 0, p, off) == ESP_OK
            && s_last_tx_ok;
 }
@@ -661,35 +668,9 @@ static void wait_led(uint32_t ms)
     while (now_ms() < until) pump(50);
 }
 
-/* §12.8 first wake with a code: blinks per candidate, then green 3 s / one red. */
-static void verdict_after_provisioning(void)
-{
-    ESP_LOGW(TAG, "post-provisioning verdict (≤ %d s)", SIOT_LEAF_VERDICT_WINDOW_MS / 1000);
-    s_led_allowed = true;
-    const bool bound = discover();
-    bool ok = false;
-    if (bound) {
-        uint8_t p[20];
-        build_heartbeat(p);
-        ok = send_acked(SAFR_MSG_HEARTBEAT, p, sizeof(p), SIOT_LEAF_ACK_WAIT_MS, 0) && !s_rtc.no_path;
-    }
-    wait_led((uint32_t)s_cand_n * VERDICT_BLINK_MS + 300);
-    if (ok) {
-        ESP_LOGW(TAG, "verdict: GREEN (bound, parent acknowledged)");
-        siot_ui_led_set(SIOT_LED_GREEN_SOLID, 3000);
-        wait_led(3200);
-    } else {
-        ESP_LOGW(TAG, "verdict: RED (%s)", !bound ? "no parent" : s_rtc.no_path ? "parent has no path" : "parent did not acknowledge");
-        siot_ui_led_pulse(SIOT_LED_RED_SOLID, VERDICT_BLINK_MS, false);
-        wait_led(600);
-    }
-    s_led_allowed = false;
-    s_rtc.verdict_pending = false;
-}
-
 static void walk_test(void)
 {
-    ESP_LOGW(TAG, "button: walk test (MANUAL_TEST, waiting for the central's ACK)");
+    ESP_LOGW(TAG, "walk test (MANUAL_TEST, waiting for the central's ACK)");
     uint8_t ev[17];
     build_event(ev, SAFR_EVT_ALERT, SAFR_EC_MANUAL_TEST);
     const bool hop = send_acked(SAFR_MSG_EVENT, ev, sizeof(ev), SIOT_LEAF_ACK_WAIT_MS, 0);
@@ -703,27 +684,58 @@ static void walk_test(void)
     while (!s_ack_central && now_ms() < until) pump((uint32_t)(until - now_ms()));
     if (s_ack_central) {
         ESP_LOGW(TAG, "walk test: CYAN — the central confirmed");
-        siot_ui_led_pulse(SIOT_LED_CYAN_SOLID, SIOT_LED_MSG_MS, false);
-        wait_led(SIOT_LED_MSG_MS + 100);
+        const siot_evt_ack_t ack = {.msg_id = s_ack_wanted, .status = SAFR_ACK_OK};
+        siot_evbus_post(SIOT_EVT_ACK_RECEIVED, &ack, sizeof(ack)); /* siot_ui_led: the one cyan rule */
+        wait_led(2 * SIOT_LED_MSG_MS + 100); /* the cyan queues behind the blue "sent" pulse */
     } else {
         ESP_LOGW(TAG, "walk test: no ACK from the central within %d ms → RED", SIOT_LEAF_WALKTEST_ACK_MS);
-        siot_ui_led_pulse(SIOT_LED_RED_SOLID, VERDICT_BLINK_MS, false);
-        wait_led(VERDICT_BLINK_MS + 100);
+        siot_ui_led_pulse(SIOT_LED_RED_SOLID, SIOT_LED_SURVEY_ANSWER_MS, false);
+        wait_led(SIOT_LED_SURVEY_ANSWER_MS + 100);
     }
 }
 
 static void survey(void)
 {
-    ESP_LOGW(TAG, "button: survey (no path to the board)");
+    ESP_LOGW(TAG, "survey (no path to the board)");
+    const int64_t start = now_ms();
     const uint8_t n = probe(SAFR_PROBE_SURVEY, SURVEY_COPIES, SURVEY_SPACING_MS, SURVEY_WINDOW_MS);
-    if (n == 0) {
-        ESP_LOGW(TAG, "survey: nobody answered → RED");
-        siot_ui_led_pulse(SIOT_LED_RED_SOLID, VERDICT_BLINK_MS, false);
-        wait_led(VERDICT_BLINK_MS + 100);
-    } else {
-        ESP_LOGW(TAG, "survey: %u unit(s) answered", n);
-        wait_led(200);
-    }
+    int8_t best = (int8_t)SAFR_NA_RSSI;
+    for (uint8_t i = 0; i < n; i++) if (i == 0 || s_cand[i].link > best) best = s_cand[i].link;
+    if (n == 0) ESP_LOGW(TAG, "survey: nobody answered → RED");
+    else ESP_LOGW(TAG, "survey: %u unit(s) answered, best link %d dBm", n, best);
+    const siot_evt_survey_t ev = {.count = n, .best_rssi = best};
+    siot_evbus_post(SIOT_EVT_SURVEY_RESULT, &ev, sizeof(ev)); /* siot_ui_led: one red blink when nobody */
+    /* Stay awake until the last blink (and its gap) has played. */
+    const int64_t blinks_ms = n ? (int64_t)n * (SIOT_LED_SURVEY_ANSWER_MS + SIOT_LED_SURVEY_ANSWER_MS / 2)
+                                : SIOT_LED_SURVEY_ANSWER_MS;
+    const int64_t left = blinks_ms + 200 - (now_ms() - start);
+    wait_led(left > 300 ? (uint32_t)left : 300);
+}
+
+/* What a press does once the button is released, and what the leaf does by
+ * itself on its first wake with a code (§12.8) — the same LEDs as a node's
+ * TEST: walk test = blue sent, cyan confirmed; survey = one blink per unit. */
+static void test_or_survey(void)
+{
+    /* Unbound or NO_PATH: try to (re)bind first (200 ms) — the installer's
+     * press is the natural moment to join once the board is up. A survey
+     * sends nothing acked, so without this a NO_PATH leaf would keep
+     * surveying until its next heartbeat ACK, long after the board is back.
+     * A failed probe keeps the old parent, as on a timer wake. */
+    if (s_rtc.bind != BIND_BOUND) discover();
+    else if (s_rtc.no_path && !discover()) s_rtc.bind = BIND_BOUND;
+    if (s_rtc.bind == BIND_BOUND && !s_rtc.no_path) walk_test();
+    else survey();
+}
+
+static void verdict_after_provisioning(void)
+{
+    ESP_LOGW(TAG, "post-provisioning verdict (≤ %d s)", SIOT_LEAF_VERDICT_WINDOW_MS / 1000);
+    s_led_allowed = true;
+    siot_ui_led_pulse(SIOT_LED_BLUE_SOLID, SIOT_LED_TICK_MS, false); /* as on a press */
+    test_or_survey();
+    s_led_allowed = false;
+    s_rtc.verdict_pending = false;
 }
 
 static void button_wake(void)
@@ -735,11 +747,7 @@ static void button_wake(void)
         const int64_t until = now_ms() + HOLD_CHECK_MS;
         while (siot_hal_gpio_read(s_button_pin) == 0 && now_ms() < until) pump(50);
     }
-    /* Unbound: try to bind first (200 ms) — the installer's press is the
-     * natural moment to join once the board is up (§12.8). */
-    if (s_rtc.bind != BIND_BOUND) discover();
-    if (s_rtc.bind == BIND_BOUND && !s_rtc.no_path) walk_test();
-    else survey();
+    test_or_survey();
     s_led_allowed = false;
 }
 
@@ -806,6 +814,7 @@ static void setup_mode(void)
 static void leaf_sleep(uint32_t ms, bool timer)
 {
     led_off();
+    if (s_code != NULL) s_rtc.msg_id = siot_safr_last_msg_id();
     const int64_t awake = now_ms();
     ESP_LOGW(TAG, "wake #%lu done: awake_ms=%lld, next %s", (unsigned long)s_rtc.wake_count, (long long)awake,
              timer ? "timer" : "button only");
@@ -900,6 +909,11 @@ void siot_leafcore_run(bool has_code)
         ESP_LOGW(TAG, "fresh state (power-on, or first boot with this code)");
     }
     if (s_rtc.channel == 0) s_rtc.channel = s_code->channel;
+    /* A wake is a boot and siot_safr restarts at MSG_ID 0: continue from the
+     * last wake, or every receiver's 30 s (SRC_MAC, MSG_ID) window takes this
+     * wake's frames for repeats of the last one's — a second TEST press within
+     * 30 s lit no node, and a stale ACK could pass for this wake's. */
+    siot_safr_set_last_msg_id(s_rtc.msg_id);
     siot_safr_set_tx(tx_sink, NULL);
     siot_safr_register(SAFR_MSG_ACK, on_ack, NULL);
     siot_safr_register(SAFR_MSG_PARENT_OFFER, on_offer, NULL);

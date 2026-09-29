@@ -9,6 +9,7 @@ import '../../../provisioning/presentation/screens/provisioning_wizard_screen.da
 import '../../application/installation_provider.dart';
 import '../../domain/entities/installation.dart';
 import '../../domain/services/installation_backup_codec.dart';
+import '../../../central/domain/safr/safr_product.dart';
 
 /// One installation on this phone: share it (encrypted QR, lifecycle §2),
 /// manage its zones, provision units, and see this phone's work log.
@@ -285,7 +286,14 @@ class InstallationDetailScreen extends ConsumerWidget {
                                       color: context.textPrimary,
                                       fontSize: 14,
                                       fontWeight: FontWeight.w600)),
-                              subtitle: Text('${d.zone} · ${d.mac}',
+                              subtitle: Text(
+                                  [
+                                    (SafrProduct.fromCode(d.productCode) ??
+                                            SafrProduct.fromModel(d.model))
+                                        ?.label,
+                                    d.zone,
+                                    d.mac,
+                                  ].whereType<String>().join(' · '),
                                   style: TextStyle(
                                       color: context.textSecondary,
                                       fontSize: 12)),

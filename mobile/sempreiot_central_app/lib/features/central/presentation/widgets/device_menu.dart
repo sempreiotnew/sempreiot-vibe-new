@@ -371,13 +371,24 @@ class _MenuHeader extends StatelessWidget {
           if (node.batteryPct != null)
             _fact(context, Icons.battery_std_rounded, 'Bateria',
                 '${node.batteryPct}%'),
+          // v3.5 product identity; "—" until the unit (or the board's table)
+          // reports it.
+          _fact(context, Icons.inventory_2_outlined, 'Produto',
+              node.productLabel.isEmpty ? '—' : node.productLabel,
+              valueColor:
+                  node.productLabel.isEmpty ? context.textSecondary : null,
+              maxLines: 2),
+          _fact(context, Icons.system_update_alt_rounded, 'Firmware',
+              node.firmwareLabel.isEmpty ? '—' : node.firmwareLabel,
+              valueColor:
+                  node.firmwareLabel.isEmpty ? context.textSecondary : null),
         ],
       ),
     );
   }
 
   Widget _fact(BuildContext context, IconData icon, String label, String value,
-      {Color? valueColor}) {
+      {Color? valueColor, int maxLines = 1}) {
     return Padding(
       padding: const EdgeInsets.only(top: 3),
       child: Row(
@@ -393,7 +404,7 @@ class _MenuHeader extends StatelessWidget {
             child: Text(
               value,
               textAlign: TextAlign.right,
-              maxLines: 1,
+              maxLines: maxLines,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: valueColor ?? context.textPrimary,

@@ -106,6 +106,61 @@ TEST_CASE("dispatch: ACK sent from a handler reaches the TX sink with correct DS
     siot_safr_unregister(SAFR_MSG_COMMAND);
 }
 
+TEST_CASE("product fields: put/get round trip, absent, truncated, FW_LEN out of range", "[safr][product]")
+{
+    uint8_t p[SAFR_PRODUCT_MAX_LEN + 4];
+    uint16_t product;
+    uint8_t hw_rev;
+    char fw[SAFR_FW_MAX_LEN + 1];
+
+    const size_t n = siot_safr_put_product(p, 0x0201, 2, "0.1.0-dev");
+    TEST_ASSERT_EQUAL(4 + 9, n);
+    const uint8_t want[] = {0x02, 0x01, 0x02, 0x09, '0', '.', '1', '.', '0', '-', 'd', 'e', 'v'};
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(want, p, sizeof(want));
+    TEST_ASSERT_EQUAL(n, siot_safr_get_product(p, n, &product, &hw_rev, fw));
+    TEST_ASSERT_EQUAL_HEX16(0x0201, product);
+    TEST_ASSERT_EQUAL_HEX8(SAFR_FAMILY_NODE, product >> 8);
+    TEST_ASSERT_EQUAL(2, hw_rev);
+    TEST_ASSERT_EQUAL_STRING("0.1.0-dev", fw);
+
+    /* trailing bytes after the fields are not ours */
+    TEST_ASSERT_EQUAL(n, siot_safr_get_product(p, n + 3, &product, &hw_rev, fw));
+
+    /* a version longer than the wire allows is cut, never overflows */
+    const size_t m = siot_safr_put_product(p, 0x0301, 0, "0123456789012345678901234567890");
+    TEST_ASSERT_EQUAL(4 + SAFR_FW_MAX_LEN, m);
+    TEST_ASSERT_EQUAL(m, siot_safr_get_product(p, m, &product, &hw_rev, fw));
+    TEST_ASSERT_EQUAL(SAFR_FW_MAX_LEN, strlen(fw));
+
+    /* no version */
+    TEST_ASSERT_EQUAL(4, siot_safr_put_product(p, 0x0100, 0, NULL));
+    TEST_ASSERT_EQUAL(4, siot_safr_get_product(p, 4, &product, &hw_rev, fw));
+    TEST_ASSERT_EQUAL_STRING("", fw);
+
+    /* absent (a pre-v3.5 unit), truncated, FW_LEN past the payload or past the cap */
+    siot_safr_put_product(p, 0x0201, 1, "0.1.0");
+    TEST_ASSERT_EQUAL(0, siot_safr_get_product(p, 0, &product, &hw_rev, fw));
+    TEST_ASSERT_EQUAL_HEX16(SAFR_PRODUCT_UNKNOWN, product);
+    TEST_ASSERT_EQUAL(0, siot_safr_get_product(p, 3, &product, &hw_rev, fw));
+    TEST_ASSERT_EQUAL(0, siot_safr_get_product(p, 4 + 4, &product, &hw_rev, fw));
+    TEST_ASSERT_EQUAL_HEX16(SAFR_PRODUCT_UNKNOWN, product);
+    TEST_ASSERT_EQUAL_STRING("", fw);
+    p[3] = SAFR_FW_MAX_LEN + 1;
+    TEST_ASSERT_EQUAL(0, siot_safr_get_product(p, sizeof(p), &product, &hw_rev, fw));
+}
+
+TEST_CASE("MSG_ID continues from a given id (a leaf's wake is a boot)", "[safr][tx]")
+{
+    ts_safr_init(TS_OTHER_MAC, 2);
+    TEST_ASSERT_EQUAL_HEX16(0, siot_safr_last_msg_id());
+    TEST_ASSERT_EQUAL_HEX16(1, siot_safr_next_msg_id());
+    siot_safr_set_last_msg_id(0x0350);
+    TEST_ASSERT_EQUAL_HEX16(0x0351, siot_safr_next_msg_id());
+    TEST_ASSERT_EQUAL_HEX16(0x0351, siot_safr_last_msg_id());
+    ts_safr_init(TS_OTHER_MAC, 3); /* the next wake: init restarts at 0 */
+    TEST_ASSERT_EQUAL_HEX16(0, siot_safr_last_msg_id());
+}
+
 TEST_CASE("send: fresh MSG_CTR per frame, TTL/HOPS from level, errors", "[safr][tx]")
 {
     ts_safr_init(TS_OTHER_MAC, 2);

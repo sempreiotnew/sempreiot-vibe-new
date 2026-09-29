@@ -31,6 +31,24 @@ will be defined later as the system architecture evolves.
 
 
 
+# 🚨 CRITICAL — the on-screen LED is the device's LED
+
+The LED drawn on a device (avatar, Dispositivo screen, Rede / Rede 3D, packets in flight) must show
+**exactly** what the real unit's LED shows: same colour, same duration, same order.
+
+- Source of truth: `firmware/components/ui/siot_ui_led/include/siot_ui_led.h` + `src/siot_ui_led.c`
+  (and `siot_leafcore.c` for battery detectors). Rule and colour table: root `CLAUDE.md`.
+- The mirror lives in `lib/features/central/domain/led/led_language.dart` and
+  `lib/features/central/application/device_led_provider.dart`. Never hard-code an LED colour or
+  duration anywhere else; use `AppColors.led*` and the constants in `led_language.dart`.
+- **Whenever the firmware's LED behaviour changes, the app changes in the same commit**, with
+  `test/central/device_led_test.dart` updated and passing. Whenever the app's LED changes, check the
+  firmware first: if the firmware does not do it, the app must not show it.
+- Cyan is the only "confirmed" colour. Green is never a confirmation.
+- Texts that tell the installer what the LED does (wizard, join screens) follow the same table.
+
+---
+
 # 🧠 General Principles
 
 - Prefer simplicity over overengineering

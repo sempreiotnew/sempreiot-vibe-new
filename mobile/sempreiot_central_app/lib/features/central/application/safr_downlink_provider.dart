@@ -99,11 +99,14 @@ class SafrDownlink {
 
   /// v3.2 (spec §7.6 0x18): asks the board for its device table; the pages
   /// come back as DEVICE_TABLE frames routed by ingest. No ACK expected.
+  /// v3.5: always asks for the entries with the product fields (format 1);
+  /// an older board ignores that byte and answers in the v3.2 layout.
   Future<void> sendGetDeviceTable({int page = 0}) async {
     final frame = _encoder.encode(
       msgType: SafrMsgType.command,
       payload: SafrCommandPayload.build(
-          cmd: SafrCommand.getDeviceTable, args: [page & 0xFF]),
+          cmd: SafrCommand.getDeviceTable,
+          args: SafrGetDeviceTableArgs.build(page: page)),
       dstMac: safrBroadcastMacBytes,
     );
     await _write(frame);

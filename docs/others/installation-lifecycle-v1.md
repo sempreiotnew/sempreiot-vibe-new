@@ -262,9 +262,11 @@ walk-test event again (reference §3.5 row 5.3).
 nothing, so the installer presses the detector, and the AC devices and the board, always awake, answer.
 A press wakes the leaf and **always transmits**: an immediate blue blink, then either the walk test
 (bound, parent has a path: blue sent → **cyan** = the panel confirmed, within ≈ 3 s) or the survey
-(unbound or no path: one blink per answering unit in its colour, one red = nobody). No dark period on a
+(unbound or no path: one blink per answering unit in its colour, one red = nobody). A leaf that is
+unbound or was last told "no path" first looks for a parent again on every press, so the first press
+after the board comes back is already a walk test. No dark period on a
 leaf and no white breathe: a leaf shows no LED while asleep. Right after provisioning the leaf does the
-same on its own for ≤ 30 s and ends with **green solid 3 s** (bound and acknowledged) or one red blink.
+same on its own for ≤ 30 s and ends with the walk test: blue → **cyan** (the panel confirmed) or one red blink.
 
 1. Short press → the LED goes **dark at once: the button is locked** for the whole survey. The unit
    broadcasts an authenticated `PARENT_PROBE {purpose = 1 (survey)}` over ESP-NOW, four times 1.2 s

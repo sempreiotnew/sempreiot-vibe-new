@@ -17,6 +17,7 @@
 #include "mbedtls/base64.h"
 
 #include "prov_internal.h"
+#include "siot_board_def.h"
 #include "siot_config.h"
 #include "siot_provisioning.h"
 #include "siot_util.h"
@@ -26,6 +27,7 @@ static const char *TAG = "siot_prov";
 
 #define REQ_BODY_MAX     2048
 #define REBOOT_AFTER_MS  30000
+#define REBOOT_AFTER_STATUS_MS 1000 /* the /status reply must reach the phone first */
 
 /* idle -> identified -> stored -> joining -> online | failed (POC-BRIEF §5) */
 typedef enum { ST_IDLE, ST_IDENTIFIED, ST_STORED, ST_DELIVERED } prov_state_t;
@@ -135,6 +137,12 @@ static esp_err_t handle_info(httpd_req_t *req)
     cJSON_AddStringToObject(body, "mac", mac_str);
     cJSON_AddStringToObject(body, "model", s_id->model);
     cJSON_AddStringToObject(body, "fw", siot_version_string());
+    /* What the unit is (reference §2.1): the same PRODUCT it reports in
+     * NAME_ANNOUNCE (0 = the model is not in this image's catalogue), and the
+     * family = which firmware image it runs. */
+    cJSON_AddNumberToObject(body, "product", siot_board_def_product());
+    cJSON_AddStringToObject(body, "family", siot_board_def()->family);
+    cJSON_AddNumberToObject(body, "hw_rev", siot_board_def()->hw_rev);
     cJSON_AddStringToObject(body, "state", state_str(s_state));
     cJSON_AddStringToObject(body, "nonce", nonce_hex);
     return send_json(req, 200, body);
@@ -378,17 +386,23 @@ static esp_err_t handle_code(httpd_req_t *req)
 static esp_err_t handle_status(httpd_req_t *req)
 {
     prov_touch();
-    if (!s_admin && s_state == ST_STORED && !s_status_polled) {
-        s_status_polled = true;
-        /* "reboot after /status has been polled at least once": fire now,
-         * ahead of the 30 s cap. */
-        if (s_reboot_timer) xTimerStop(s_reboot_timer, 0);
-        reboot_timer_cb(NULL);
-    }
+    const bool first_poll = !s_admin && s_state == ST_STORED && !s_status_polled;
     cJSON *body = cJSON_CreateObject();
     cJSON_AddStringToObject(body, "state", state_str(s_state));
     cJSON_AddNullToObject(body, "detail");
-    return send_json(req, 200, body);
+    const esp_err_t sent = send_json(req, 200, body);
+    if (first_poll) {
+        /* "reboot after /status has been polled at least once", ahead of the
+         * 30 s cap — but only AFTER the reply left: rebooting inside the
+         * handler cut the connection before the phone read "stored", and the
+         * wizard waited on "Enviando informações" until its timeout. */
+        s_status_polled = true;
+        if (s_reboot_timer == NULL ||
+            xTimerChangePeriod(s_reboot_timer, pdMS_TO_TICKS(REBOOT_AFTER_STATUS_MS), 0) != pdPASS) {
+            reboot_timer_cb(NULL);
+        }
+    }
+    return sent;
 }
 
 /* ---- wiring ----------------------------------------------------------- */

@@ -19,9 +19,11 @@ import 'topology_provider.dart';
 ///  * the board pulses for its own frames AND for every frame it relays,
 ///    up to the tablet or down into the mesh;
 ///  * cyan 500 ms when the tablet ACKs the unit's EVENT;
-///  * a leaf is dark except for the button walk test: blue 100 ms ("heard
-///    you"), blue 500 ms (the MANUAL_TEST left), cyan if the central's ACK
-///    comes within 3 s;
+///  * a leaf is dark except for the walk test — a button press, or the one
+///    it runs by itself right after provisioning (spec §12.8): blue 100 ms
+///    ("heard you"), blue 500 ms (the MANUAL_TEST left), cyan if the
+///    central's ACK comes within 3 s. Its red blink (no ACK reached it) is
+///    not shown: the tablet cannot know its ACK was lost on the way down;
 ///  * IDENTIFY: blue blink 1 s for N s, no pulses meanwhile;
 ///  * base: node in alarm red solid, root (level 1) green flash, board
 ///    magenta flash, children and leaves off. "In alarm" is the DEVICE's

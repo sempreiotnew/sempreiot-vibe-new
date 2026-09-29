@@ -69,8 +69,8 @@ with a different threshold set), pins already in `pinmap.yaml` for the sensors w
 
 ## 6. LED language
 
-The leaf's (`leaf.md` §7): nothing while asleep; blinks per parent then green 3 s / one red after
-provisioning; blue → cyan on a walk test; red solid + sounder in alarm; red blink + chirp per wake in
+The leaf's (`leaf.md` §7): nothing while asleep; after provisioning and on a press the same thing: blue → cyan on a walk test (one red = no answer), one
+blink per answering unit on a survey; red solid + sounder in alarm; red blink + chirp per wake in
 COMM_FAULT.
 
 ## 7. Open items

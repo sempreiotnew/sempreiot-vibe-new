@@ -14,7 +14,11 @@ here. Do **not** keep divergent layout comments in code — cite this file inste
   board supervision). Revision **3.4** (2026-09-28) specifies the **leaf link** (§12): leaf HEARTBEAT
   acknowledged by its parent with `PENDING` / `NO_PATH`, the ACK `EPOCH` + `CHANNEL` extension, the parent
   mailbox, custody + leaf outbox, the alarm broadcast fallback, leaf `TOPOLOGY` (parent candidates), the
-  button verdict and the 2-minute setup window — all additive, `VER` unchanged.
+  button verdict and the 2-minute setup window — all additive, `VER` unchanged. Revision **3.5**
+  (2026-09-29, first part) adds the **unit identity**: `PRODUCT` ‖ `HW_REV` ‖ `FW` appended to
+  `NAME_ANNOUNCE` (§7.11) and, on request, to every `DEVICE_TABLE` entry (§7.12, `GET_DEVICE_TABLE`
+  format byte); a leaf's `MSG_ID` continues across wakes (§12.2) — additive, `VER` unchanged. The OTA
+  messages of 3.5 follow with `docs/phases-development/phase3-ota-brief.md`.
 - Status: implemented (uplink + downlink + journal backfill); v3.2 additions: implemented, bench pending;
   v3.3: implemented; **v3.4: specified, firmware Phase 2 (`docs/phases-development/phase2-leaf-brief.md`)**
 - Supersedes: SAFR v2 (`VER = 0x02` — decode-only for stored packets) and
@@ -514,7 +518,7 @@ Sets `F_ACK_REQ`. `DST_MAC` selects the target device (broadcast allowed).
 | 0x15 | REPLACE_DEVICE *(v3.2)* | `old_mac[6] ‖ new_mac[6]` | Board-only: copies name/zone from old to new (`ANNOTATED` + `PENDING_RENAME` on new), retires old, and — if old is `online` — originates a `DECOMMISSION` to it. ERROR/`0x01` if old unknown; `0x05` if either MAC is the board's or broadcast. |
 | 0x16 | DECOMMISSION *(v3.2)* | `mac[6]` | Remote factory reset. `DST_MAC` **must equal** `ARGS.mac` and must not be broadcast; the board refuses otherwise (`0x05`) and refuses its own MAC. The board marks the entry `retired` (`PENDING_DECOMMISSION` if not online), ACKs, relays. The node accepts only if `DST_MAC == own MAC == ARGS.mac`: it ACKs, waits ≈ 300 ms, erases `siot_inst`, and reboots into setup mode (white blink). Leafs: delivered through the parent mailbox when it exists (lifecycle §5.2). |
 | 0x17 | FORGET_DEVICE *(v3.2)* | `mac[6]` | Board-only: deletes a `retired` entry. ERROR/`0x03` if not retired, `0x01` unknown. |
-| 0x18 | GET_DEVICE_TABLE *(v3.2)* | `page u8` (`0` = all pages) | Board-only: the board answers with one `DEVICE_TABLE` frame per page (§7.12). Sent by the tablet on link-up after `GET_INSTALLATION`, and on "Ressincronizar". |
+| 0x18 | GET_DEVICE_TABLE *(v3.2)* | `page u8` (`0` = all pages) ‖ `format u8` *(v3.5, optional: `1` = entries with the product fields, §7.12; absent or `0` = v3.2 entries)* | Board-only: the board answers with one `DEVICE_TABLE` frame per page (§7.12). Sent by the tablet on link-up after `GET_INSTALLATION`, and on "Ressincronizar". |
 | 0x19 | GET_CODE *(v3.2)* | — | **Setup channel only**, accepted by a **provisioned** board: the tablet proves the board's `pop` (the operator typed or scanned the board sticker; the key is derived from it) and the board answers `CODE` (§7.13). This is how a tablet — camera or not — gets the code after the board was provisioned from a phone, and the only way the code ever leaves the board over USB (blueprint rule 5, lifecycle §4.1). |
 
 ### 7.7 TIME_SYNC — `MSG_TYPE 0x06` (downlink, central → root) — payload 5 bytes
@@ -609,9 +613,46 @@ enrolled list. `SRC_MAC` (header) identifies which device this is.
 | 1+n1 | 1 | ZONE_LEN (n2, ≤ 16) |
 | 2+n1 | n2 | ZONE |
 | 2+n1+n2 | 1 | ROLE *(v3.2, optional)*: `SAFR_ROLE_*` (0 root-capable AC unit currently root, 1 AC unit, 2 battery leaf). Receivers MUST accept the frame without it (treat as `0xFF` unknown). |
+| 3+n1+n2 | 2 | PRODUCT *(v3.5, optional, only after ROLE)*: what the unit **is** — family byte ‖ product byte, table below. `0x0000` = unknown. |
+| 5+n1+n2 | 1 | HW_REV *(v3.5)*: PCB revision, `0` = not stated. |
+| 6+n1+n2 | 1 | FW_LEN *(v3.5)* (n3, ≤ 24) |
+| 7+n1+n2 | n3 | FW *(v3.5)*: the firmware version the unit **runs**, ASCII (`firmware/VERSION`, e.g. `0.1.0-dev`). |
+
+Worst case 1 + 32 + 1 + 16 + 1 + 4 + 24 = 79 bytes. Receivers MUST accept the
+frame without the v3.5 fields, and MUST ignore them (keeping name, zone and
+role) when they are truncated or `FW_LEN` > 24.
+
+**PRODUCT** *(v3.5)* — 16 bits, `family ‖ product`. The **family** is the
+firmware image the unit runs, i.e. which file an update sends it: `0x01` board,
+`0x02` node (every mains unit), `0x03` leaf (every battery unit). The
+**product** is what the unit is inside that family; it never selects an image,
+it selects **which units** a rollout reaches. The unit keeps its model string
+in the factory identity (`nvs_factory` key `model`); the code comes from the
+pin map entry of that model (`tools/pinmap/pinmap.yaml`, field `code`).
+
+| PRODUCT | Model | Family | Product |
+|---|---|---|---|
+| `0x0100` | `SIOT-BOARD-01` | board | control unit |
+| `0x0201` | `SIOT-SIREN-01` | node | siren |
+| `0x0202` | `SIOT-PBS-01` | node | push-button (manual call) station |
+| `0x0203` | `SIOT-IO-01` | node | I/O module |
+| `0x0204` | `SIOT-REPEATER-01` | node | repeater |
+| `0x0205` | `SIOT-SMOKE-AC-01` | node | AC smoke detector |
+| `0x02FF` | `SIOT-NODE-01` | node | bench devkit |
+| `0x0301` | `SIOT-SMOKE-01` | leaf | battery smoke detector |
+| `0x0302` | `SIOT-HEAT-01` | leaf | battery heat detector |
+| `0x03FF` | `SIOT-LEAF-01` | leaf | bench devkit |
+
+**A code is a contract:** never reused, never renumbered once a unit shipped
+with it; a new product takes the next free code of its family. A receiver that
+meets a code it does not know keeps it and shows it as such (the family byte
+still says which image the unit takes). Master copy of this table: reference
+§2.1.
 
 *(v3.2)* Also sent after a `SET_DEVICE` (§7.6) has been applied. A battery leaf
-sends it **once after provisioning**, not on every deep-sleep wake.
+sends it **once after provisioning**, not on every deep-sleep wake — and
+*(v3.5)* again after any reset that is not a wake (power-on, the reboot into a
+new firmware), so the version the board and the tablet hold is the one running.
 
 ### 7.12 DEVICE_TABLE — `MSG_TYPE 0x0B` (uplink, board → central, serial only) — variable, ≤ 202 bytes, paged
 
@@ -629,7 +670,7 @@ the legacy view for pre-v3.2 tablets.
 | 0 | 1 | PAGE (1-based) |
 | 1 | 1 | PAGE_COUNT |
 | 2 | 2 | TOTAL entries in the table |
-| 4 | 1 | COUNT (m) entries in this page |
+| 4 | 1 | COUNT: bits 0–6 = m, entries in this page; **bit 7 *(v3.5)*** = every entry of this page carries the product fields |
 | 5 | ... | ENTRY[m] |
 
 Each `ENTRY[i]`:
@@ -645,6 +686,19 @@ Each `ENTRY[i]`:
 | NAME_LEN | NAME |
 | 1 | ZONE_LEN (≤ 16) |
 | ZONE_LEN | ZONE |
+| 2 | PRODUCT *(v3.5, only when COUNT bit 7 is set)*: §7.11, `0x0000` = the unit has not announced it |
+| 1 | HW_REV *(v3.5)* |
+| 1 | FW_LEN *(v3.5)* (≤ 24) |
+| FW_LEN | FW *(v3.5)*: the version the unit last announced |
+
+*(v3.5)* The board sends the product fields only to a tablet that asked for
+them: `GET_DEVICE_TABLE` with `format = 1`. It remembers the last format asked
+and uses it for the unsolicited push too; a pre-v3.5 tablet never sends the
+byte and keeps receiving the v3.2 entries. A pre-v3.5 board ignores the byte
+and answers with bit 7 clear. The board learns the fields from each unit's
+`NAME_ANNOUNCE` and keeps them in its device table (NVS), written only when
+they change. **Not in the table yet:** the board itself (its own product and
+version reach the tablet with the OTA messages).
 
 ### 7.13 CODE — `MSG_TYPE 0x0C` (uplink, board → central, **setup channel only**) — variable, ≤ 90 bytes
 
@@ -863,8 +917,16 @@ bits.
 ### 12.2 Leaf states and the wake cycle
 
 A deep-sleep wake is a reboot: all leaf state lives in RTC memory (parent MAC,
-channel, miss counter, state, outbox, "announced" flag), mirrored to NVS where
-§12.6 says so.
+channel, miss counter, state, outbox, "announced" flag, **last `MSG_ID`**),
+mirrored to NVS where §12.6 says so.
+
+**`MSG_ID` continues across wakes** (amended 2026-09-29). A leaf does not
+restart at 1 on every wake: receivers dedupe by `(SRC_MAC, MSG_ID)` for 30 s
+(§9.1) whatever the `BOOT_CTR`, so a restarted counter made two wakes within
+30 s look like one frame repeated — the second TEST press lit no node, a walk
+test sent right after a heartbeat was journaled as a repeat by the board, and
+an ACK kept for the previous wake could be taken for this wake's. With no RTC
+state (power-on) the leaf starts at `BOOT_CTR << 4`.
 
 ```
 SETUP ──/provision→ STORED_UNBOUND ──bind→ BOUND ──2 misses→ (probe) ──nobody→ COMM_FAULT
@@ -1033,20 +1095,33 @@ and the LED answers at once:
 |---|---|---|
 | Press | **blue 100 ms immediately** ("heard you, sending"). No dark / locked period on a leaf | — |
 | BOUND and the last ACK had no `NO_PATH` | **blue 500 ms** when sent; **cyan 500 ms** when the central's ACK arrives (board → mesh → parent → leaf, `SRC_MAC` = central) within ≈ 3 s; otherwise **one red blink** | `EVENT ALERT MANUAL_TEST`, `F_ACK_REQ` — the **walk test**, ticked on the tablet with time and RSSI |
-| Unbound | first one **discovery** (`PURPOSE = 0`, 200 ms, one blink per answering unit); bound with a path → continue as the row above | `PARENT_PROBE {PURPOSE = 0}` |
-| Otherwise (still unbound, or `NO_PATH`) | **one blink per answering unit** (400 ms) in that link's colour: green ≥ −75 dBm · yellow ≥ −85 · red below; **one red blink** = nobody | `PARENT_PROBE {PURPOSE = 1}` ×4 — the **survey** (§7.14, lifecycle §6). Only the test EVENT pulses blue; probe copies never do |
+| Unbound, or BOUND and the last ACK had `NO_PATH` | first one **discovery** (`PURPOSE = 0`, 200 ms, **no LED**: its result is the walk test or the survey that follows); bound with a path → continue as the row above. A `NO_PATH` leaf that gets no usable offer keeps its parent (as on a timer wake, §12.3). Without this probe a `NO_PATH` leaf could only survey — a survey carries no acked frame, so the flag would stay until the next heartbeat ACK, up to 60 s after the board is back (amended 2026-09-29) | `PARENT_PROBE {PURPOSE = 0}` |
+| Otherwise (still unbound, or `NO_PATH`) | **one blink per answering unit** (400 ms, then 200 ms dark — separate blinks, exactly a node's survey) in that link's colour: green ≥ −75 dBm · yellow ≥ −85 · red below; **one red blink** = nobody | `PARENT_PROBE {PURPOSE = 1}` ×4 — the **survey** (§7.14, lifecycle §6). Only the test EVENT pulses blue; probe copies never do |
 | Then | sleep | |
 
 Hold **5 s** = factory reset (unchanged). Double tap = bench ALARM (as on nodes).
 The installer never chooses a mode: **cyan = the panel confirmed; coloured
 blinks = neighbours answered; red = nothing came back.**
 
-**Verdict right after provisioning.** On `/provision` → `stored` the leaf stays
-awake **≤ 30 s**: probe → bind → `NAME_ANNOUNCE` + `TOPOLOGY` + `HEARTBEAT` →
-one blink per candidate (as above) → **green solid 3 s** if the parent ACKed
-without `NO_PATH` (radio path proven) or **one red blink** (nobody, or nobody
-with a path; the leaf sleeps and retries on its own, §12.3) → sleep. "Green =
-mounted, red = move it or add an AC device."
+**Verdict right after provisioning** (amended 2026-09-29: the same as a
+press). On `/provision` → `stored` the leaf stays awake **≤ 30 s** and does by
+itself exactly what a press does, table above: blue 100 ms → discovery (no
+LED) → bound with a path: `TOPOLOGY` + `NAME_ANNOUNCE`, then **the walk test**
+— **blue 500 ms** (`EVENT ALERT MANUAL_TEST` sent) → **cyan 500 ms** when the
+central's ACK arrives within ≈ 3 s, otherwise **one red blink** — or, with no
+path to the board, **the survey** (one blink per answering unit, one red =
+nobody; the leaf sleeps and retries on its own, §12.3) → sleep. "Cyan = the
+panel confirmed; coloured blinks = neighbours hear it, the board is not there;
+red = move it or add an AC device." Cyan is the one "confirmed" colour on
+every unit (reference §3.7 row 7.7); a leaf has no green verdict, and green
+only ever means a good link in a survey. The tablet ticks the unit and mirrors
+the same LEDs from that EVENT.
+
+**One LED language** (root `CLAUDE.md`): every colour above is produced by
+`siot_ui_led` from the same events a node posts (`SAFR_TX`, `ACK_RECEIVED`,
+`SURVEY_ANSWER`, `SURVEY_RESULT`). The first cut pulsed the offers itself,
+400 ms back to back with no gap: four good neighbours read as 1.6 s of solid
+green instead of four blinks (found on the bench 2026-09-29).
 
 **COMM_FAULT:** on each wake one short **red blink + trouble chirp** (the
 conventional detector behaviour; colours not final).
@@ -1100,7 +1175,8 @@ are always awake to answer a leaf's probe.
 4. Keep a leaf table (per leaf: MAC, the ESP-NOW address it sends from, last
    seen, battery, replay counters, mailbox); drop entries silent for 180 s.
    Replay = same boot, counter not newer; duplicate = same boot, same `MSG_ID`
-   (a leaf's `MSG_ID` restarts on every wake) — ACK again, forward once.
+   (the same id under another `BOOT_CTR` is a new frame, §12.2) — ACK again,
+   forward once.
 5. Custody: forward every leaf EVENT upward with §9.1 retries until the board's
    ACK; queue bounded, ALARM never dropped.
 6. Forward an ALARM received by **broadcast** from any leaf, bound or not, and

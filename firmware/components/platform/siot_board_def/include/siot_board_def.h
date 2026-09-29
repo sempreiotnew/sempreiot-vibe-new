@@ -20,6 +20,7 @@ extern "C" {
 typedef struct {
     const char *model;      /* the unit's product model (factory identity; reference §2.1) */
     const char *family;     /* the firmware image it runs: "board" | "node" | "leaf" */
+    uint16_t    product;    /* PRODUCT on the wire (spec §7.11): family byte ‖ product byte; never renumbered */
     uint8_t     hw_rev;     /* 0 = any revision (nothing on the sticker yet, brief §14 item 14) */
     bool        is_default; /* the entry used when no model matches */
     int         led_r, led_g, led_b;   /* RGB LED (LEDC) */
@@ -38,6 +39,11 @@ esp_err_t siot_board_def_select(const char *model, uint8_t hw_rev);
 
 /* The selected entry (the default one until siot_board_def_select ran). */
 const siot_board_def_t *siot_board_def(void);
+
+/* What this unit reports as PRODUCT (spec §7.11): the selected entry's code,
+ * or 0x0000 (unknown) when the unit's model matched nothing and the default
+ * entry is only lending its pins. */
+uint16_t siot_board_def_product(void);
 
 #ifdef __cplusplus
 }

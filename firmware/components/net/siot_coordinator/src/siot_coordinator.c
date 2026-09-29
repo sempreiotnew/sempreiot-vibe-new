@@ -215,21 +215,27 @@ static void send_installation(const uint8_t dst[6], int64_t t)
     send_to_tablet(SAFR_MSG_INSTALLATION, dst, 0, p, plen);
 }
 
+/* The layout the tablet on the link understands: set by its last
+ * GET_DEVICE_TABLE (format byte, v3.5) and used for the unsolicited push too.
+ * A pre-v3.5 tablet never sends the byte and keeps getting the v3.2 entries. */
+static bool s_dt_product;
+
 static void send_device_table(uint8_t page, const uint8_t dst[6], int64_t t)
 {
     uint8_t p[SAFR_MAX_PAYLOAD];
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    const bool wp = s_dt_product;
     const size_t n = siot_devtab_snapshot(s_snap, SIOT_DEVTAB_CAP, t);
     uint8_t pages = 0;
     if (page != 0) {
-        const size_t plen = coord_devtable_encode_page(s_snap, n, t, page, &pages, p);
+        const size_t plen = coord_devtable_encode_page(s_snap, n, t, page, wp, &pages, p);
         xSemaphoreGive(s_lock);
         if (plen) send_to_tablet(SAFR_MSG_DEVICE_TABLE, dst, 0, p, plen);
         return;
     }
-    coord_devtable_encode_page(s_snap, n, t, 1, &pages, p);
+    coord_devtable_encode_page(s_snap, n, t, 1, wp, &pages, p);
     for (uint8_t i = 1; i <= pages; i++) {
-        const size_t plen = coord_devtable_encode_page(s_snap, n, t, i, NULL, p);
+        const size_t plen = coord_devtable_encode_page(s_snap, n, t, i, wp, NULL, p);
         if (plen) send_to_tablet(SAFR_MSG_DEVICE_TABLE, dst, 0, p, plen);
     }
     xSemaphoreGive(s_lock);
@@ -264,6 +270,17 @@ static void adopt_name_announce(const siot_safr_frame_t *f, uint8_t role)
     memcpy(zone, &f->payload[2 + n], z);
     zone[z] = '\0';
     siot_devtab_announce(f->src_mac, name, zone, role);
+
+    /* v3.5: PRODUCT ‖ HW_REV ‖ FW after the ROLE byte. Absent on older units. */
+    const size_t ext = 2 + n + z + 1;
+    if (ext < f->payload_len) {
+        uint16_t product;
+        uint8_t hw_rev;
+        char fw[SAFR_FW_MAX_LEN + 1];
+        if (siot_safr_get_product(&f->payload[ext], f->payload_len - ext, &product, &hw_rev, fw)) {
+            siot_devtab_set_product(f->src_mac, product, hw_rev, fw);
+        }
+    }
 }
 
 static void handle_uplink(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len, bool dup)
@@ -354,6 +371,7 @@ static bool handle_lifecycle_command(const siot_safr_frame_t *f, const uint8_t *
         return true;
 
     case SAFR_CMD_GET_DEVICE_TABLE:
+        s_dt_product = alen >= 2 && a[1] == 1; /* v3.5 format byte; absent = v3.2 entries */
         send_device_table(alen >= 1 ? a[0] : 0, f->src_mac, t);
         return true;
 

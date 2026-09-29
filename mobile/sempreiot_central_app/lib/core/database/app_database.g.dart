@@ -983,6 +983,23 @@ class $MeshDevicesTable extends MeshDevices
   late final GeneratedColumn<String> parentCandidates = GeneratedColumn<String>(
       'parent_candidates', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _productCodeMeta =
+      const VerificationMeta('productCode');
+  @override
+  late final GeneratedColumn<int> productCode = GeneratedColumn<int>(
+      'product_code', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _hwRevMeta = const VerificationMeta('hwRev');
+  @override
+  late final GeneratedColumn<int> hwRev = GeneratedColumn<int>(
+      'hw_rev', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _fwVersionMeta =
+      const VerificationMeta('fwVersion');
+  @override
+  late final GeneratedColumn<String> fwVersion = GeneratedColumn<String>(
+      'fw_version', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         mac,
@@ -1006,7 +1023,10 @@ class $MeshDevicesTable extends MeshDevices
         boardState,
         boardFlags,
         tableSyncedAt,
-        parentCandidates
+        parentCandidates,
+        productCode,
+        hwRev,
+        fwVersion
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -1142,6 +1162,20 @@ class $MeshDevicesTable extends MeshDevices
           parentCandidates.isAcceptableOrUnknown(
               data['parent_candidates']!, _parentCandidatesMeta));
     }
+    if (data.containsKey('product_code')) {
+      context.handle(
+          _productCodeMeta,
+          productCode.isAcceptableOrUnknown(
+              data['product_code']!, _productCodeMeta));
+    }
+    if (data.containsKey('hw_rev')) {
+      context.handle(
+          _hwRevMeta, hwRev.isAcceptableOrUnknown(data['hw_rev']!, _hwRevMeta));
+    }
+    if (data.containsKey('fw_version')) {
+      context.handle(_fwVersionMeta,
+          fwVersion.isAcceptableOrUnknown(data['fw_version']!, _fwVersionMeta));
+    }
     return context;
   }
 
@@ -1195,6 +1229,12 @@ class $MeshDevicesTable extends MeshDevices
           DriftSqlType.dateTime, data['${effectivePrefix}table_synced_at']),
       parentCandidates: attachedDatabase.typeMapping.read(
           DriftSqlType.string, data['${effectivePrefix}parent_candidates']),
+      productCode: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}product_code']),
+      hwRev: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}hw_rev']),
+      fwVersion: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}fw_version']),
     );
   }
 
@@ -1227,6 +1267,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
   final int boardFlags;
   final DateTime? tableSyncedAt;
   final String? parentCandidates;
+  final int? productCode;
+  final int? hwRev;
+  final String? fwVersion;
   const MeshDevice(
       {required this.mac,
       required this.role,
@@ -1249,7 +1292,10 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       this.boardState,
       required this.boardFlags,
       this.tableSyncedAt,
-      this.parentCandidates});
+      this.parentCandidates,
+      this.productCode,
+      this.hwRev,
+      this.fwVersion});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -1297,6 +1343,15 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
     if (!nullToAbsent || parentCandidates != null) {
       map['parent_candidates'] = Variable<String>(parentCandidates);
     }
+    if (!nullToAbsent || productCode != null) {
+      map['product_code'] = Variable<int>(productCode);
+    }
+    if (!nullToAbsent || hwRev != null) {
+      map['hw_rev'] = Variable<int>(hwRev);
+    }
+    if (!nullToAbsent || fwVersion != null) {
+      map['fw_version'] = Variable<String>(fwVersion);
+    }
     return map;
   }
 
@@ -1342,6 +1397,14 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       parentCandidates: parentCandidates == null && nullToAbsent
           ? const Value.absent()
           : Value(parentCandidates),
+      productCode: productCode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(productCode),
+      hwRev:
+          hwRev == null && nullToAbsent ? const Value.absent() : Value(hwRev),
+      fwVersion: fwVersion == null && nullToAbsent
+          ? const Value.absent()
+          : Value(fwVersion),
     );
   }
 
@@ -1371,6 +1434,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       boardFlags: serializer.fromJson<int>(json['boardFlags']),
       tableSyncedAt: serializer.fromJson<DateTime?>(json['tableSyncedAt']),
       parentCandidates: serializer.fromJson<String?>(json['parentCandidates']),
+      productCode: serializer.fromJson<int?>(json['productCode']),
+      hwRev: serializer.fromJson<int?>(json['hwRev']),
+      fwVersion: serializer.fromJson<String?>(json['fwVersion']),
     );
   }
   @override
@@ -1399,6 +1465,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       'boardFlags': serializer.toJson<int>(boardFlags),
       'tableSyncedAt': serializer.toJson<DateTime?>(tableSyncedAt),
       'parentCandidates': serializer.toJson<String?>(parentCandidates),
+      'productCode': serializer.toJson<int?>(productCode),
+      'hwRev': serializer.toJson<int?>(hwRev),
+      'fwVersion': serializer.toJson<String?>(fwVersion),
     };
   }
 
@@ -1424,7 +1493,10 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           Value<int?> boardState = const Value.absent(),
           int? boardFlags,
           Value<DateTime?> tableSyncedAt = const Value.absent(),
-          Value<String?> parentCandidates = const Value.absent()}) =>
+          Value<String?> parentCandidates = const Value.absent(),
+          Value<int?> productCode = const Value.absent(),
+          Value<int?> hwRev = const Value.absent(),
+          Value<String?> fwVersion = const Value.absent()}) =>
       MeshDevice(
         mac: mac ?? this.mac,
         role: role ?? this.role,
@@ -1455,6 +1527,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
         parentCandidates: parentCandidates.present
             ? parentCandidates.value
             : this.parentCandidates,
+        productCode: productCode.present ? productCode.value : this.productCode,
+        hwRev: hwRev.present ? hwRev.value : this.hwRev,
+        fwVersion: fwVersion.present ? fwVersion.value : this.fwVersion,
       );
   MeshDevice copyWithCompanion(MeshDevicesCompanion data) {
     return MeshDevice(
@@ -1502,6 +1577,10 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       parentCandidates: data.parentCandidates.present
           ? data.parentCandidates.value
           : this.parentCandidates,
+      productCode:
+          data.productCode.present ? data.productCode.value : this.productCode,
+      hwRev: data.hwRev.present ? data.hwRev.value : this.hwRev,
+      fwVersion: data.fwVersion.present ? data.fwVersion.value : this.fwVersion,
     );
   }
 
@@ -1529,7 +1608,10 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           ..write('boardState: $boardState, ')
           ..write('boardFlags: $boardFlags, ')
           ..write('tableSyncedAt: $tableSyncedAt, ')
-          ..write('parentCandidates: $parentCandidates')
+          ..write('parentCandidates: $parentCandidates, ')
+          ..write('productCode: $productCode, ')
+          ..write('hwRev: $hwRev, ')
+          ..write('fwVersion: $fwVersion')
           ..write(')'))
         .toString();
   }
@@ -1557,7 +1639,10 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
         boardState,
         boardFlags,
         tableSyncedAt,
-        parentCandidates
+        parentCandidates,
+        productCode,
+        hwRev,
+        fwVersion
       ]);
   @override
   bool operator ==(Object other) =>
@@ -1584,7 +1669,10 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           other.boardState == this.boardState &&
           other.boardFlags == this.boardFlags &&
           other.tableSyncedAt == this.tableSyncedAt &&
-          other.parentCandidates == this.parentCandidates);
+          other.parentCandidates == this.parentCandidates &&
+          other.productCode == this.productCode &&
+          other.hwRev == this.hwRev &&
+          other.fwVersion == this.fwVersion);
 }
 
 class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
@@ -1610,6 +1698,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
   final Value<int> boardFlags;
   final Value<DateTime?> tableSyncedAt;
   final Value<String?> parentCandidates;
+  final Value<int?> productCode;
+  final Value<int?> hwRev;
+  final Value<String?> fwVersion;
   final Value<int> rowid;
   const MeshDevicesCompanion({
     this.mac = const Value.absent(),
@@ -1634,6 +1725,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     this.boardFlags = const Value.absent(),
     this.tableSyncedAt = const Value.absent(),
     this.parentCandidates = const Value.absent(),
+    this.productCode = const Value.absent(),
+    this.hwRev = const Value.absent(),
+    this.fwVersion = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   MeshDevicesCompanion.insert({
@@ -1659,6 +1753,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     this.boardFlags = const Value.absent(),
     this.tableSyncedAt = const Value.absent(),
     this.parentCandidates = const Value.absent(),
+    this.productCode = const Value.absent(),
+    this.hwRev = const Value.absent(),
+    this.fwVersion = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : mac = Value(mac),
         firstSeenAt = Value(firstSeenAt),
@@ -1686,6 +1783,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     Expression<int>? boardFlags,
     Expression<DateTime>? tableSyncedAt,
     Expression<String>? parentCandidates,
+    Expression<int>? productCode,
+    Expression<int>? hwRev,
+    Expression<String>? fwVersion,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -1711,6 +1811,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
       if (boardFlags != null) 'board_flags': boardFlags,
       if (tableSyncedAt != null) 'table_synced_at': tableSyncedAt,
       if (parentCandidates != null) 'parent_candidates': parentCandidates,
+      if (productCode != null) 'product_code': productCode,
+      if (hwRev != null) 'hw_rev': hwRev,
+      if (fwVersion != null) 'fw_version': fwVersion,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1738,6 +1841,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
       Value<int>? boardFlags,
       Value<DateTime?>? tableSyncedAt,
       Value<String?>? parentCandidates,
+      Value<int?>? productCode,
+      Value<int?>? hwRev,
+      Value<String?>? fwVersion,
       Value<int>? rowid}) {
     return MeshDevicesCompanion(
       mac: mac ?? this.mac,
@@ -1762,6 +1868,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
       boardFlags: boardFlags ?? this.boardFlags,
       tableSyncedAt: tableSyncedAt ?? this.tableSyncedAt,
       parentCandidates: parentCandidates ?? this.parentCandidates,
+      productCode: productCode ?? this.productCode,
+      hwRev: hwRev ?? this.hwRev,
+      fwVersion: fwVersion ?? this.fwVersion,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1835,6 +1944,15 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     if (parentCandidates.present) {
       map['parent_candidates'] = Variable<String>(parentCandidates.value);
     }
+    if (productCode.present) {
+      map['product_code'] = Variable<int>(productCode.value);
+    }
+    if (hwRev.present) {
+      map['hw_rev'] = Variable<int>(hwRev.value);
+    }
+    if (fwVersion.present) {
+      map['fw_version'] = Variable<String>(fwVersion.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1866,6 +1984,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
           ..write('boardFlags: $boardFlags, ')
           ..write('tableSyncedAt: $tableSyncedAt, ')
           ..write('parentCandidates: $parentCandidates, ')
+          ..write('productCode: $productCode, ')
+          ..write('hwRev: $hwRev, ')
+          ..write('fwVersion: $fwVersion, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -2965,6 +3086,9 @@ typedef $$MeshDevicesTableCreateCompanionBuilder = MeshDevicesCompanion
   Value<int> boardFlags,
   Value<DateTime?> tableSyncedAt,
   Value<String?> parentCandidates,
+  Value<int?> productCode,
+  Value<int?> hwRev,
+  Value<String?> fwVersion,
   Value<int> rowid,
 });
 typedef $$MeshDevicesTableUpdateCompanionBuilder = MeshDevicesCompanion
@@ -2991,6 +3115,9 @@ typedef $$MeshDevicesTableUpdateCompanionBuilder = MeshDevicesCompanion
   Value<int> boardFlags,
   Value<DateTime?> tableSyncedAt,
   Value<String?> parentCandidates,
+  Value<int?> productCode,
+  Value<int?> hwRev,
+  Value<String?> fwVersion,
   Value<int> rowid,
 });
 
@@ -3072,6 +3199,15 @@ class $$MeshDevicesTableFilterComposer
   ColumnFilters<String> get parentCandidates => $composableBuilder(
       column: $table.parentCandidates,
       builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get productCode => $composableBuilder(
+      column: $table.productCode, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get hwRev => $composableBuilder(
+      column: $table.hwRev, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get fwVersion => $composableBuilder(
+      column: $table.fwVersion, builder: (column) => ColumnFilters(column));
 }
 
 class $$MeshDevicesTableOrderingComposer
@@ -3155,6 +3291,15 @@ class $$MeshDevicesTableOrderingComposer
   ColumnOrderings<String> get parentCandidates => $composableBuilder(
       column: $table.parentCandidates,
       builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get productCode => $composableBuilder(
+      column: $table.productCode, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get hwRev => $composableBuilder(
+      column: $table.hwRev, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get fwVersion => $composableBuilder(
+      column: $table.fwVersion, builder: (column) => ColumnOrderings(column));
 }
 
 class $$MeshDevicesTableAnnotationComposer
@@ -3231,6 +3376,15 @@ class $$MeshDevicesTableAnnotationComposer
 
   GeneratedColumn<String> get parentCandidates => $composableBuilder(
       column: $table.parentCandidates, builder: (column) => column);
+
+  GeneratedColumn<int> get productCode => $composableBuilder(
+      column: $table.productCode, builder: (column) => column);
+
+  GeneratedColumn<int> get hwRev =>
+      $composableBuilder(column: $table.hwRev, builder: (column) => column);
+
+  GeneratedColumn<String> get fwVersion =>
+      $composableBuilder(column: $table.fwVersion, builder: (column) => column);
 }
 
 class $$MeshDevicesTableTableManager extends RootTableManager<
@@ -3278,6 +3432,9 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             Value<int> boardFlags = const Value.absent(),
             Value<DateTime?> tableSyncedAt = const Value.absent(),
             Value<String?> parentCandidates = const Value.absent(),
+            Value<int?> productCode = const Value.absent(),
+            Value<int?> hwRev = const Value.absent(),
+            Value<String?> fwVersion = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               MeshDevicesCompanion(
@@ -3303,6 +3460,9 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             boardFlags: boardFlags,
             tableSyncedAt: tableSyncedAt,
             parentCandidates: parentCandidates,
+            productCode: productCode,
+            hwRev: hwRev,
+            fwVersion: fwVersion,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -3328,6 +3488,9 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             Value<int> boardFlags = const Value.absent(),
             Value<DateTime?> tableSyncedAt = const Value.absent(),
             Value<String?> parentCandidates = const Value.absent(),
+            Value<int?> productCode = const Value.absent(),
+            Value<int?> hwRev = const Value.absent(),
+            Value<String?> fwVersion = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               MeshDevicesCompanion.insert(
@@ -3353,6 +3516,9 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             boardFlags: boardFlags,
             tableSyncedAt: tableSyncedAt,
             parentCandidates: parentCandidates,
+            productCode: productCode,
+            hwRev: hwRev,
+            fwVersion: fwVersion,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0

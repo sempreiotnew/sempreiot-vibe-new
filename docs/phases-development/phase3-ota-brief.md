@@ -80,8 +80,14 @@ story needs (signed images, rollback, an update log). Nothing in the remaining l
 | `OTA_ROLLOUT` 0x15 | serial ↑ | paged: `state` ‖ `release version` ‖ per unit `mac ‖ family ‖ model_len ‖ model ‖ version_now ‖ target ‖ state ‖ percent ‖ attempts ‖ reason ‖ last_change_age_s` | reply to `GET_ROLLOUT` (CMD 0x1C) and pushed on change / every 5 s while rolling |
 | `OTA_CONTROL` — CMD 0x1D | serial ↓ | `action u8` (start · pause · resume · abort) ‖ filter (`model` / `zone` / `mac`, optional) | the tablet's buttons |
 
-`NAME_ANNOUNCE` gains the **model** appended (`model_len u8 ‖ model`) so the board's table and the tablet
-know each unit's product and version (`version` appended too) — additive, pre-v3.5 receivers ignore it.
+**Done 2026-09-29 (protocol §7.11 / §7.12, reference §2.1):** `NAME_ANNOUNCE` carries `PRODUCT u16 ‖
+HW_REV u8 ‖ FW_LEN u8 ‖ FW`; the board keeps them per unit in its device table and gives them to the
+tablet in `DEVICE_TABLE` (format 1); the tablet stores and shows them. **The product travels as a 16-bit
+code (`family byte ‖ product byte`), not as the model string** — so wherever this brief says "model" on
+the wire (`OTA_ROLLOUT`'s `model_len ‖ model`, the `OTA_CONTROL` filter) read `product u16`, and wherever
+it says `family u8` (0 board · 1 node · 2 leaf) read the PRODUCT family byte (`0x01` · `0x02` · `0x03`).
+The draft rows above are to be rewritten that way when the OTA messages enter the protocol. Still open
+from this step: the board's own product and version are not in any frame yet.
 
 ## 5. Steps (each ends with something you can see)
 
