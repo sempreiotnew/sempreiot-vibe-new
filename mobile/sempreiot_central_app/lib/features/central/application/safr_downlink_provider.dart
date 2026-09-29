@@ -25,7 +25,10 @@ import 'serial_provider.dart';
 /// - sends COMMANDs with pending-ACK tracking: 3 attempts / 2 s backoff, then
 ///   a TROUBLE "comando sem confirmação" event;
 /// - RESET (§7.1.4): the ONLY path that clears the alarm latch, and only
-///   after the root confirms.
+///   after the root confirms;
+/// - carries the frames of a firmware push (§13.3) through the same
+///   pending-ACK tracking, with the timeouts the push asks for and, for a
+///   chunk, its raw bytes right behind the frame.
 class SafrDownlink {
   SafrDownlink(this._ref);
 
@@ -263,8 +266,13 @@ class SafrDownlink {
     ).then((_) {});
   }
 
-  Future<bool> _write(Uint8List frame) =>
-      _ref.read(serialProvider.notifier).write(frame);
+  /// [raw]: bytes that follow the frame on the wire as they are (§13.3).
+  Future<bool> _write(Uint8List frame, [Uint8List? raw]) {
+    final serial = _ref.read(serialProvider.notifier);
+    return raw == null
+        ? serial.write(frame)
+        : serial.writeFrameWithData(frame, raw);
+  }
 
   /// ACKs a validated uplink frame — spec §9.1: process once, ACK every time.
   Future<void> sendAck(SafrWireFrame source) async {
@@ -335,6 +343,59 @@ class SafrDownlink {
       await _ref.read(appDatabaseProvider).clearAlarmLatch(mac: dstMac);
     }
     return ok;
+  }
+
+  // ── Firmware push (§13.3) ──────────────────────────────────────
+
+  /// One firmware-update frame (OTA_PUSH_BEGIN / CHUNK / END), tracked like
+  /// every F_ACK_REQ frame: up to [attempts] transmissions, [ackTimeout]
+  /// apart, then `ack == null`. [raw] follows the frame on the wire in every
+  /// transmission. [msgId]: send again under the MSG_ID of a transmission
+  /// that was never answered (§9.1: same MSG_ID, fresh MSG_CTR).
+  ///
+  /// `ack == null` also when the port is closed. A failure raises no
+  /// TROUBLE: the push reports it on its own screen.
+  Future<SafrTxResult> sendOta({
+    required SafrMsgType msgType,
+    required Uint8List payload,
+    required Duration ackTimeout,
+    required String description,
+    Uint8List? raw,
+    int attempts = 1,
+    int? msgId,
+  }) {
+    return _sendTrackedTx(
+      msgType: msgType,
+      payload: payload,
+      dstMac: safrBroadcastMacBytes,
+      description: description,
+      notifyOnFail: false,
+      raw: raw,
+      backoff: ackTimeout,
+      maxAttempts: attempts,
+      msgId: msgId,
+    );
+  }
+
+  /// OTA_BAUD (COMMAND 0x1A): asks the board to move the link to [baud].
+  /// The board ACKs at the current speed and then switches; the caller
+  /// switches the port after the ACK. Null = never confirmed.
+  Future<SafrAckPayload?> sendOtaBaud(
+    int baud, {
+    Duration ackTimeout = _retryBackoff,
+    int attempts = _retryMax,
+  }) async {
+    final tx = await _sendTrackedTx(
+      msgType: SafrMsgType.command,
+      payload: SafrCommandPayload.build(
+          cmd: SafrCommand.otaBaud, args: SafrOtaBaudArgs.build(baud)),
+      dstMac: safrBroadcastMacBytes,
+      description: 'velocidade do enlace',
+      notifyOnFail: false,
+      backoff: ackTimeout,
+      maxAttempts: attempts,
+    );
+    return tx.ack;
   }
 
   // ── Downlink supervision (§9.3) ────────────────────────────────
@@ -443,15 +504,45 @@ class SafrDownlink {
     bool notifyOnFail = true,
     SafrEncoder? encoder,
   }) async {
+    final tx = await _sendTrackedTx(
+      msgType: msgType,
+      payload: payload,
+      dstMac: dstMac,
+      description: description,
+      targetMac: targetMac,
+      notifyOnFail: notifyOnFail,
+      encoder: encoder,
+    );
+    return tx.ack;
+  }
+
+  /// The one tracked send (§9.1): [maxAttempts] transmissions [backoff]
+  /// apart under one MSG_ID, each with a fresh MSG_CTR.
+  Future<SafrTxResult> _sendTrackedTx({
+    required SafrMsgType msgType,
+    required Uint8List payload,
+    required Uint8List dstMac,
+    required String description,
+    String? targetMac,
+    bool notifyOnFail = true,
+    SafrEncoder? encoder,
+    Uint8List? raw,
+    Duration backoff = _retryBackoff,
+    int maxAttempts = _retryMax,
+    int? msgId,
+  }) async {
     final enc = encoder ?? _encoder;
     final frame = enc.encode(
       msgType: msgType,
       payload: payload,
       dstMac: dstMac,
       ackRequired: true,
+      msgId: msgId,
     );
-    final msgId = enc.lastMsgId;
+    final id = msgId ?? enc.lastMsgId;
 
+    // An answer that comes now belongs to this transmission.
+    _giveUp(id, notify: false);
     final pending = _PendingTx(
       msgType: msgType,
       payload: payload,
@@ -460,26 +551,29 @@ class SafrDownlink {
       targetMac: targetMac,
       notifyOnFail: notifyOnFail,
       encoder: enc,
+      raw: raw,
+      backoff: backoff,
+      maxAttempts: maxAttempts,
     );
-    _pending[msgId] = pending;
-    _scheduleRetry(msgId);
+    _pending[id] = pending;
+    _scheduleRetry(id);
 
-    final sent = await _write(frame);
+    final sent = await _write(frame, raw);
     _emitTick(targetMac);
     if (!sent) {
-      _giveUp(msgId, notify: false);
-      return null;
+      _giveUp(id, notify: false);
+      return (ack: null, msgId: id);
     }
-    return pending.completer.future;
+    return (ack: await pending.completer.future, msgId: id);
   }
 
   void _scheduleRetry(int msgId) {
     final pending = _pending[msgId];
     if (pending == null) return;
-    pending.retryTimer = Timer(_retryBackoff, () async {
+    pending.retryTimer = Timer(pending.backoff, () async {
       final p = _pending[msgId];
-      if (p == null) return;
-      if (p.attempts >= _retryMax) {
+      if (p == null || !identical(p, pending)) return;
+      if (p.attempts >= p.maxAttempts) {
         _giveUp(msgId, notify: p.notifyOnFail);
         return;
       }
@@ -492,7 +586,7 @@ class SafrDownlink {
         ackRequired: true,
         msgId: msgId,
       );
-      await _write(frame);
+      await _write(frame, p.raw);
       _emitTick(p.targetMac);
       _scheduleRetry(msgId);
     });
@@ -555,6 +649,10 @@ class SafrDownlink {
   }
 }
 
+/// One tracked transmission: the ACK (null = never confirmed, or no port)
+/// and the MSG_ID it went under.
+typedef SafrTxResult = ({SafrAckPayload? ack, int msgId});
+
 /// Outcome of a v3.2 lifecycle command (spec §7.5 DETAIL).
 class LifecycleResult {
   const LifecycleResult(this.ok, this.detail);
@@ -579,8 +677,11 @@ class _PendingTx {
     required this.dstMac,
     required this.description,
     required this.encoder,
+    required this.backoff,
+    required this.maxAttempts,
     this.targetMac,
     this.notifyOnFail = true,
+    this.raw,
   });
 
   final SafrMsgType msgType;
@@ -590,6 +691,11 @@ class _PendingTx {
   final SafrEncoder encoder;
   final String? targetMac;
   final bool notifyOnFail;
+
+  /// Bytes that follow the frame on the wire in every transmission (§13.3).
+  final Uint8List? raw;
+  final Duration backoff;
+  final int maxAttempts;
   final completer = Completer<SafrAckPayload?>();
   Timer? retryTimer;
   int attempts = 1;

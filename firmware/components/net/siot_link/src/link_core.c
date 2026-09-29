@@ -91,3 +91,58 @@ size_t siot_link_reasm_feed(siot_link_reasm_t *r, siot_link_kind_t kind, const u
     r->len -= pos;
     return delivered;
 }
+
+/* ---- stream: frames, and raw runs a frame announces (protocol §13.3) ----- */
+
+void siot_link_stream_reset(siot_link_stream_t *s)
+{
+    siot_link_reasm_reset(&s->reasm);
+    s->raw_left = 0;
+    s->raw_cb = NULL;
+    s->raw_ctx = NULL;
+    s->good = 0;
+}
+
+esp_err_t siot_link_stream_expect_raw(siot_link_stream_t *s, size_t len, siot_link_raw_cb_t cb, void *ctx)
+{
+    if (len == 0 || cb == NULL) return ESP_ERR_INVALID_ARG;
+    if (s->raw_left != 0) return ESP_ERR_INVALID_STATE;
+    s->raw_left = len;
+    s->raw_cb = cb;
+    s->raw_ctx = ctx;
+    return ESP_OK;
+}
+
+void siot_link_stream_abort_raw(siot_link_stream_t *s)
+{
+    if (s->raw_left == 0) return;
+    const siot_link_raw_cb_t cb = s->raw_cb;
+    void *ctx = s->raw_ctx;
+    s->raw_left = 0;
+    s->raw_cb = NULL;
+    if (cb) cb(NULL, 0, 0, ctx);
+}
+
+void siot_link_stream_feed(siot_link_stream_t *s, siot_link_kind_t kind, const uint8_t *data, size_t n)
+{
+    while (n > 0) {
+        if (s->raw_left > 0) {
+            const size_t take = n < s->raw_left ? n : s->raw_left;
+            const siot_link_raw_cb_t cb = s->raw_cb;
+            void *ctx = s->raw_ctx;
+            s->raw_left -= take;
+            const size_t left = s->raw_left;
+            if (left == 0) s->raw_cb = NULL; /* the callback may announce nothing: frames resume */
+            s->good += (uint32_t)take;
+            cb(data, take, left, ctx);
+            data += take;
+            n -= take;
+            continue;
+        }
+        /* One byte at a time: the frame that announces a raw run ends exactly
+         * where the run begins, so nothing of the run is ever taken for a frame. */
+        s->good += (uint32_t)siot_link_reasm_feed(&s->reasm, kind, data, 1);
+        data++;
+        n--;
+    }
+}

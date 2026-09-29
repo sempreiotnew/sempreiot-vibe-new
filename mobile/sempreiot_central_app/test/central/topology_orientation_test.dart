@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:sempreiot_central_app/features/central/application/ota_push_report.dart';
+import 'package:sempreiot_central_app/features/central/application/ota_push_state.dart';
 import 'package:sempreiot_central_app/features/central/application/safr_traffic_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/topology_provider.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
@@ -46,6 +48,8 @@ void main() {
         overrides: [
           topologyProvider.overrideWithValue(mesh),
           safrTrafficProvider.overrideWithValue(SafrTrafficBus()),
+          // No firmware push: the map as it is every other day.
+          otaPushViewProvider.overrideWithValue(const OtaPushState()),
         ],
         child: const MaterialApp(home: TopologyScreen()),
       ),

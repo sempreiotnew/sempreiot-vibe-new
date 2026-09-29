@@ -1,0 +1,38 @@
+menu "SempreIoT firmware update, board (siot_ota_board)"
+
+    config SIOT_OTA_TEST_ANY_VERSION
+        bool "TEST ONLY: accept any version (the same one again, an older one)"
+        default y
+        help
+            *** MUST BE OFF IN PRODUCTION — docs/ota/before-production.md, item 1. ***
+
+            Protocol section 13.2: a unit installs an image only when its
+            version is NEWER than the one it runs. That rule is what stops an
+            old, vulnerable release from being put back on a unit. It is
+            switched off here, on purpose, since 2026-09-29, so the same test
+            image can be pushed over and over on the bench.
+
+            firmware/ci/check.sh --release refuses to pass while this is on.
+
+    config SIOT_OTA_ALLOW_FORCE
+        bool "Bench: honour FORCE (install an older or the same version)"
+        default n
+        help
+            Protocol section 13.2. A production build leaves this off and
+            answers FORCE_REFUSED. Turn it on for a bench board that must be
+            taken back to an older image over the link.
+
+    config SIOT_OTA_SELFTEST_FAIL
+        bool "Bench: this image fails its self-test (rollback test, check O4)"
+        default n
+        help
+            A board image built with this on never confirms itself: 120 s
+            after it boots from an update the board goes back to the image it
+            ran before. Never release a build with this on.
+
+    config SIOT_OTA_SELFTEST_S
+        int "Seconds a new board image has to pass its self-test"
+        default 120
+        range 20 600
+
+endmenu

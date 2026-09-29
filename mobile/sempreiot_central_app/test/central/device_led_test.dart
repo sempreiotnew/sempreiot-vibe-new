@@ -1,6 +1,11 @@
 import 'dart:async';
 
+import 'package:drift/drift.dart' show driftRuntimeOptions;
+import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sempreiot_central_app/core/database/app_database.dart';
+import 'package:sempreiot_central_app/features/central/application/safr_ingest_provider.dart';
+import 'package:sempreiot_central_app/features/central/domain/safr/safr_encoder.dart';
 import 'package:sempreiot_central_app/features/central/application/device_led_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/safr_traffic_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/topology_provider.dart';
@@ -278,5 +283,102 @@ void main() {
     }
     expect(at(childMac, 9 * 500 - 10), LedColor.blue); // 1 lit + 8 queued
     expect(at(childMac, 9 * 500 + 10), isNull);
+  });
+
+  // ── Firmware push (protocol §13.3) ────────────────────────────────────────
+  //
+  // The board ACKs every chunk once it is written, and every frame the board
+  // puts on a link is one pulse (siot_coordinator.c `tx_sink` →
+  // SIOT_EVT_SAFR_TX → siot_ui_led.c `on_tx`): an ACK is a message, blue
+  // 500 ms, behind whatever is lit, 8 in the queue. The chunks themselves
+  // light nothing: the board relays none of them.
+
+  group('firmware push', () {
+    test('the board\'s ACK of a chunk: blue 500 ms on the board, once', () {
+      tickAt(1000, up(boardMac, SafrMsgType.ack));
+      expect(at(boardMac, 1050), LedColor.blue);
+      expect(at(boardMac, 1450), LedColor.blue);
+      expect(at(boardMac, 1550), isNull);
+    });
+
+    test('the board\'s ACK lights the board only', () {
+      tickAt(1000, up(boardMac, SafrMsgType.ack));
+      expect(at(rootMac, 1050), isNot(LedColor.blue));
+      expect(at(childMac, 1050), isNull);
+      expect(at(leafMac, 1050), isNull);
+    });
+
+    test('ten chunks a second: blue without a gap, 8 pulses in the queue',
+        () {
+      // 6 s of a push, one ACK every 100 ms, from t = 1 s: the magenta
+      // flash of the board never gets a turn.
+      for (var i = 0; i < 60; i++) {
+        final ms = 1000 + i * 100;
+        tickAt(ms, up(boardMac, SafrMsgType.ack));
+        expect(at(boardMac, ms + 50), LedColor.blue, reason: 'at $ms ms');
+      }
+      // The queue was full (1 lit + 8 behind it) when the last ACK came:
+      // blue for what it holds, then dark.
+      expect(at(boardMac, 6900 + 3000), LedColor.blue);
+      expect(at(boardMac, 6900 + 9 * 500 + 10), isNull);
+    });
+
+    test('after the last ACK the queue plays out: at most 9 pulses', () {
+      // More ACKs at once than the queue holds.
+      for (var i = 0; i < 20; i++) {
+        tickAt(1000, up(boardMac, SafrMsgType.ack));
+      }
+      expect(at(boardMac, 1000 + 9 * 500 - 10), LedColor.blue);
+      expect(at(boardMac, 1000 + 9 * 500 + 10), isNull);
+    });
+
+    test('OTA_PUSH_RESULT is background traffic: a 100 ms tick', () {
+      tickAt(1000, up(boardMac, SafrMsgType.otaPushResult));
+      expect(at(boardMac, 1050), LedColor.blue);
+      expect(at(boardMac, 1150), isNull);
+    });
+
+    test('an ACK frame of the board, from the wire to its LED', () async {
+      driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
+      final db = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      final ticks = <SafrTrafficTick>[];
+      final ingest = SafrIngestService(
+        db: db,
+        onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS) {
+          final tick = SafrTrafficTick(
+            mac: mac,
+            direction: SafrTrafficDirection.uplink,
+            severity: severity,
+            parentMac: parentMac,
+            msgType: msgType,
+            eventCode: eventCode,
+            uptimeS: uptimeS,
+          );
+          ticks.add(tick);
+          engine.onTick(tick);
+        },
+      );
+      final board = SafrEncoder(srcMac: safrMacToBytes(boardMac), bootCtr: 3);
+
+      now = DateTime(2026, 1, 1, 0, 0, 1);
+      // The board's answer to OTA_PUSH_CHUNK under MSG_ID 41.
+      await ingest.handleFrame(
+        board.encode(
+          msgType: SafrMsgType.ack,
+          payload: SafrAckPayload.build(ackedMsgId: 41),
+          dstMac: safrCentralMacBytes,
+        ),
+        deviceId: 't',
+      );
+
+      expect(ticks, hasLength(1));
+      expect(ticks.single.mac, boardMac);
+      expect(ticks.single.msgType, SafrMsgType.ack);
+      expect(ticks.single.direction, SafrTrafficDirection.uplink);
+      expect(at(boardMac, 1050), LedColor.blue);
+      expect(at(boardMac, 1450), LedColor.blue);
+      expect(at(boardMac, 1550), isNull);
+    });
   });
 }

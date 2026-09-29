@@ -217,9 +217,46 @@ static void send_installation(const uint8_t dst[6], int64_t t)
     send_to_tablet(SAFR_MSG_INSTALLATION, dst, 0, p, plen);
 }
 
+/* ---- firmware update: frames for siot_ota_board (protocol §13) ------------ */
+
+static siot_coordinator_ota_cb_t s_ota_cb;
+static void *s_ota_ctx;
+
+void siot_coordinator_set_ota_sink(siot_coordinator_ota_cb_t cb, void *ctx)
+{
+    s_ota_cb = cb;
+    s_ota_ctx = ctx;
+}
+
+void siot_coordinator_send_to_tablet(uint8_t msg_type, uint8_t flags, const uint8_t *payload, size_t len)
+{
+    send_to_tablet(msg_type, SAFR_CENTRAL_MAC, flags, payload, len);
+}
+
+void siot_coordinator_ack_tablet(uint16_t acked_msg_id, uint8_t status, uint8_t detail)
+{
+    send_ack(acked_msg_id, status, detail, SAFR_CENTRAL_MAC);
+}
+
+bool siot_coordinator_alarm_recent(void) { return coord_admin_alarm_recent(); }
+
+static bool is_ota_command(const siot_safr_frame_t *f)
+{
+    return f->msg_type == SAFR_MSG_COMMAND && f->payload_len >= 1 &&
+           f->payload[0] >= SAFR_CMD_OTA_BAUD && f->payload[0] <= SAFR_CMD_OTA_CONTROL;
+}
+
+static bool is_ota_push(const siot_safr_frame_t *f)
+{
+    return f->msg_type >= SAFR_MSG_OTA_PUSH_BEGIN && f->msg_type <= SAFR_MSG_OTA_PUSH_END;
+}
+
 /* The board's own identity (spec §7.11, v3.5): it is not an entry of its own
  * device table, so it tells the tablet what it is and what it runs with the
  * same frame every unit uses. ROLE 0xFF: the board has no mesh role. */
+static void send_board_announce(const uint8_t dst[6]);
+void siot_coordinator_announce_board(void) { send_board_announce(SAFR_CENTRAL_MAC); }
+
 static void send_board_announce(const uint8_t dst[6])
 {
     const siot_installation_t *code = siot_config_code();
@@ -491,6 +528,13 @@ static bool handle_lifecycle_command(const siot_safr_frame_t *f, const uint8_t *
 
 static void handle_downlink(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len, bool dup)
 {
+    if (is_ota_push(f) || is_ota_command(f)) { /* board only, never relayed (§13.3, §13.6) */
+        if (s_ota_cb) s_ota_cb(f, dup, s_ota_ctx);
+        /* DETAIL of an OTA message is a §13.7 REASON: 13 BUSY = "not now, not here" (the
+         * general REFUSED is 0x05, which reads SHA_FAIL in that list). */
+        else if (f->flags & SAFR_F_ACK_REQ) send_ack(f->msg_id, SAFR_ACK_ERROR, 13, f->src_mac);
+        return;
+    }
     if (f->msg_type == SAFR_MSG_COMMAND && f->payload_len >= 1 &&
         handle_lifecycle_command(f, raw, raw_len, dup)) {
         return;
@@ -519,8 +563,12 @@ static void handle_downlink(const siot_safr_frame_t *f, const uint8_t *raw, size
 static void on_frame(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len, bool dup, void *ctx)
 {
     (void)ctx;
-    if (s_rx_kind == SIOT_LINK_MESH) handle_uplink(f, raw, raw_len, dup);
-    else handle_downlink(f, raw, raw_len, dup);
+    if (s_rx_kind == SIOT_LINK_MESH) {
+        if (is_ota_push(f)) return; /* §13.3: a push comes from the tablet, never from the mesh */
+        handle_uplink(f, raw, raw_len, dup);
+    } else {
+        handle_downlink(f, raw, raw_len, dup);
+    }
 }
 
 /* Root TCP session (link_mesh_board.c). UP: a root just connected — send our
@@ -577,6 +625,15 @@ static void on_link_rx(siot_link_kind_t kind, const uint8_t *frame, size_t len, 
         siot_evt_frame_t ev = {.msg_type = frame[4]};
         memcpy(ev.src_mac, &frame[9], 6);
         siot_evbus_post(SIOT_EVT_SAFR_RX, &ev, sizeof(ev));
+        /* The first frame of the tablet after a boot: tell it what this board
+         * is and runs (§7.11). After the board updated itself the tablet's
+         * serial port never closed, so it will not ask — and this is how it
+         * learns the new version (§13.3). */
+        static bool s_announced_to_tablet;
+        if (kind == SIOT_LINK_SERIAL && !s_announced_to_tablet && siot_mac_eq(&frame[9], SAFR_CENTRAL_MAC)) {
+            s_announced_to_tablet = true;
+            send_board_announce(SAFR_CENTRAL_MAC);
+        }
     }
 }
 
@@ -642,6 +699,10 @@ esp_err_t siot_coordinator_start(void)
 
     /* One handler for every type the links can carry; the link kind tells up from down. */
     for (uint8_t t = SAFR_MSG_EVENT; t <= SAFR_MSG_NAME_ANNOUNCE; t++) {
+        const esp_err_t err = siot_safr_register(t, on_frame, NULL);
+        if (err != ESP_OK) return err;
+    }
+    for (uint8_t t = SAFR_MSG_OTA_PUSH_BEGIN; t <= SAFR_MSG_OTA_PUSH_END; t++) { /* §13.3, serial only */
         const esp_err_t err = siot_safr_register(t, on_frame, NULL);
         if (err != ESP_OK) return err;
     }

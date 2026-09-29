@@ -57,6 +57,20 @@ enum SafrMsgType {
   /// on the serial link, listed so the parser names them in diagnostics.
   parentProbe(0x0D),
   parentOffer(0x0E),
+
+  /// v3.5 firmware update (spec §13.3): the push from the tablet to the
+  /// board, serial link only.
+  otaPushBegin(0x0F),
+  otaPushChunk(0x10),
+  otaPushEnd(0x11),
+  otaPushResult(0x12),
+
+  /// v3.5 (spec §13.4, §13.6): a unit's update progress and result, and the
+  /// board's rollout table. Named here so diagnostics can show them; their
+  /// payloads are decoded in a later step.
+  otaStatus(0x13),
+  otaResult(0x14),
+  otaRollout(0x15),
   unknown(0x00);
 
   const SafrMsgType(this.wire);
@@ -274,7 +288,15 @@ SafrWireFrame parseSafrWireFrame(
     SafrMsgType.code => SafrCodePayload.parse(plaintext),
     SafrMsgType.parentProbe => SafrParentProbePayload.parse(plaintext),
     SafrMsgType.parentOffer => SafrParentOfferPayload.parse(plaintext),
-    SafrMsgType.unknown => SafrUnknownPayload(plaintext),
+    SafrMsgType.otaPushBegin => SafrOtaPushBeginPayload.parse(plaintext),
+    SafrMsgType.otaPushChunk => SafrOtaPushChunkPayload.parse(plaintext),
+    SafrMsgType.otaPushEnd => SafrOtaPushEndPayload.parse(plaintext),
+    SafrMsgType.otaPushResult => SafrOtaPushResultPayload.parse(plaintext),
+    SafrMsgType.otaStatus ||
+    SafrMsgType.otaResult ||
+    SafrMsgType.otaRollout ||
+    SafrMsgType.unknown =>
+      SafrUnknownPayload(plaintext),
   };
 
   return SafrWireFrame(

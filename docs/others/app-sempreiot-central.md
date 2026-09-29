@@ -83,6 +83,10 @@ The `CLAUDE.md` rules say AppSync/GraphQL; the code does **not** use AppSync at 
 | `supervisionProvider`, `meshLinkStateProvider` | supervision_provider.dart | offline detection per device, root freshness |
 | `topologyProvider` | topology_provider.dart | graph nodes for the Rede tab |
 | `safrTrafficProvider` | safr_traffic_provider.dart | broadcast bus of frame ticks for the animation |
+| `otaPushProvider` (+ `otaPushTimingsProvider`) | ota_push_controller.dart, ota_push_state.dart | the firmware push to the board (protocol §13.3): file, phase, steps, counters, log, what this session saw stored on the board. Lives as long as the app, not the screen |
+| `otaPushViewProvider`, `otaBannerDismissedProvider` | ota_push_report.dart | the push as every screen but "Atualização de firmware" reads it (= `otaPushProvider`; a provider of its own so a widget test hands a state over); the push whose outcome the operator closed on the Rede banner |
+| `otaBoardBusProvider`, `boardDeviceProvider` | ota_board_events_provider.dart | what the board says about a push (OTA_PUSH_RESULT, its own NAME_ANNOUNCE and HEARTBEAT, each with the frame's BOOT_CTR), fed by ingest; the board's own `MeshDevices` row (product of the board family, else layer 0 with a heartbeat) |
+| `firmwareFilePickerProvider` | central/data/services/firmware_file_picker.dart | the system file chooser (`file_picker`), bytes of the chosen file |
 | `deviceEventsProvider`, `deviceEventsFilterProvider`, `latchedAlarmsProvider`, `activeAlarmProvider` | device_events_provider.dart | Eventos feed (last 300), filters, alarm latch |
 | `serialLogsProvider`, `serialWireDiagProvider`, `serialStatsProvider` | serial_logs_provider.dart | raw packet console + counters |
 | `credentialsAdminProvider` + `auditTrailProvider`, `configuredLevelPinsProvider`, `rootUserProvider`, `unlockPinConfiguredProvider` | credentials_admin_provider.dart | hashed PINs, rate limiter, audit |
@@ -119,6 +123,7 @@ APP mode:   SplashScreen → LoginScreen (modal login / Google / Apple / Registe
 CENTRAL:    Splash → MainScreen (locked, _PinOverlay) → Principal (_CentralDashboard) / Rede (TopologyScreen embedded) / Eventos (EventsScreen)
             drawer: StorageScreen, DeviceInfoScreen, DeviceAccessScreen ⟶ EditorGate ⟶ AccessPinsScreen ⟶ PinChangeScreen / AuditLogScreen,
                     SerialLogsScreen ⟶ SafrDetailScreen (also from an event card's sheet)
+                    FirmwareUpdateScreen ("Atualização de firmware", §5 "Firmware push")
             Rede node sheet: IDENTIFY / SILENCE / TEST commands, rename
 ```
 
@@ -250,7 +255,51 @@ topologyProvider [topology_provider.dart]: nodes from supervision; role fallback
 | Severity-priority TX queue, alarm-first rendering | Not implemented (feed is chronological; `_StatusStrip` counts last 24 h) |
 | §11 append-only event history | `deleteOlderThan(30 days)` also deletes `DeviceEvents` |
 | Per-installation PSK/SYSTEM_ID | Dev constants everywhere (`safrDevPsk`, `safrDevSystemId = 0x5346`); `SafrEncoder`/parser accept a key parameter but nothing supplies one |
+| §13.2, §13.3, §13.7 firmware push to the board (v3.5) | Implemented on the tablet side, see "Firmware push" below. §13.4–§13.6 (offer, rollout): only the `MSG_TYPE` / `COMMAND` values have names |
 | Appendix A vectors | `tool/print_safr_v3_vectors.dart` + (missing from snapshot) `test/safr/safr_v3_vectors_test.dart` |
+
+### Firmware push to the board (protocol §13.3, 2026-09-29)
+
+Drawer → **Atualização de firmware** (CENTRAL mode only). The operator picks a `.bin`; the tablet reads what it is from the file, sends it to the board over the USB cable and shows every step. No database table: the state, the steps and the log live in `otaPushProvider` for as long as the app runs.
+
+| Piece | File | What it does |
+|---|---|---|
+| Codecs | `domain/safr/safr_ota_payloads.dart` (a `part` of `safr_v2_payloads.dart`) | `OTA_PUSH_BEGIN` 0x0F, `OTA_PUSH_CHUNK` 0x10, `OTA_PUSH_END` 0x11, `OTA_PUSH_RESULT` 0x12, `OTA_BAUD` = COMMAND 0x1A (`BAUD u32`), `SafrOtaReason` (§13.7, with the pt-BR text of each). 0x13–0x15 and COMMAND 0x1B–0x1D are named only. `SafrAckPayload.detailRaw` / `.otaReason`: byte 3 of an ACK read as a REASON |
+| CRC-32 | `domain/ota/crc32.dart` | IEEE 802.3, check value `0xCBF43926` |
+| Image header | `domain/ota/firmware_image.dart` | `esp_app_desc_t` at offset 32: magic `0xABCD5432` (LE), `version` at 48, `project_name` at 80 → family (`sempreiot-board` / `-node` / `-leaf`). Anything else, or a version over 24 bytes, is refused before a byte is sent |
+| Port | `application/serial_provider.dart` | `writeFrameWithData` (frame + raw bytes in ONE write), `setBaudRate` (then 150 ms), one queue for every write and speed change, back to 115200 after 20 s without a valid frame at another speed, and on every port open |
+| Downlink | `application/safr_downlink_provider.dart` | `sendOta` / `sendOtaBaud`: the same pending-ACK tracking as every command, with the timeout and attempts the push asks for; no TROUBLE event on failure |
+| Ingest | `application/safr_ingest_provider.dart` | `OTA_PUSH_RESULT` → `otaBoardBusProvider` (not a device to register); the board's NAME_ANNOUNCE and HEARTBEAT are also sent there |
+| Controller | `application/ota_push_controller.dart` | the push, below |
+| Report | `application/ota_push_report.dart` | what a push means, in words, for every screen: `otaPushReport` (what was sent, who received it, what changed, one line for the banner), `otaBoardActivity` (the board on the map), `unitFamily` / `pendingFirmwareFor` (what waits on the board for a unit), `OtaUnitGroups`, `OtaPacketThrottle` |
+| Screen | `presentation/screens/firmware_update_screen.dart`, `widgets/firmware_update_widgets.dart` | below, "What the operator sees" |
+| Rede | `presentation/widgets/ota_rede_widgets.dart`, `screens/topology_screen.dart`, `screens/network_3d_screen.dart`, `widgets/network_3d/*`, `widgets/device_menu.dart` | below, "What the operator sees" |
+
+Flow: `OTA_BAUD 921600` (not confirmed → stay at 115200) → `BEGIN` (the board answers `OTA_PUSH_RESULT {receiving, NEXT_SEQ}` and then the ACK: start at `NEXT_SEQ`) → chunks of 4096, one at a time, each waits for its ACK → `END` → `OTA_PUSH_RESULT` `ok` / `failed`. Node / leaf image: "guardado na placa", then `OTA_BAUD 115200`. Board image: the port goes to 115200 by itself (the board restarts 1.5 s after its verdict and sends no ACK for a speed change), the tablet asks `GET_DEVICE_TABLE` every 5 s so the board hears it, and the push is **confirmed** by the second `OTA_PUSH_RESULT ok` (BOOT_CTR different from the one that took the image), **rolled back** by `failed` / SELFTEST_FAIL or a NAME_ANNOUNCE with another version. A NAME_ANNOUNCE with the new version alone confirms only after 150 s: the board says what it runs before its self-test (120 s) is over.
+
+| Number | Value | `OtaPushTimings` |
+|---|---|---|
+| OTA_BAUD ACK | 2 s × 3 | `baudAckTimeout`, `baudAttempts` |
+| BEGIN ACK | 3 s × 3 (after the cable came back, first 1.5 s × 2 at the speed the push had) | `beginAckTimeout`, `probeAckTimeout` |
+| Chunk ACK | 3 s, then the same chunk again; 5 answers in a row that are not OK = failed | `chunkAckTimeout`, `chunkMaxFailures` |
+| Chunk sent again | after a timeout: same MSG_ID, fresh MSG_CTR (§9.1); after BAD_CRC: a new MSG_ID | `reuseMsgIdOnTimeout` |
+| END ACK / verdict | 2 s × 3 / 30 s | `endAckTimeout`, `verdictTimeout` |
+| Cable out | 60 s, then failed | `linkLossTimeout` |
+| Board restart to verdict | 180 s | `boardConfirmTimeout`; `selfTestWindow` 150 s from the moment the board is heard again |
+
+**What the push does today, and what the app must never suggest.** The tablet sends an image to the BOARD only. A board image is installed by the board itself. A node or leaf image is only STORED on the board: sending it from the board to the devices does not exist yet (§13.4–§13.6), so **no device is updated by a push** and nothing on any screen may read as if one were.
+
+**What the operator sees** (2026-09-29, after the first bench test: "the screen showed success but the versions are still -dev"):
+
+- **Atualização de firmware**, top to bottom: (1) the **report card** (`OtaReportCard`), while a push runs and after it — title, then three answers: *O que foi enviado*, *Quem recebeu*, *O que mudou*; (2) **Versões em execução** (`OtaRunningVersions`): the board, then "Rede elétrica", then "Bateria", one row per unit the tablet knows (`topologyProvider`) with name, product and the firmware it runs now ("—" when it never said), and under the version "na placa: 0.1.1 (ainda não enviado)" when this session saw an image of the unit's family stored on the board with another version; a group of more than 4 folds ("Mostrar todas"); (3) **Ligação**: the cable and what is stored on the board; (4) **Arquivo** and the actions — a node / leaf file says, before it is sent, that it will only be stored; (5) **Detalhes**, folded: steps, counters, log with "Copiar". Open by itself only while a push runs and after one that failed or was rolled back.
+- The card, outcome by outcome: *stored* → "Imagem guardada na placa", neutral look (never the green of a success), "Nenhum dispositivo foi atualizado … o envio da placa para os dispositivos ainda não está disponível"; *confirmed* → "Placa atualizada", `old → new` (old = the board's row when the push began, `OtaPushState.boardVersionBefore`); *rolled back* → the board tried X, failed its self-test, is back on Y; *verified, not confirmed* → "A placa está reiniciando" / "em autoteste" with what it waits for and the seconds; *failed / refused* → the reason and "Nada mudou na placa". A push that broke AFTER the board restarted (`OtaPushState.boardRestarted`) says "Não se sabe" instead: only the board knows what it runs then.
+- **Rede and Rede 3D** (`otaPushViewProvider`): a **banner** on top (`OtaRedeBanner`) — "Atualização: placa ← firmware da placa 0.1.1 · 43 %", or "… firmware de rede elétrica 0.1.1 (será guardado na placa) · 43 %" (the percent / phase is a piece of its own at the end, so a narrow screen never cuts it off); a tap opens the update screen; after the push it shows the outcome in one line until closed or until another push starts. While a push runs the CENTRAL chip shows the board (board icon), a **progress ring** around it (`OtaProgressRing`, the app's accent colour) and the caption "Placa: recebendo 43 %" / "verificando" / "reiniciando" / "autoteste" in place of "CENTRAL"; the **tablet** is drawn beside it (right of the CENTRAL; under it in the 3D "Larga" view) with the USB cable, and packets cross that cable: blue = a frame sent, cyan = the board's ACK coming back (`AppColors.ledBlue` / `ledCyan`), one pair per 8 chunks and never two within 700 ms (`OtaPacketThrottle`). The tablet, the cable and the ring are on the map only while a push runs — the board stays folded into the CENTRAL chip the rest of the time. With no mesh at all the map still shows the CENTRAL while a push runs. No node and no leaf ever shows a ring or a packet of a push.
+- **Every unit on the maps** has the firmware it runs under its name (`FirmwareTag`, "v0.1.0-dev"; nothing when it never said; the board's is on the CENTRAL caption's line, and gives way to the phase while a push runs) and a small box marker when an image of its family waits on the board. The **device menu** adds "Na placa: 0.1.1 (ainda não enviado)" under "Firmware".
+- **The LED is not touched.** The ring, the caption, the banner and the tablet are drawings of the app. The board's LED on screen keeps mirroring the board: during a push it is blue almost without a gap, because the board ACKs every chunk and every ACK it sends is a 500 ms blue pulse, 8 in the queue (`siot_coordinator.c` `tx_sink` → `SIOT_EVT_SAFR_TX`). Those ACK frames reach `safrTrafficProvider` like every uplink frame (`SafrIngestService.handleFrame` calls `onTraffic` before it hands the ACK to the downlink), so nothing had to change; `test/central/device_led_test.dart` group "firmware push" holds it. The chunks the tablet sends light nothing: the board relays none of them.
+
+**What the tablet does not know** (shown as it is, not guessed): what the board holds in `fw_store` is known only from the pushes of this app session (`OtaPushState.storedOnBoard`, RAM) — after an app restart nothing is pending on any screen although the image is still on the board, and an image the board dropped is still shown as stored; there is no message to ask the board (§13.6 is not implemented). The version a unit runs is what it last reported (NAME_ANNOUNCE / DEVICE_TABLE), not a live reading.
+
+Rules of the application: a BOARD image needs the operator's yes to "cerca de 30 segundos sem supervisão" and is not started — nor given its END — while an alarm is latched; "Cancelar" stops sending and tells the board nothing; FORCE (FLAGS bit 0) is a switch that exists in debug builds and in builds made with `--dart-define=OTA_ALLOW_FORCE=true`.
 
 `safr_frame.dart` (root of `central/domain/`) is the **v1** parser (21-byte AAD, 4-byte nonce padded to 7, different PSK `2B7E1516…`), kept so old stored packets render in `SafrDetailScreen`; `SafrIngestService` stores v1 frames raw and ignores them.
 
@@ -338,11 +387,18 @@ Theme: `AppTheme.light/dark` (Material 3, colors from missing `app_colors.dart`)
 | `test/central/product_ingest_test.dart` | ingest stores product / hardware revision / firmware version from NAME_ANNOUNCE and DEVICE_TABLE and keeps them across frames that lack them (heartbeat, event, older announce, v3.2 table, journal replay) | `AppDatabase.forTesting` |
 | `test/central/database_migration_test.dart` | Drift v9 → v10 on a file database: the three columns are added, rows survive | temp dir |
 | `test/central/device_product_facts_test.dart` | widget: "Produto" / "Firmware" on the Dispositivo screen and in the device menu, tablet and phone, portrait and landscape | nothing |
+| `test/ota/safr_ota_codec_test.dart` | protocol §13.3 / §13.7: the four messages, OTA_BAUD args, CRC-32, REASON numbers and texts — the vectors of `firmware/test/host/main/test_ota_proto.c` | nothing |
+| `test/ota/firmware_image_test.dart` | family and version out of a fake image header; every file that is refused; chunking | nothing |
+| `test/ota/serial_notifier_test.dart` | frame + raw bytes in one write, the write queue, speed change and its settle time, fallback to 115200 on silence | `SerialNotifier.detached` |
+| `test/ota/ota_push_controller_test.dart` | the push against `fake_board.dart`, a board played byte for byte on the port (real encoder, ACK tracking, ingest, reframer): stored, confirmed, BAD_CRC, lost ACK, lost chunk, OUT_OF_ORDER, board without the transfer, resume, cable out and back, board power-cycled, BEGIN refused, verification failed, rollback, lost confirmation, OTA_BAUD unanswered, cancel, alarm; steps and log lines | `AppDatabase.forTesting` |
+| `test/ota/firmware_update_screen_test.dart` | widget: the screen in tablet and phone, portrait and landscape; the report card outcome by outcome (stored = "Nenhum dispositivo foi atualizado", not green); "Versões em execução" with what waits on the board; "Detalhes" folded / open; the board-restart question; alarm and cable blocks; "Copiar" | nothing |
+| `test/ota/ota_push_report_test.dart` | the words of every outcome and of the banner; the board's activity phase by phase; packet throttle; unit family, pending image, groups | nothing |
+| `test/ota/ota_rede_test.dart` | widget, Rede and Rede 3D, tablet and phone, portrait and landscape: banner (running, outcome, closed, tap), ring + caption + tablet on the CENTRAL only, phases, versions and pending markers on the chips, "Na placa" in the device menu | nothing |
 | `test/provisioning_wizard_integration_test.dart` | see §7 | running mock |
 | `tool/print_safr_v3_vectors.dart` | prints the three golden frames (`dart run`) for pasting into the spec / firmware | — |
 | `tools/capture-safr.sh` | `stty 115200 raw`, `cat` the port for N s, `xxd -p` into the fixture | macOS device names |
 
-No widget tests, no tests for access/auth/MQTT/provider wiring.
+No tests for access/auth/MQTT.
 
 ---
 

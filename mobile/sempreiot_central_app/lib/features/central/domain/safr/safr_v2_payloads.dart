@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'safr_product.dart';
 import 'safr_v2_frame.dart';
 
+part 'safr_ota_payloads.dart';
+
 /// Payload models and per-MSG_TYPE fixed-layout codecs.
 /// Layouts: docs/safr/protocol-safr-v3.md §7 (v2 §6 layouts decode-compatibly:
 /// the only difference is EVENT gaining DEV_SEQ at bytes 15..16).
@@ -132,7 +134,21 @@ enum SafrCommand {
   getDeviceTable(0x18),
 
   /// Setup channel only, provisioned board: reply with CODE.
-  getCode(0x19);
+  getCode(0x19),
+
+  // ── v3.5 firmware update (spec §13) ────────────────────────────────────
+
+  /// Board-only: line speed of the tablet link, ARGS `BAUD u32` (§13.3).
+  otaBaud(0x1A),
+
+  /// To one unit: the image the board offers it (§13.4). Later step.
+  otaOffer(0x1B),
+
+  /// Board-only: reply with OTA_ROLLOUT pages (§13.6). Later step.
+  getRollout(0x1C),
+
+  /// Board-only: start / pause / resume / abort a rollout (§13.6). Later step.
+  otaControl(0x1D);
 
   const SafrCommand(this.wire);
   final int wire;
@@ -146,7 +162,10 @@ enum SafrCommand {
         SafrCommand.replaceDevice ||
         SafrCommand.forgetDevice ||
         SafrCommand.getDeviceTable ||
-        SafrCommand.getCode =>
+        SafrCommand.getCode ||
+        SafrCommand.otaBaud ||
+        SafrCommand.getRollout ||
+        SafrCommand.otaControl =>
           true,
         _ => false,
       };
@@ -396,6 +415,7 @@ class SafrAckPayload extends SafrV2Payload {
     required this.ackedMsgId,
     required this.status,
     this.detail = SafrAckDetail.none,
+    this.detailRaw = 0,
   });
 
   static const wireLength = 4;
@@ -406,12 +426,21 @@ class SafrAckPayload extends SafrV2Payload {
   /// Byte 3 (spec §7.5 v3.2 `DETAIL`); always `none` from pre-v3.2 senders.
   final SafrAckDetail detail;
 
+  /// Byte 3 as it came. What it means depends on the message being
+  /// confirmed: [detail] for the v3.2 commands, [otaReason] for a
+  /// firmware-update message (spec §13.7) — the two lists share values.
+  final int detailRaw;
+
+  /// Byte 3 read as the `REASON` of a firmware-update message (spec §13.7).
+  SafrOtaReason get otaReason => SafrOtaReason.fromWire(detailRaw);
+
   static SafrAckPayload? parse(Uint8List p) {
     if (p.length < wireLength) return null;
     return SafrAckPayload(
       ackedMsgId: (p[0] << 8) | p[1],
       status: SafrAckStatus.fromWire(p[2]),
       detail: SafrAckDetail.fromWire(p[3]),
+      detailRaw: p[3],
     );
   }
 
@@ -419,12 +448,16 @@ class SafrAckPayload extends SafrV2Payload {
     required int ackedMsgId,
     SafrAckStatus status = SafrAckStatus.ok,
     SafrAckDetail detail = SafrAckDetail.none,
+
+    /// Byte 3 as a number, e.g. a firmware-update `REASON` (spec §13.7);
+    /// wins over [detail].
+    int? detailRaw,
   }) {
     return Uint8List.fromList([
       (ackedMsgId >> 8) & 0xFF,
       ackedMsgId & 0xFF,
       status.wire,
-      detail.wire,
+      (detailRaw ?? detail.wire) & 0xFF,
     ]);
   }
 }

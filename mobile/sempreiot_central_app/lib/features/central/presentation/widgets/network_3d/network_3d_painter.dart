@@ -8,6 +8,13 @@ import '../../../application/topology_provider.dart';
 import 'force_graph_3d.dart';
 import 'network_3d_math.dart';
 
+/// Key of the tablet, beside the CENTRAL while a firmware push runs: the
+/// image goes from it to the board over the USB cable (protocol §13.3).
+const graphTabletKey = '@tablet';
+
+/// `origin` of the packets of a firmware push (never a MAC).
+const otaPacketOrigin = '@ota';
+
 /// A frame travelling the tree (same rules as the Rede map's packets).
 class Packet3d {
   Packet3d({
@@ -18,7 +25,12 @@ class Packet3d {
     required this.severity,
     required this.startedAt,
     required this.duration,
+    this.lane = 0,
   });
+
+  /// World units to the side of the link, to the left of the way the
+  /// packet travels: packets that cross on one link keep to their side.
+  final double lane;
 
   final String origin;
   final bool uplink;
@@ -58,7 +70,15 @@ class Network3dPainter extends CustomPainter {
     required this.depthFade,
     this.rootMac,
     this.candidates = const {},
+    this.tablet,
   });
+
+  /// Where the tablet is while a firmware push runs; null = no push. The
+  /// USB cable to the CENTRAL is then drawn, in the app's accent colour (a
+  /// cable, not a radio link: no signal colour, no dBm).
+  final Vec3? tablet;
+
+  Vec3? _posOf(String key) => key == graphTabletKey ? tablet : graph.pos[key];
 
   final Projector projector;
   final ForceGraph3d graph;
@@ -122,6 +142,14 @@ class Network3dPainter extends CustomPainter {
       }
     }
 
+    if (tablet != null) {
+      final cable = _curve(graphTabletKey, graphCentralKey);
+      if (cable != null) {
+        _tube(canvas, cable, AppColors.secondary,
+            alpha: 0.9 * depthFade(cable[cable.length ~/ 2].depth));
+      }
+    }
+
     // Pulse rings on the central and the settled root; candidates pulse
     // quicker and fainter while the mesh is electing.
     final nowMs = now.millisecondsSinceEpoch;
@@ -146,9 +174,14 @@ class Network3dPainter extends CustomPainter {
         final at = _along(p.path, t);
         if (at == null) continue;
         final s = (at.$3).clamp(0.5, 2.2);
+        // `lane` to the left of the heading (the canvas' y grows downward).
+        final pos = p.lane == 0
+            ? at.$1
+            : at.$1 +
+                Offset(math.sin(at.$2), -math.cos(at.$2)) * (p.lane * at.$3);
         _drawPacket(
             canvas,
-            at.$1,
+            pos,
             at.$2,
             p.color,
             (k == 0 ? 1.0 : 0.85 - k * 0.15) * s,
@@ -163,7 +196,7 @@ class Network3dPainter extends CustomPainter {
   /// each device along the level axis (the Rede S-curve, but in 3D) — then
   /// projected sample by sample. Null if any part is behind the camera.
   List<Projected>? _curve(String from, String to) {
-    final a = graph.pos[from], b = graph.pos[to];
+    final a = _posOf(from), b = _posOf(to);
     if (a == null || b == null) return null;
     final dir = graph.axis == GraphAxis.vertical
         ? const Vec3(0, 1, 0)

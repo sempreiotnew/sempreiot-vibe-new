@@ -125,7 +125,7 @@ Status words are the reference's: `Implemented` · `POC` · `Planned` · `Open`.
 | 7.1 | Lifecycle commands | `SET_DEVICE`, `RETIRE` / `UNRETIRE`, `REPLACE_DEVICE`, `DECOMMISSION`, `FORGET_DEVICE`, `GET_DEVICE_TABLE` — board-only ones are answered on the serial link and never relayed | Implemented (bench pending) |
 | 7.2 | Replace the board | Provision the new one from any code holder, or arm it from the tablet (Case B); it rebuilds its table from what it hears; the tablet can "Reenviar nomes à placa" | Implemented (bench pending) |
 | 7.3 | Channel change | `SET_CHANNEL {channel, switch_at}` down the mesh; the board switches **last** | Planned (undefined) |
-| 7.4 | OTA | Receives both images from the tablet over USB (needs 921600 baud for the push), updates itself in place, keeps the node image in `fw_store` and serves it over HTTP to the site, root last, paused by any alarm | Planned, not scheduled; hardware fit confirmed |
+| 7.4 | OTA | Receives an image from the tablet over USB (protocol §13.3; the link goes to 921600 for the push): its own → the inactive slot, verified, restart, self-test (120 s to hear the tablet), confirm or roll back and say so; a node or leaf image → verified and stored in `fw_store`. Serving the site over HTTP, root last, paused by any alarm = step 2 | **Push + self-update done in code 2026-09-29, bench pending (O1–O5)**; rollout not started |
 | 7.5 | Factory station | Flashed with bootloader + app + `nvs_factory` identity; sticker printed | Planned |
 | 7.7 | LED language | See §5 | Phase 1 firmware |
 
@@ -176,7 +176,7 @@ Setup channel (spec §3.1): header `SYSTEM_ID 0x0000`, key derived from the boar
 | `nvs` / `siot_inst` | `code` blob (`system_id`, `net_ssid`, `net_psk`, `safr_psk[16]`, `channel`, `mesh_id`, `name`, `zone`), `boot_ctr`, `dev_seq` | Provisioning, `SET_INSTALLATION`; erased by factory reset |
 | `nvs` device table (`siot_devtab`) | Per MAC: `role`, stored state (`expected` / `retired`), `flags`, `first_seen`, `name[33]`, `zone[17]`; `online` / `missing` derived from `last_seen` in RAM; 3 NVS entries per unit, cap `CONFIG_SIOT_DEVTAB_CAP` = 120 | First sighting and operator actions only |
 | Journal | `{jrn_seq, mac, payload[17]}` per uplink `EVENT`; 64-entry RAM ring today | Every uplink EVENT; flash-persisted in Phase 1 step 4 |
-| `fw_store` (3 MB FAT) | `/fw/node.bin`, `/fw/manifest.json`, `/fw/rollout.json` | OTA phase (not implemented) |
+| `fw_store` (3 MB FAT, wear-levelled, 8.3 names) | `/fw/node.bin`, `/fw/leaf.bin`, each with `/fw/<family>.inf` (version, size, SHA-256, written last); `<family>.tmp` while a push runs; `rollout.json` with step 2 | `siot_ota_board` (2026-09-29). The 4 MB bench table has no `fw_store`: that board updates itself only |
 
 ## 8. Numbers
 
@@ -205,7 +205,7 @@ Setup channel (spec §3.1): header `SYSTEM_ID 0x0000`, key derived from the boar
 7. Board button short press → `COMMAND TEST` broadcast (ref 5.3).
 8. `CONFIG_SPIRAM=y` on the N8R8 (ref §4.1).
 9. Sirens / `COMMAND SOUND`, own sounder and fire/fault/power LEDs (ref 5.6; blueprint §5.3).
-10. `SET_CHANNEL`, OTA (`OTA_PUSH_*`, `fw_store`, HTTP server, scheduler), factory station (ref 7.3–7.5).
+10. `SET_CHANNEL`, the OTA rollout (HTTP server, scheduler — step 2; the push and the self-update are written), factory station (ref 7.3–7.5).
 11. Bench passes 1–10, 12–14 of the lifecycle brief (device table, `GET_CODE`, rename, Case B, admin window…).
 
 ## 10. Where it lives

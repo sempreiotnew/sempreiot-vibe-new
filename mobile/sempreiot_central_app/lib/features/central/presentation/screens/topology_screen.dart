@@ -11,11 +11,13 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/signal_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../../../core/utils/relative_time.dart';
+import '../../application/ota_push_report.dart';
 import '../../application/safr_downlink_provider.dart';
 import '../../application/safr_traffic_provider.dart';
 import '../../application/topology_provider.dart';
 import '../widgets/device_avatar.dart';
 import '../widgets/device_menu.dart';
+import '../widgets/ota_rede_widgets.dart';
 import 'network_3d_screen.dart';
 import '../../application/root_election_provider.dart';
 
@@ -34,6 +36,16 @@ class TopologyScreen extends ConsumerStatefulWidget {
 
 /// Pseudo-MAC of the central in the graph (top of the tree).
 const _centralKey = '@central';
+
+/// The tablet, beside the central while a firmware push runs: the image
+/// goes from it to the board over the USB cable (protocol §13.3).
+const _tabletKey = '@tablet';
+
+/// `origin` of the packets of a firmware push (never a MAC).
+const _otaOrigin = '@ota';
+
+/// One crossing of the tablet–board link by a packet of a push.
+const _otaHop = Duration(milliseconds: 900);
 
 /// The map's zoom factor. The map is only ever translated and uniformly
 /// scaled, so the x-axis entry IS the scale. Never read the "max scale on
@@ -66,6 +78,13 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
   (Size, Size)? _fittedFor;
   StreamSubscription<SafrTrafficTick>? _trafficSub;
 
+  /// Chunks of a firmware push, turned into packets a few at a time.
+  ProviderSubscription<int>? _otaSub;
+  final _otaThrottle = OtaPacketThrottle(
+    every: 8,
+    minGap: const Duration(milliseconds: 700),
+  );
+
   /// A change of the tree's shape (a node joined, left or moved layer)
   /// re-fits only once the shape has held still for this long, so a
   /// failover does not make the map jump on every intermediate state.
@@ -82,12 +101,17 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
         AnimationController(vsync: this, duration: const Duration(days: 1))
           ..repeat();
     _trafficSub = ref.read(safrTrafficProvider).stream.listen(_onTraffic);
+    _otaSub = ref.listenManual<int>(
+      otaPushViewProvider.select(otaChunksOnTheWay),
+      (_, chunks) => _onOtaChunks(chunks),
+    );
   }
 
   @override
   void dispose() {
     _refitTimer?.cancel();
     _trafficSub?.cancel();
+    _otaSub?.close();
     _transform.dispose();
     _ticker.dispose();
     super.dispose();
@@ -286,11 +310,48 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
     if (_dots.length > 40) _dots.removeRange(0, _dots.length - 40);
   }
 
+  /// A firmware push: the board confirmed chunks. One blue packet goes from
+  /// the tablet to the board (a frame sent) and one cyan packet comes back
+  /// behind it (the board's ACK) — the LED language's colours, a few
+  /// packets for many chunks. Only this link is ever drawn: no node and no
+  /// leaf receives anything in a push.
+  void _onOtaChunks(int chunks) {
+    final now = DateTime.now();
+    if (!_otaThrottle.take(chunks, now)) return;
+    _dots
+      ..add(_TrafficDot(
+        origin: _otaOrigin,
+        uplink: false,
+        severity: 0,
+        path: const [_tabletKey, _centralKey],
+        color: AppColors.ledBlue,
+        startedAt: now,
+        duration: _otaHop,
+        lane: -4,
+      ))
+      ..add(_TrafficDot(
+        origin: _otaOrigin,
+        uplink: true,
+        severity: 0,
+        path: const [_centralKey, _tabletKey],
+        color: AppColors.ledCyan,
+        startedAt: now.add(_otaHop),
+        duration: _otaHop,
+        lane: -4,
+      ));
+    if (_dots.length > 40) _dots.removeRange(0, _dots.length - 40);
+  }
+
   @override
   Widget build(BuildContext context) {
     // The board (layer 0) is folded into the CENTRAL chip, not drawn as its
     // own node; the mesh (layer 1+) hangs off the central directly.
     final allNodes = ref.watch(topologyProvider);
+    // A firmware push: what the board is doing with it, and what waits on
+    // the board for the units (rebuilt once per percent, not per chunk).
+    final (activity, stored) =
+        ref.watch(otaPushViewProvider.select(otaMapOverlay));
+    if (activity == null) _dots.removeWhere((d) => d.origin == _otaOrigin);
     // Who is root — or that the mesh is still deciding (root_election_provider).
     final election = ref.watch(rootElectionProvider);
     TopologyNode? board;
@@ -306,10 +367,13 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
 
     final body = Column(
       children: [
+        const OtaRedeBanner(),
         _MeshStatusBar(
             nodes: nodes, election: election, onClear: _clearRegistry),
         Expanded(
-          child: nodes.isEmpty
+          // A push is drawn on the central: it is on the map while one
+          // runs, mesh or no mesh.
+          child: nodes.isEmpty && activity == null
               ? const _EmptyMesh()
               : LayoutBuilder(builder: (context, constraints) {
                   final size =
@@ -377,13 +441,26 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
                                             candidates: election.electing
                                                 ? election.candidates
                                                 : const {},
+                                            otaLink: activity != null,
                                           ),
                                         ),
                                       ),
+                                      if (activity != null)
+                                        Positioned(
+                                          left: layout
+                                                  .positions[_tabletKey]!.dx -
+                                              OtaTabletChip.width / 2,
+                                          top: layout
+                                                  .positions[_tabletKey]!.dy -
+                                              OtaTabletChip.circle / 2,
+                                          child: const OtaTabletChip(),
+                                        ),
                                       _CentralChip(
-                                          position:
-                                              layout.positions[_centralKey]!,
-                                          board: board),
+                                        position:
+                                            layout.positions[_centralKey]!,
+                                        board: board,
+                                        activity: activity,
+                                      ),
                                       for (final node in nodes)
                                         if (layout.positions
                                             .containsKey(node.mac))
@@ -396,6 +473,8 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
                                             isCandidate: election.electing &&
                                                 election.candidates
                                                     .contains(node.mac),
+                                            pending: pendingFirmwareFor(
+                                                node, stored),
                                             onTap: (anchor) =>
                                                 _showNodeMenu(node, anchor),
                                           ),
@@ -779,6 +858,7 @@ class _TrafficDot {
     required this.color,
     required this.startedAt,
     required this.duration,
+    this.lane = 0,
   });
 
   final String origin;
@@ -788,6 +868,10 @@ class _TrafficDot {
   Color color;
   final DateTime startedAt;
   Duration duration;
+
+  /// Pixels to the side of the line, to the left of the way it travels:
+  /// packets that cross on one link each keep to their side.
+  final double lane;
 
   double get progress {
     final elapsed = DateTime.now().difference(startedAt).inMilliseconds;
@@ -807,6 +891,7 @@ class _MeshGraphPainter extends CustomPainter {
     this.boardMac,
     this.rootMac,
     this.candidates = const {},
+    this.otaLink = false,
   }) : super(repaint: repaint);
 
   final List<TopologyNode> nodes;
@@ -814,6 +899,11 @@ class _MeshGraphPainter extends CustomPainter {
   final List<_TrafficDot> dots;
   final bool isDark;
   final String? boardMac;
+
+  /// A firmware push runs: the USB cable between the tablet and the board
+  /// is drawn, in the app's accent colour (it is a cable, not a radio link:
+  /// no signal colour, no dBm).
+  final bool otaLink;
 
   /// The settled root (pulse ring) and, while electing, the contenders
   /// (faster, fainter pulse; dashed link to the central).
@@ -899,6 +989,20 @@ class _MeshGraphPainter extends CustomPainter {
       }
     }
 
+    if (otaLink) {
+      final from = layout.positions[_tabletKey];
+      final to = layout.positions[_centralKey];
+      if (from != null && to != null) {
+        canvas.drawPath(
+          _linkPath(from, to),
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.6
+            ..color = AppColors.secondary.withValues(alpha: 0.6),
+        );
+      }
+    }
+
     // Pulse rings on the central and the settled root; while electing the
     // candidates get a quicker, fainter pulse instead of the root's.
     final phase = (nowMs % 2200) / 2200.0;
@@ -925,7 +1029,11 @@ class _MeshGraphPainter extends CustomPainter {
         if (t < 0) continue;
         final tan = _tangentAlong(dot.path, t);
         if (tan == null) continue;
-        _drawPacket(canvas, tan.position, tan.angle, dot.color,
+        // `lane` to the left of the heading (the canvas' y grows downward).
+        final at = dot.lane == 0
+            ? tan.position
+            : tan.position + Offset(tan.vector.dy, -tan.vector.dx) * dot.lane;
+        _drawPacket(canvas, at, tan.angle, dot.color,
             k == 0 ? 1.0 : 0.85 - k * 0.15, k == 0 ? 1.0 : 0.30 - k * 0.10);
       }
     }
@@ -1241,6 +1349,7 @@ class _MeshLayout {
   static const _edge = 12.0;
   static const _minAcross = 116.0; // node pitch along a row
   static const _minLane = 104.0; // row pitch
+  static const _tabletAside = 112.0; // tablet ↔ central, centre to centre
 
   static _MeshLayout compute(List<TopologyNode> nodes, Size viewport) {
     final layers = <int, List<TopologyNode>>{};
@@ -1265,6 +1374,9 @@ class _MeshLayout {
 
     final positions = <String, Offset>{
       _centralKey: Offset(_gutter + usableW / 2, laneY(0)),
+      // Beside the central, on its row, away from the lane labels; drawn
+      // only while a push runs.
+      _tabletKey: Offset(_gutter + usableW / 2 + _tabletAside, laneY(0)),
     };
     final laneCenters = <int, double>{};
     for (var i = 0; i < layerKeys.length; i++) {
@@ -1289,9 +1401,15 @@ class _MeshLayout {
 // ── Chips ────────────────────────────────────────────────────────────────────
 
 class _CentralChip extends StatelessWidget {
-  const _CentralChip({required this.position, this.board});
+  const _CentralChip({required this.position, this.board, this.activity});
   final Offset position;
   final TopologyNode? board;
+
+  /// A firmware push runs: what the board is doing with it. The avatar
+  /// then shows the board (the tablet is drawn beside it), a progress ring
+  /// goes around it and the caption says the phase. The LED lens on top is
+  /// untouched: it is the board's LED, the ring is not.
+  final OtaBoardActivity? activity;
 
   static const _width = 120.0;
   static const _circle = 54.0;
@@ -1318,8 +1436,13 @@ class _CentralChip extends StatelessWidget {
           ),
         ],
       ),
-      child:
-          const Icon(Icons.tablet_mac_rounded, color: Colors.white, size: 24),
+      child: Icon(
+        activity == null
+            ? Icons.tablet_mac_rounded
+            : Icons.developer_board_rounded,
+        color: Colors.white,
+        size: 24,
+      ),
     );
   }
 
@@ -1338,6 +1461,19 @@ class _CentralChip extends StatelessWidget {
               clipBehavior: Clip.none,
               children: [
                 _disc(),
+                if (activity != null)
+                  Positioned(
+                    left: (_CentralChip._circle -
+                            OtaProgressRing.sizeFor(_CentralChip._circle)) /
+                        2,
+                    top: (_CentralChip._circle -
+                            OtaProgressRing.sizeFor(_CentralChip._circle)) /
+                        2,
+                    child: OtaProgressRing(
+                      activity: activity!,
+                      diameter: _CentralChip._circle,
+                    ),
+                  ),
                 if (board != null)
                   Positioned(
                     top: -3,
@@ -1347,15 +1483,32 @@ class _CentralChip extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 5),
-            Text(
-              'CENTRAL',
-              style: TextStyle(
-                color: context.textSecondary,
-                fontSize: 9,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 1.0,
+            if (activity != null)
+              OtaBoardCaption(activity: activity!)
+            else
+              // The firmware the board runs sits on the caption's line
+              // (nothing when it never said): the chip keeps its height.
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'CENTRAL',
+                      style: TextStyle(
+                        color: context.textSecondary,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.0,
+                      ),
+                    ),
+                    if (board?.fwVersion?.isNotEmpty == true) ...[
+                      const SizedBox(width: 5),
+                      FirmwareTag(version: board!.fwVersion),
+                    ],
+                  ],
+                ),
               ),
-            ),
             if (board != null) ...[
               const SizedBox(height: 2),
               Text(
@@ -1389,10 +1542,15 @@ class _NodeChip extends StatelessWidget {
     required this.isRoot,
     required this.isCandidate,
     required this.onTap,
+    this.pending,
   });
 
   final TopologyNode node;
   final Offset position;
+
+  /// The version of an image of this unit's family that is stored on the
+  /// board and was not delivered; null = none.
+  final String? pending;
 
   /// Decided by root_election_provider, not by the unit's own claim: the
   /// ROOT badge goes to the settled root only; while the mesh is still
@@ -1442,6 +1600,9 @@ class _NodeChip extends StatelessWidget {
                       letterSpacing: node.name?.isNotEmpty == true ? 0 : -0.2,
                     ),
                   ),
+                  // The firmware it runs, and whether another waits on the
+                  // board; nothing when the unit never said its version.
+                  FirmwareTag(version: node.fwVersion, pending: pending),
                 ],
               ),
             ),

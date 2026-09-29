@@ -15,6 +15,7 @@ import '../../../../features/central/application/device_info_provider.dart';
 import '../../../../features/central/presentation/screens/device_access_screen.dart';
 import '../../../../features/central/presentation/screens/central_installation_screen.dart';
 import '../../../../features/central/presentation/screens/device_info_screen.dart';
+import '../../../../features/central/presentation/screens/firmware_update_screen.dart';
 import '../../../../features/central/presentation/screens/network_3d_screen.dart';
 import '../../../../features/central/presentation/screens/serial_logs_screen.dart';
 import '../../../../features/installation/presentation/screens/installations_screen.dart';
@@ -187,6 +188,20 @@ class MainDrawer extends ConsumerWidget {
                           ),
                         );
                       }),
+                      // Firmware from the tablet to the board over the
+                      // USB cable (protocol §13.3).
+                      _DrawerItem(
+                        icon: Icons.system_update_alt_rounded,
+                        label: 'Atualização de firmware',
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const FirmwareUpdateScreen(),
+                            ),
+                          );
+                        },
+                      ),
                       // Technical/debug view of the raw SAFR packet stream.
                       _DrawerItem(
                         icon: Icons.receipt_long_rounded,

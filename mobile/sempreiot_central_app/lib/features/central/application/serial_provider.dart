@@ -9,11 +9,36 @@ import '../domain/safr/safr_v2_frame.dart';
 enum SerialStatus { disconnected, connecting, connected, error }
 
 class SerialNotifier extends StateNotifier<SerialStatus> {
-  SerialNotifier() : super(SerialStatus.disconnected) {
+  SerialNotifier()
+      : baudSilence = defaultBaudSilence,
+        baudSettle = defaultBaudSettle,
+        super(SerialStatus.disconnected) {
     _init();
   }
 
-  static const _baudRate = 115200;
+  /// A notifier that never touches the USB plugin: the port is whatever a
+  /// subclass makes of [portWrite] / [portSetBaud], bytes come in through
+  /// [debugReceive]. For tests that play the board.
+  @visibleForTesting
+  SerialNotifier.detached({
+    this.baudSilence = defaultBaudSilence,
+    this.baudSettle = defaultBaudSettle,
+  }) : super(SerialStatus.disconnected);
+
+  /// The speed every port opens at, and the one both ends fall back to
+  /// (docs/safr/protocol-safr-v3.md §13.3).
+  static const defaultBaudRate = 115200;
+
+  /// Silence at any other speed after which this end goes back to
+  /// [defaultBaudRate] (§13.3); the board does the same on its side.
+  static const defaultBaudSilence = Duration(seconds: 20);
+
+  /// Pause after a speed change before anything is written: the adapter and
+  /// the board's UART settle (§13.3).
+  static const defaultBaudSettle = Duration(milliseconds: 150);
+
+  final Duration baudSilence;
+  final Duration baudSettle;
 
   // SAFR framing constants (docs/safr/protocol-safr-v3.md §9)
   static const _safrSof = 0xA5;
@@ -27,6 +52,17 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
   final _byteBuffer = <int>[];
   final _dataController = StreamController<Uint8List>.broadcast();
 
+  /// Everything that touches the port (a frame, a frame with its raw bytes,
+  /// a speed change) goes through this one queue, in the order it was asked:
+  /// nothing is ever written between an OTA_PUSH_CHUNK frame and the end of
+  /// its raw bytes, nor while the speed is changing (§13.3).
+  Future<void> _portQueue = Future<void>.value();
+
+  int _baudRate = defaultBaudRate;
+  DateTime? _baudChangedAt;
+  DateTime? _lastFrameAt;
+  Timer? _baudWatchdog;
+
   // Link diagnostics — read by serialLinkProvider and the Logs console so a
   // link that carries bytes but never a valid frame is distinguishable from
   // a dead cable (and never silently invisible).
@@ -38,6 +74,9 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
   String? get connectedDeviceId => _connectedDeviceId;
 
   Stream<Uint8List> get dataStream => _dataController.stream;
+
+  /// The speed the port is at now.
+  int get baudRate => _baudRate;
 
   /// Total raw bytes received since the port opened.
   int get rawByteCount => _rawByteCount;
@@ -114,7 +153,7 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
       }
 
       await port.setPortParameters(
-        _baudRate,
+        defaultBaudRate,
         UsbPort.DATABITS_8,
         UsbPort.STOPBITS_1,
         UsbPort.PARITY_NONE,
@@ -130,18 +169,12 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
       }
 
       _port = port;
-      _rawByteCount = 0;
-      _droppedByteCount = 0;
-      _validFrameCount = 0;
-      _lastBytesAt = null;
+      _resetSession();
 
       _inputSub = port.inputStream?.listen(
         (Uint8List? data) {
           if (data == null || data.isEmpty) return;
-          _rawByteCount += data.length;
-          _lastBytesAt = DateTime.now();
-          _byteBuffer.addAll(data);
-          _drainFrames();
+          _onBytes(data);
         },
         onError: (Object err) {
           debugPrint('[Serial] Stream error: $err');
@@ -155,11 +188,29 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
       );
 
       if (mounted) state = SerialStatus.connected;
-      debugPrint('[Serial] Connected at $_baudRate baud');
+      debugPrint('[Serial] Connected at $defaultBaudRate baud');
     } catch (e, st) {
       debugPrint('[Serial] Connection error: $e\n$st');
       if (mounted) state = SerialStatus.error;
     }
+  }
+
+  /// A port that just opened: default speed, empty counters.
+  void _resetSession() {
+    _rawByteCount = 0;
+    _droppedByteCount = 0;
+    _validFrameCount = 0;
+    _lastBytesAt = null;
+    _lastFrameAt = null;
+    _byteBuffer.clear();
+    _setBaudState(defaultBaudRate);
+  }
+
+  void _onBytes(Uint8List data) {
+    _rawByteCount += data.length;
+    _lastBytesAt = DateTime.now();
+    _byteBuffer.addAll(data);
+    _drainFrames();
   }
 
   // Scans _byteBuffer for complete SAFR frames and emits each one.
@@ -220,6 +271,7 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
       // 6. Emit the complete frame.
       _byteBuffer.removeRange(0, frameLen);
       _validFrameCount++;
+      _lastFrameAt = DateTime.now();
       if (!_dataController.isClosed) {
         debugPrint('[Serial] RX SAFR frame: $frameLen bytes');
         _dataController.add(frame);
@@ -227,17 +279,123 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
     }
   }
 
+  // ── Writing ──────────────────────────────────────────────────────────────
+
+  /// Runs [op] after everything asked before it.
+  Future<T> _enqueue<T>(Future<T> Function() op) {
+    final result = _portQueue.then((_) => op());
+    _portQueue = result.then<void>((_) {}, onError: (_) {});
+    return result;
+  }
+
   /// Sends a fully-built SAFR frame to the root node (downlink).
   /// Returns false when no port is open.
-  Future<bool> write(Uint8List frame) async {
+  Future<bool> write(Uint8List frame) => _enqueue(() => portWrite(frame));
+
+  /// Sends a frame and, right behind it, [data] as it is: the raw bytes of
+  /// an OTA_PUSH_CHUNK (§13.3). One buffer, one write — no other frame can
+  /// land between the two. Returns false when no port is open.
+  Future<bool> writeFrameWithData(Uint8List frame, Uint8List data) {
+    final out = Uint8List(frame.length + data.length)
+      ..setRange(0, frame.length, frame)
+      ..setRange(frame.length, frame.length + data.length, data);
+    return _enqueue(() => portWrite(out));
+  }
+
+  /// Changes the speed of the open port (§13.3 OTA_BAUD) and waits
+  /// [baudSettle]; whatever was asked to be written before leaves first,
+  /// whatever is asked meanwhile waits. Returns false when no port is open
+  /// or the adapter refused.
+  ///
+  /// At any speed but [defaultBaudRate] the port goes back by itself after
+  /// [baudSilence] without a valid frame.
+  Future<bool> setBaudRate(int baud) {
+    return _enqueue(() async {
+      if (baud == _baudRate) return state == SerialStatus.connected;
+      final ok = await portSetBaud(baud);
+      if (!ok) return false;
+      debugPrint('[Serial] $baud baud');
+      // Half a frame received at the old speed is noise at the new one.
+      _byteBuffer.clear();
+      _setBaudState(baud);
+      await Future<void>.delayed(baudSettle);
+      return true;
+    });
+  }
+
+  void _setBaudState(int baud) {
+    _baudRate = baud;
+    _baudChangedAt = DateTime.now();
+    _baudWatchdog?.cancel();
+    _baudWatchdog = null;
+    if (baud == defaultBaudRate) return;
+    final period = baudSilence < const Duration(seconds: 4)
+        ? baudSilence ~/ 4
+        : const Duration(seconds: 1);
+    _baudWatchdog = Timer.periodic(period, (_) => _checkBaudSilence());
+  }
+
+  void _checkBaudSilence() {
+    if (_baudRate == defaultBaudRate) return;
+    final changed = _baudChangedAt;
+    final frame = _lastFrameAt;
+    final last = frame != null && changed != null && frame.isAfter(changed)
+        ? frame
+        : changed;
+    if (last == null || DateTime.now().difference(last) < baudSilence) return;
+    debugPrint('[Serial] ${baudSilence.inSeconds} s of silence at '
+        '$_baudRate baud: back to $defaultBaudRate');
+    setBaudRate(defaultBaudRate);
+  }
+
+  /// The bytes, to the port. Overridden by tests that play the board.
+  @protected
+  Future<bool> portWrite(Uint8List bytes) async {
     final port = _port;
     if (port == null) return false;
     try {
-      await port.write(frame);
+      await port.write(bytes);
       return true;
     } catch (e) {
       debugPrint('[Serial] TX failed: $e');
       return false;
+    }
+  }
+
+  /// The speed, to the port (8N1 as always). Overridden by tests.
+  @protected
+  Future<bool> portSetBaud(int baud) async {
+    final port = _port;
+    if (port == null) return false;
+    try {
+      await port.setPortParameters(
+        baud,
+        UsbPort.DATABITS_8,
+        UsbPort.STOPBITS_1,
+        UsbPort.PARITY_NONE,
+      );
+      return true;
+    } catch (e) {
+      debugPrint('[Serial] speed change to $baud failed: $e');
+      return false;
+    }
+  }
+
+  // ── Test hooks ───────────────────────────────────────────────────────────
+
+  /// Bytes as the port would deliver them: they go through the reframer.
+  @visibleForTesting
+  void debugReceive(Uint8List bytes) => _onBytes(bytes);
+
+  /// The port opened (at the default speed) or closed.
+  @visibleForTesting
+  void debugSetConnected(bool connected) {
+    if (connected) {
+      _connectedDeviceId = 'test';
+      _resetSession();
+      state = SerialStatus.connected;
+    } else {
+      _onDisconnected();
     }
   }
 
@@ -250,6 +408,8 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
     _port = null;
     _connectedDeviceId = null;
     _byteBuffer.clear();
+    // The next port opens at the default speed.
+    _setBaudState(defaultBaudRate);
     if (mounted) state = SerialStatus.disconnected;
   }
 
@@ -257,6 +417,7 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
   void dispose() {
     _usbEventSub?.cancel();
     _inputSub?.cancel();
+    _baudWatchdog?.cancel();
     try {
       _port?.close();
     } catch (_) {}

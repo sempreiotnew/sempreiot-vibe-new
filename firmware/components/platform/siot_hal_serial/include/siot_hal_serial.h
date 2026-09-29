@@ -23,6 +23,11 @@ esp_err_t siot_hal_serial_write(const uint8_t *buf, size_t len);
 /* Reads what is available within `timeout_ms`; returns bytes read (0 on timeout). */
 size_t siot_hal_serial_read(uint8_t *buf, size_t buf_len, uint32_t timeout_ms);
 
+/* Changes the line speed after everything queued has left (protocol §13.3
+ * OTA_BAUD). On native USB the speed means nothing: ESP_OK, nothing changes. */
+esp_err_t siot_hal_serial_set_baud(uint32_t baud);
+uint32_t  siot_hal_serial_baud(void);
+
 #ifdef __cplusplus
 }
 #endif

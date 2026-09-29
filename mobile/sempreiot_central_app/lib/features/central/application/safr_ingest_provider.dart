@@ -10,6 +10,7 @@ import '../domain/safr/safr_v2_frame.dart';
 import '../domain/safr/safr_v2_payloads.dart';
 import '../domain/safr/safr_identity.dart';
 import 'central_installation_provider.dart';
+import 'ota_board_events_provider.dart';
 import 'safr_downlink_provider.dart';
 import 'safr_traffic_provider.dart';
 import 'serial_link_provider.dart';
@@ -42,6 +43,7 @@ class SafrIngestService {
     this.onForeignSystem,
     this.setupIdentity,
     this.onCode,
+    this.onOtaBoardEvent,
   });
 
   final AppDatabase db;
@@ -73,6 +75,11 @@ class SafrIngestService {
 
   /// CODE (spec §7.13) received on the setup channel.
   final void Function(SafrInstallationCode code)? onCode;
+
+  /// Firmware push (spec §13.3): every OTA_PUSH_RESULT, every
+  /// NAME_ANNOUNCE of a unit of the board family (the version it runs) and
+  /// every HEARTBEAT of the board itself (LAYER 0: it is up).
+  final void Function(OtaBoardEvent event)? onOtaBoardEvent;
 
   /// Recent (SRC_MAC, MSG_ID) pairs → dedupes fast retransmissions of
   /// non-EVENT frames (same MSG_ID, fresh MSG_CTR — spec §9.1). EVENTs are
@@ -165,7 +172,45 @@ class SafrIngestService {
       return; // the board's own reply: not a device to register
     }
 
+    // Firmware push (spec §13.3): the board's report goes to the push in
+    // the order it arrived. Like an ACK above, it is handed over with no
+    // wait but the raw log every frame has, so a RESULT the board sent
+    // ahead of an ACK is known when that ACK is handled.
+    if (frame.msgType == SafrMsgType.otaPushResult &&
+        frame.payload is SafrOtaPushResultPayload) {
+      onOtaBoardEvent?.call(OtaPushResultEvent(
+        srcMac: frame.srcMac,
+        bootCtr: frame.bootCtr,
+        result: frame.payload as SafrOtaPushResultPayload,
+      ));
+      if (frame.ackRequired) await onAckRequired?.call(frame);
+      return; // the board's own report: not a device to register
+    }
+
     final accepted = await _updateTrustedState(frame, packetId, now);
+
+    final heartbeat = frame.payload;
+    if (heartbeat is SafrHeartbeatPayload && heartbeat.layer == 0) {
+      onOtaBoardEvent?.call(BoardHeartbeatEvent(
+        srcMac: frame.srcMac,
+        bootCtr: frame.bootCtr,
+      ));
+    }
+
+    // The board says what it runs (spec §7.11): after the row was updated,
+    // so whoever hears this reads the new version there too.
+    final announce = frame.payload;
+    if (frame.msgType == SafrMsgType.nameAnnounce &&
+        announce is SafrNameAnnouncePayload &&
+        _knownFw(announce.fwVersion) != null &&
+        SafrProductFamily.ofCode(announce.productCode ?? 0) ==
+            SafrProductFamily.board) {
+      onOtaBoardEvent?.call(BoardAnnounceEvent(
+        srcMac: frame.srcMac,
+        bootCtr: frame.bootCtr,
+        fwVersion: announce.fwVersion!,
+      ));
+    }
 
     // Spec §9.1: process once, ACK every time (even duplicates/replays).
     if (frame.ackRequired) {
@@ -644,6 +689,7 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
   final link = ref.read(serialLinkProvider.notifier);
   final downlink = ref.read(safrDownlinkProvider);
   final traffic = ref.read(safrTrafficProvider);
+  final otaBus = ref.read(otaBoardBusProvider);
 
   final service = SafrIngestService(
     db: ref.watch(appDatabaseProvider),
@@ -654,6 +700,7 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
     },
     setupIdentity: () => ref.read(setupChannelProvider),
     onCode: downlink.handleCode,
+    onOtaBoardEvent: otaBus.emit,
     onValidFrame: link.reportValidFrame,
     onInvalidFrame: link.reportInvalidFrame,
     onAckRequired: downlink.sendAck,

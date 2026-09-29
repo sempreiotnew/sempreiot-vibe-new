@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../../../../core/theme/app_colors.dart';
 import '../../../../../core/theme/theme_ext.dart';
+import '../../../application/ota_push_report.dart';
 import '../../../application/topology_provider.dart';
 import '../../../domain/safr/safr_v2_payloads.dart';
 import '../device_avatar.dart';
+import '../ota_rede_widgets.dart';
 import 'detector_sprites.dart';
 
 /// Where the sphere's centre sits inside the chip (the anchor the graph
@@ -37,12 +39,17 @@ class Device3dChip extends StatelessWidget {
     required this.light,
     this.isRoot = false,
     this.isCandidate = false,
+    this.pending,
   });
 
   final TopologyNode node;
   final Alignment light;
   final bool isRoot;
   final bool isCandidate;
+
+  /// The version of an image of this unit's family that is stored on the
+  /// board and was not delivered; null = none.
+  final String? pending;
 
   static const width = 104.0;
   static const _d = 46.0; // sphere diameter (the flat avatar's)
@@ -193,6 +200,8 @@ class Device3dChip extends StatelessWidget {
               letterSpacing: hasName ? 0 : -0.2,
             ),
           ),
+          // The firmware it runs, and whether another waits on the board.
+          FirmwareTag(version: node.fwVersion, pending: pending),
         ],
       ),
     );
@@ -202,10 +211,21 @@ class Device3dChip extends StatelessWidget {
 /// The CENTRAL as a larger blue sphere with the tablet icon, the board's
 /// LED on top, and the CENTRAL / MAC labels.
 class Central3dChip extends StatelessWidget {
-  const Central3dChip({super.key, required this.light, this.board});
+  const Central3dChip({
+    super.key,
+    required this.light,
+    this.board,
+    this.activity,
+  });
 
   final Alignment light;
   final TopologyNode? board;
+
+  /// A firmware push runs: what the board is doing with it. The sphere
+  /// then shows the board (the tablet is drawn beside it), a progress ring
+  /// goes around it and the caption says the phase. The LED lens on top is
+  /// untouched: it is the board's LED, the ring is not.
+  final OtaBoardActivity? activity;
 
   static const width = 120.0;
   static const _d = 54.0;
@@ -236,20 +256,29 @@ class Central3dChip extends StatelessWidget {
                     ),
                   ),
                 ),
-                const Positioned(
+                Positioned(
                   left: cx - r,
                   top: cy - r,
                   width: _d,
                   height: _d,
                   child: Center(
-                    child: Icon(Icons.tablet_mac_rounded,
+                    child: Icon(
+                        activity == null
+                            ? Icons.tablet_mac_rounded
+                            : Icons.developer_board_rounded,
                         color: Colors.white,
                         size: 24,
-                        shadows: [
+                        shadows: const [
                           Shadow(color: Colors.black54, blurRadius: 4),
                         ]),
                   ),
                 ),
+                if (activity != null)
+                  Positioned(
+                    left: cx - OtaProgressRing.sizeFor(_d) / 2,
+                    top: cy - OtaProgressRing.sizeFor(_d) / 2,
+                    child: OtaProgressRing(activity: activity!, diameter: _d),
+                  ),
                 if (board != null)
                   Positioned(
                     left: cx - 5.5,
@@ -259,15 +288,32 @@ class Central3dChip extends StatelessWidget {
               ],
             ),
           ),
-          Text(
-            'CENTRAL',
-            style: TextStyle(
-              color: context.textSecondary,
-              fontSize: 9,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 1.0,
+          if (activity != null)
+            OtaBoardCaption(activity: activity!)
+          else
+            // The firmware the board runs sits on the caption's line
+            // (nothing when it never said): the chip keeps its height.
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'CENTRAL',
+                    style: TextStyle(
+                      color: context.textSecondary,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                  if (board?.fwVersion?.isNotEmpty == true) ...[
+                    const SizedBox(width: 5),
+                    FirmwareTag(version: board!.fwVersion),
+                  ],
+                ],
+              ),
             ),
-          ),
           if (board != null)
             Text(
               board!.mac,
@@ -294,11 +340,16 @@ class Detector3dChip extends StatelessWidget {
     required this.sprites,
     required this.yaw,
     required this.pitch,
+    this.pending,
   });
 
   final TopologyNode node;
   final DetectorSprites sprites;
   final double yaw, pitch;
+
+  /// The version of an image of this unit's family that is stored on the
+  /// board and was not delivered; null = none.
+  final String? pending;
 
   static const width = 104.0;
 
@@ -424,6 +475,8 @@ class Detector3dChip extends StatelessWidget {
               letterSpacing: hasName ? 0 : -0.2,
             ),
           ),
+          // The firmware it runs, and whether another waits on the board.
+          FirmwareTag(version: node.fwVersion, pending: pending),
         ],
       ),
     );

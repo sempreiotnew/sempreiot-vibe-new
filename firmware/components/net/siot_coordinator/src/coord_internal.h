@@ -34,3 +34,4 @@ bool coord_setup_handle(const uint8_t *frame, size_t len, bool provisioned);
 /* Admin window (coord_admin.c, lifecycle §11). */
 esp_err_t coord_admin_init(void);
 void coord_admin_note_alarm(void);
+bool coord_admin_alarm_recent(void);

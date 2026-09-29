@@ -86,6 +86,11 @@ static void on_double_tap(siot_evt_id_t id, const void *data, void *ctx)
     open_window();
 }
 
+bool coord_admin_alarm_recent(void)
+{
+    return s_last_alarm_ms >= 0 && now_ms() - s_last_alarm_ms < ALARM_HOLD_MS;
+}
+
 void coord_admin_note_alarm(void)
 {
     s_last_alarm_ms = now_ms();

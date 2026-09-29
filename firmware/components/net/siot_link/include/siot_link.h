@@ -83,6 +83,31 @@ void siot_link_reasm_reset(siot_link_reasm_t *r);
  * The accumulator is reset when it would overflow. */
 size_t siot_link_reasm_feed(siot_link_reasm_t *r, siot_link_kind_t kind, const uint8_t *chunk, size_t n);
 
+/* ---- byte stream that also carries raw runs (protocol §13.3) ------------- */
+
+/* One piece of a raw run: `len` bytes, `left` still to come (0 = the run is
+ * complete). `data == NULL` = the run was aborted (the sender went silent);
+ * no more calls follow for it. */
+typedef void (*siot_link_raw_cb_t)(const uint8_t *data, size_t len, size_t left, void *ctx);
+
+typedef struct {
+    siot_link_reasm_t  reasm;
+    size_t             raw_left;
+    siot_link_raw_cb_t raw_cb;
+    void              *raw_ctx;
+    uint32_t           good;     /* frames delivered + raw bytes handed over: noise never counts */
+} siot_link_stream_t;
+
+void siot_link_stream_reset(siot_link_stream_t *s);
+
+/* Frames go to siot_link_deliver(kind, ...). A frame's handler may call
+ * siot_link_stream_expect_raw(): the next `len` bytes of the stream are then
+ * handed to `cb` as they are — never scanned for SOF — and frames resume
+ * after them. */
+void siot_link_stream_feed(siot_link_stream_t *s, siot_link_kind_t kind, const uint8_t *data, size_t n);
+esp_err_t siot_link_stream_expect_raw(siot_link_stream_t *s, size_t len, siot_link_raw_cb_t cb, void *ctx);
+void siot_link_stream_abort_raw(siot_link_stream_t *s);
+
 #ifndef CONFIG_IDF_TARGET_LINUX
 /* ---- backends: init registers the ops; siot_link_start() brings it up --- */
 
@@ -96,6 +121,16 @@ esp_err_t siot_link_mesh_board_init(const siot_installation_t *code);
 
 /* Board: the tablet link over siot_hal_serial. */
 esp_err_t siot_link_serial_init(void);
+
+/* Board, from inside the handler of a frame that arrived on the serial link
+ * (it runs in the link's rx task): the next `len` bytes are raw (§13.3
+ * OTA_PUSH_CHUNK). 1 s without a byte aborts the run. */
+esp_err_t siot_link_serial_expect_raw(size_t len, siot_link_raw_cb_t cb, void *ctx);
+
+/* Board: line speed of the tablet link (§13.3 OTA_BAUD). What is queued
+ * leaves at the old speed first. 20 s without a byte at any speed but the
+ * default puts the link back at the default. */
+esp_err_t siot_link_serial_set_baud(uint32_t baud);
 
 /* Board admin window (lifecycle §11): swap the one SoftAP to the setup
  * network (SSID/password/channel given) and back to the installation AP. */

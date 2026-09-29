@@ -6,12 +6,18 @@
 #      and if any image is not signed with the key in use (docs/ota/signing-key.md)
 #   3. build test/host for the linux target and run the Unity tests
 #
+#   4. the production gate (docs/ota/before-production.md): everything that is relaxed
+#      for the bench is listed as a WARNING; with --release it FAILS the check
+#
 # Usage: ci/check.sh            (from anywhere; uses ~/.espressif/tools/activate_idf_v5.5.2.sh)
+#        ci/check.sh --release  the same, and nothing relaxed for the bench may be left
 #        IDF_ACTIVATE=/path/to/activate.sh ci/check.sh
 # Builds run one after another on purpose: parallel idf.py invocations share
 # the component-manager cache and step on each other.
 set -euo pipefail
 
+RELEASE=0
+[[ "${1:-}" == "--release" ]] && RELEASE=1
 FW_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IDF_ACTIVATE="${IDF_ACTIVATE:-$HOME/.espressif/tools/activate_idf_v5.5.2.sh}"
 NODE_MAX_BYTES=$((1792 * 1024))   # 1.75 MB = 1835008 bytes
@@ -79,5 +85,30 @@ log "build test/host (linux target)"
 
 log "run test/host"
 "$FW_DIR/test/host/build/host_tests.elf" || fail "host tests"
+
+# ---- the production gate (docs/ota/before-production.md) -------------------------
+# One line per thing that is relaxed for the bench. Add a line here in the same
+# change that relaxes something; remove it only when the thing is restored.
+DEV_KEY_FINGERPRINT="797d2b255eccdd8d274b2844a2377170786413362566aa856a3437bc83f0ac82"
+RELAXED=()
+for app in board node leaf; do
+    cfg="$FW_DIR/apps/$app/sdkconfig"
+    grep -q '^CONFIG_SIOT_OTA_TEST_ANY_VERSION=y' "$cfg" && RELAXED+=("item 1  apps/$app: CONFIG_SIOT_OTA_TEST_ANY_VERSION=y — accepts the same or an older firmware version")
+    grep -q '^CONFIG_SIOT_OTA_ALLOW_FORCE=y'      "$cfg" && RELAXED+=("item 2  apps/$app: CONFIG_SIOT_OTA_ALLOW_FORCE=y — honours FORCE (downgrade)")
+    grep -q '^CONFIG_SIOT_OTA_SELFTEST_FAIL=y'    "$cfg" && RELAXED+=("item 3  apps/$app: CONFIG_SIOT_OTA_SELFTEST_FAIL=y — an image that never confirms itself")
+    grep -q '^CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y' "$cfg" || grep -q '^CONFIG_SECURE_BOOT=y' "$cfg" \
+        || RELAXED+=("item 4  apps/$app: the image is NOT signed")
+done
+KEY_NOW="$("$FW_DIR/tools/signing_key.sh" status 2>/dev/null | awk '/^fingerprint/{print $2}')"
+[[ "$KEY_NOW" == "$DEV_KEY_FINGERPRINT" ]] && RELAXED+=("item 5  signed with the DEVELOPMENT key (${DEV_KEY_FINGERPRINT:0:8}…), not the production key")
+grep -q -- '-' "$FW_DIR/VERSION" && RELAXED+=("item 6  firmware/VERSION is a pre-release: $(tr -d '\n' < "$FW_DIR/VERSION")")
+
+if (( ${#RELAXED[@]} > 0 )); then
+    printf '\n==> %s\n' "RELAXED FOR THE BENCH — must be restored before production (docs/ota/before-production.md):"
+    for r in "${RELAXED[@]}"; do printf '      %s\n' "$r"; done
+    (( RELEASE == 0 )) || fail "--release: ${#RELAXED[@]} item(s) above are not allowed in a release"
+elif (( RELEASE == 1 )); then
+    log "production gate: nothing relaxed"
+fi
 
 log "all checks passed"

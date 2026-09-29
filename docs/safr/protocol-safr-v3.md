@@ -1213,9 +1213,10 @@ alarm keeps the radio on.
 The messages that carry a firmware image from the tablet to the board and
 from the board to every unit. Design and reasons: `docs/ota/ota-and-production-blueprint-v1.md`
 §3–§4; plan and bench checklist: `docs/phases-development/phase3-ota-brief.md`.
-**Status: specified; codecs written and host-tested (`siot_ota_proto`,
-`test_ota_proto.c`); no transfer, scheduler or client exists yet** (brief
-steps 1 and 2). All additive, `VER` unchanged: a unit that does not know a
+**Status: §13.2, §13.3 and §13.7 implemented on the board
+(`siot_ota_board`, `link_serial.c`) and on the tablet, 2026-09-29 — bench
+pending; §13.4–§13.6 specified, codecs written and host-tested
+(`siot_ota_proto`), no scheduler or client yet** (brief step 2). All additive, `VER` unchanged: a unit that does not know a
 message answers nothing (`NO_HANDLER`) and a board treats that as "cannot be
 updated over the air".
 
@@ -1252,6 +1253,12 @@ compare as text. **A unit installs an image only if `offered > running`.**
 version again); a production build answers `FORCE_REFUSED`. A unit that
 cannot read its own version accepts.
 
+> **Bench, 2026-09-29: the rule above is switched OFF in the firmware**
+> (`CONFIG_SIOT_OTA_TEST_ANY_VERSION`, default on), so the same image can be
+> pushed again and again. It is the rule in production:
+> `docs/ota/before-production.md` item 1, enforced by
+> `firmware/ci/check.sh --release`.
+
 ### 13.3 Push to the board (serial link only, never relayed)
 
 | Message | `MSG_TYPE` | Dir | Payload |
@@ -1274,21 +1281,61 @@ cannot read its own version accepts.
   over the whole image, then by the signature. After a valid `OTA_PUSH_CHUNK`
   the receiver reads exactly `LEN` bytes as data — they are not scanned for
   `SOF`.
-- **Acknowledgement:** the board ACKs `BEGIN`, every `CHUNK` and `END` (§7.5).
-  ACK `ERROR`: `BAD_CRC` → the tablet sends the same chunk again;
-  `OUT_OF_ORDER` → the board also sends `OTA_PUSH_RESULT {RECEIVING,
-  NEXT_SEQ}` and the tablet continues from `NEXT_SEQ`.
-- **Resume:** a `BEGIN` with the `FAMILY`, `SIZE` and `SHA256` of a transfer
-  the board already holds part of is answered with `OTA_PUSH_RESULT
-  {RECEIVING, NEXT_SEQ = first chunk it lacks}`. Anything else starts at 0.
-- **`END`:** the board checks `SHA256`, the signature and `project_name`, then
-  answers `OTA_PUSH_RESULT`: `PHASE 1` (OK) or `2` (FAILED) with `REASON`. For
-  its own image it then reboots into it, runs the self-test and confirms or
-  rolls back; the tablet learns the outcome from the board's next
-  `NAME_ANNOUNCE` (§7.11: the version it runs).
-- **`OTA_BAUD`:** the board ACKs at the current speed, then switches; the
-  tablet switches after the ACK. 20 s of silence at the new speed → both fall
-  back to 115200 (§9.3). 921600 is the design value.
+- **`BEGIN`:** accepted → the board sends `OTA_PUSH_RESULT {RECEIVING,
+  NEXT_SEQ}` **and then** the ACK, always in that order: the tablet that has
+  the ACK knows where to start (`0`, or the first chunk the board lacks).
+  Refused → ACK `ERROR` with the `REASON`, no result. A **board** image is
+  refused when its version is not newer than the running one (`NOT_NEWER`,
+  §13.2), when an ALARM crossed the board in the last 10 minutes
+  (`BUSY_ALARM`), or while the running image is still in its self-test
+  (`BUSY`). A node or leaf image is refused when the board has no `fw_store`
+  (the 4 MB table) or no room (`NO_SPACE`).
+- **Resume:** a `BEGIN` with the `FAMILY`, `SIZE` and `SHA256` of the transfer
+  the board holds part of continues it (`NEXT_SEQ` = the first chunk it
+  lacks); anything else starts a new one. The board keeps a transfer nobody
+  continues for 120 s, in RAM: a board that restarted answers `0`.
+- **`CHUNK`:** `LEN` = `CHUNK` for every chunk but the last, the rest of the
+  file for the last. The board ACKs **after** it has the bytes, their `CRC32`
+  matched and they are written. ACK `ERROR`: `BAD_CRC` → the tablet sends the
+  same chunk again; `OUT_OF_ORDER` → `OTA_PUSH_RESULT {RECEIVING, NEXT_SEQ}`
+  was sent just before it, the tablet continues from `NEXT_SEQ`; with no
+  transfer at all, `OTA_PUSH_RESULT {FAILED, OUT_OF_ORDER}` → `BEGIN` again. A
+  repeat of a chunk already written is ACKed `OK` and dropped. Raw bytes that
+  stop for 1 s end that chunk without an ACK. The first chunk carries the
+  image's own description: another `project_name` than the family's
+  (`WRONG_FAMILY`) or another version than `BEGIN` said (`BAD_VERSION`) ends
+  the push at once.
+- **Nothing between a `CHUNK` frame and the end of its raw bytes:** the tablet
+  writes every frame through one queue.
+- **`END`:** ACK `OK` = heard. The verdict follows as `OTA_PUSH_RESULT`
+  (1–3 s): `PHASE 1`, or `PHASE 2` with `SHA_FAIL`, `SIG_FAIL` (not signed, or
+  by another key), `NO_SPACE`, `BUSY_ALARM` (an alarm came in meanwhile).
+- **A board image after `PHASE 1`** ("verified, restarting"): the board puts
+  its line back to 115200 and restarts 1.5 s later; the tablet sets its own
+  port to 115200 and keeps its normal traffic going. The new image has
+  **120 s to hear the tablet** (any frame that passes authentication) — its
+  self-test. Heard → it confirms itself and sends its `NAME_ANNOUNCE` (§7.11)
+  and a second `OTA_PUSH_RESULT {PHASE 1, VERSION = what it runs}`
+  ("confirmed"). **That second result is the confirmation, the announce is
+  not:** every boot announces, also the boot of an image that will fail its
+  self-test and be thrown away two minutes later. The tablet tells the second
+  result from the first by the frame's `BOOT_CTR`; with no second result it
+  waits and takes the version the board still announces 150 s after it came
+  back. Not heard → the bootloader goes back to the previous image,
+  which sends its `NAME_ANNOUNCE` and `OTA_PUSH_RESULT {PHASE 2,
+  SELFTEST_FAIL, VERSION = the image that was thrown away}` — once, the first
+  time it hears the tablet.
+- **A node or leaf image after `PHASE 1`** is stored: `/fw/node.bin` or
+  `/fw/leaf.bin`, with `/fw/<family>.inf` (version, size, SHA-256) written
+  last, so an `.inf` always describes a complete, verified image. The stored
+  image of a family is replaced only by a verified one (or removed first when
+  both do not fit).
+- **`OTA_BAUD`:** 115200, 230400, 460800 or 921600. The board ACKs at the
+  current speed and switches when the ACK has left; the tablet switches after
+  the ACK and waits 150 ms. 20 s without a **valid frame** (bytes that are
+  not one do not count: the other side talking at another speed arrives as
+  noise) at another speed than 115200 → both fall back to 115200 (§9.3). 921600 is the design value. On native
+  USB the command is accepted and changes nothing.
 - `PHASE`: `0` receiving · `1` ok · `2` failed.
 
 ### 13.4 Offer, progress and result (mesh)
@@ -1361,7 +1408,9 @@ Sent in reply to `GET_ROLLOUT`, on every change, and every 5 s while
 | `16` `BAD_VERSION` | `17` `FORCE_REFUSED` | | |
 
 An ACK `ERROR` to any message of this section carries the `REASON` in its
-`DETAIL` byte. A reason is never renumbered.
+`DETAIL` byte — never one of the general `DETAIL` codes of §7.5, whose numbers
+mean something else here. A board that cannot take an update at all answers
+`BUSY`. A reason is never renumbered.
 
 ---
 

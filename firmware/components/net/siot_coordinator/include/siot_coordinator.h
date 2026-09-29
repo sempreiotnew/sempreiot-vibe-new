@@ -41,6 +41,34 @@ esp_err_t siot_coordinator_start(void);
  * board reboots into normal mode once the code is stored. */
 esp_err_t siot_coordinator_setup_channel_start(void);
 
+/* ---- firmware update (protocol §13): the coordinator owns the links and the
+ * dispatcher, siot_ota_board owns what the frames mean ----------------------- */
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include "siot_safr.h"
+
+/* OTA_PUSH_BEGIN / CHUNK / END and the OTA_* COMMANDs (0x1A–0x1D), and only
+ * when they arrived on the SERIAL link: a frame of these kinds coming from
+ * the mesh is dropped, a unit never pushes firmware to the board. Runs in the
+ * serial link's rx task. */
+typedef void (*siot_coordinator_ota_cb_t)(const siot_safr_frame_t *f, bool dup, void *ctx);
+void siot_coordinator_set_ota_sink(siot_coordinator_ota_cb_t cb, void *ctx);
+
+/* A frame the board originates for the tablet, and the ACK of one of the
+ * tablet's frames (DETAIL = a §13.7 REASON for the OTA messages). */
+void siot_coordinator_send_to_tablet(uint8_t msg_type, uint8_t flags, const uint8_t *payload, size_t len);
+void siot_coordinator_ack_tablet(uint16_t acked_msg_id, uint8_t status, uint8_t detail);
+
+/* An ALARM crossed the board in the last 10 minutes (the rule of the admin
+ * window, lifecycle §11): no board restart now. */
+bool siot_coordinator_alarm_recent(void);
+
+/* The board's own NAME_ANNOUNCE (§7.11): what it is and the firmware it runs. */
+void siot_coordinator_announce_board(void);
+
 #ifdef __cplusplus
 }
 #endif

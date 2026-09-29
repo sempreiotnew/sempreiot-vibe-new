@@ -82,6 +82,21 @@ exactly** on screen. Source of truth: `firmware/components/ui/siot_ui_led` (`sio
 
 ---
 
+## 🚨 CRITICAL — what is relaxed for the bench is written down
+
+Some rules are switched off so the bench can work (today: the firmware **version rule**, the
+development signing key, no PIN on the update screen). They are listed in
+**`docs/ota/before-production.md`**, and `firmware/ci/check.sh --release` fails while any of them is
+still relaxed.
+
+- Relaxing anything for a test = in the same change, a row in that page **and** a line in the
+  production gate of `firmware/ci/check.sh`. Never relax something silently, never leave a
+  "temporary" flag that only a comment remembers.
+- Never turn a relaxed rule into the permanent behaviour without the user saying so.
+- Before calling anything "ready for production", run `firmware/ci/check.sh --release` and read the page.
+
+---
+
 ## Database tables — keep the reference in sync
 
 The tablet app's local database (`mobile/sempreiot_central_app/lib/core/database/app_database.dart`,
