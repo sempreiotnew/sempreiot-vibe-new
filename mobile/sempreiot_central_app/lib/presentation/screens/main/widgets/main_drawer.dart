@@ -15,6 +15,7 @@ import '../../../../features/central/application/device_info_provider.dart';
 import '../../../../features/central/presentation/screens/device_access_screen.dart';
 import '../../../../features/central/presentation/screens/central_installation_screen.dart';
 import '../../../../features/central/presentation/screens/device_info_screen.dart';
+import '../../../../features/central/presentation/screens/network_3d_screen.dart';
 import '../../../../features/central/presentation/screens/serial_logs_screen.dart';
 import '../../../../features/installation/presentation/screens/installations_screen.dart';
 import '../../../../features/storage/presentation/screens/storage_screen.dart';
@@ -160,6 +161,20 @@ class MainDrawer extends ConsumerWidget {
                           Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => const DeviceInfoScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                      // PROTOTYPE: the Rede map as a 3D cloud to fly
+                      // through (network_3d_screen.dart).
+                      _DrawerItem(
+                        icon: Icons.view_in_ar_rounded,
+                        label: 'Rede 3D (protótipo)',
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const Network3dScreen(),
                             ),
                           );
                         },

@@ -16,6 +16,7 @@ import '../../application/safr_traffic_provider.dart';
 import '../../application/topology_provider.dart';
 import '../widgets/device_avatar.dart';
 import '../widgets/device_menu.dart';
+import 'network_3d_screen.dart';
 import '../../application/root_election_provider.dart';
 
 /// Rede — live map of the fire-alarm mesh. Central on top, root marked,
@@ -577,6 +578,22 @@ class _MeshStatusBar extends StatelessWidget {
               ],
             ),
           const SizedBox(width: 10),
+          // PROTOTYPE: the same network as a 3D cloud (network_3d_screen).
+          IconButton(
+            tooltip: 'Ver em 3D (protótipo)',
+            style: IconButton.styleFrom(
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              fixedSize: const Size(30, 30),
+              minimumSize: const Size(30, 30),
+              padding: EdgeInsets.zero,
+              foregroundColor: AppColors.secondary,
+            ),
+            icon: const Icon(Icons.view_in_ar_rounded, size: 20),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const Network3dScreen()),
+            ),
+          ),
+          const SizedBox(width: 6),
           IconButton(
             tooltip: 'Ressincronizar com a placa',
             // M3 pads the tap target to 48 px, which alone made the strip
