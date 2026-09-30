@@ -52,6 +52,7 @@ static void           *s_tx_ctx;
 static dedup_entry_t   s_dedup[CONFIG_SIOT_SAFR_DEDUP_CAP];
 static peer_entry_t    s_peers[CONFIG_SIOT_SAFR_PEERS_MAX];
 static handler_entry_t s_handlers[CONFIG_SIOT_SAFR_HANDLERS_MAX];
+static handler_entry_t s_default_handler; /* for every MSG_TYPE without an entry above */
 static siot_safr_stats_t s_stats;
 
 /* ---- init / identity ------------------------------------------------- */
@@ -210,6 +211,20 @@ esp_err_t siot_safr_unregister(uint8_t msg_type)
     return e != NULL ? ESP_OK : ESP_ERR_NOT_FOUND;
 }
 
+esp_err_t siot_safr_register_default(siot_safr_handler_t handler, void *ctx)
+{
+    if (!s_lock_ready) {
+        safr_lock_init(&s_lock);
+        s_lock_ready = true;
+    }
+    safr_lock(&s_lock);
+    s_default_handler.used = handler != NULL;
+    s_default_handler.handler = handler;
+    s_default_handler.ctx = ctx;
+    safr_unlock(&s_lock);
+    return ESP_OK;
+}
+
 /* ---- replay (spec §4) — lock held ------------------------------------ */
 
 static bool replay_check_and_update(const siot_safr_frame_t *f, int64_t now_ms)
@@ -317,6 +332,7 @@ siot_safr_rx_result_t siot_safr_rx(const uint8_t *buf, size_t len)
     const bool duplicate = dedup_check_and_insert(&f, now_ms);
 
     const handler_entry_t *e = find_handler(f.msg_type);
+    if (e == NULL && s_default_handler.used) e = &s_default_handler;
     if (e == NULL) {
         s_stats.no_handler++;
         safr_unlock(&s_lock);

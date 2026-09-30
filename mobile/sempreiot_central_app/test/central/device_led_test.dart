@@ -27,7 +27,10 @@ void main() {
   late StreamController<SafrTrafficTick> traffic;
 
   TopologyNode node(String mac, SafrNodeRole role, int layer,
-          {bool online = true, bool alarm = false}) =>
+          {bool online = true,
+          bool alarm = false,
+          bool heard = true,
+          bool updating = false}) =>
       TopologyNode(
         mac: mac,
         role: role,
@@ -38,6 +41,8 @@ void main() {
         online: online,
         lastSeenAt: DateTime.now().toUtc(),
         alarmLatched: alarm,
+        heard: heard,
+        updating: updating,
       );
 
   TopologyNode find(String mac) => nodes.firstWhere((n) => n.mac == mac);
@@ -379,6 +384,169 @@ void main() {
       expect(at(boardMac, 1050), LedColor.blue);
       expect(at(boardMac, 1450), LedColor.blue);
       expect(at(boardMac, 1550), isNull);
+    });
+  });
+
+  // ── Firmware rollout (protocol §13.4, §13.6) ──────────────────────────────
+  //
+  // A unit that is being updated lights nothing of its own. Its LED does
+  // what it does for every frame it transmits (siot_netcore.c `tx_sink` →
+  // SIOT_EVT_SAFR_TX → siot_ui_led.c `on_tx`): OTA_STATUS and OTA_RESULT are
+  // not in `is_message`, so each is a blue 100 ms tick, folded; its ACK of
+  // the board's OTA_OFFER is an ACK, blue 500 ms. The tablet's ACK of its
+  // OTA_RESULT is addressed to it: cyan 500 ms (siot_netcore.c `on_ack` →
+  // SIOT_EVT_ACK_RECEIVED). The ring and the caption on the map are not the
+  // LED.
+
+  group('firmware rollout', () {
+    test('OTA_STATUS is background traffic: a 100 ms tick on the unit and on '
+        'the board that relays it', () {
+      tickAt(1000, up(childMac, SafrMsgType.otaStatus));
+      expect(at(childMac, 1050), LedColor.blue);
+      expect(at(childMac, 1150), isNull);
+      expect(at(boardMac, 1050), LedColor.blue);
+      expect(at(boardMac, 1150), isNull);
+    });
+
+    test('the statuses of a download fold like every tick', () {
+      tickAt(1000, up(childMac, SafrMsgType.otaStatus));
+      tickAt(1040, up(childMac, SafrMsgType.otaStatus));
+      expect(at(childMac, 1090), LedColor.blue);
+      expect(at(childMac, 1110), isNull);
+    });
+
+    test('one status every 10 %: a tick each, dark in between', () {
+      for (var i = 0; i <= 10; i++) {
+        final ms = 1000 + i * 3000;
+        tickAt(ms, up(childMac, SafrMsgType.otaStatus));
+        expect(at(childMac, ms + 50), LedColor.blue, reason: '${i * 10} %');
+        expect(at(childMac, ms + 150), isNull, reason: '${i * 10} %');
+      }
+    });
+
+    test('OTA_RESULT is a 100 ms tick; the tablet\'s ACK of it is cyan 500 ms',
+        () {
+      tickAt(1000, up(childMac, SafrMsgType.otaResult));
+      tickAt(1030, ackDown(childMac));
+      expect(at(childMac, 1050), LedColor.blue);
+      expect(at(childMac, 1150), LedColor.cyan);
+      expect(at(childMac, 1550), LedColor.cyan);
+      expect(at(childMac, 1650), isNull);
+    });
+
+    test('that ACK goes down through the board: blue 500 ms there', () {
+      tickAt(1000, up(childMac, SafrMsgType.otaResult));
+      tickAt(1030, ackDown(childMac));
+      expect(at(boardMac, 1050), LedColor.blue); // the relay up, a tick
+      expect(at(boardMac, 1150), LedColor.blue); // the ACK down, a message
+      expect(at(boardMac, 1550), LedColor.blue);
+      expect(at(boardMac, 1650), isNull);
+    });
+
+    test('an OTA_RESULT nobody acknowledged: no cyan', () {
+      tickAt(1000, up(childMac, SafrMsgType.otaResult));
+      expect(at(childMac, 1050), LedColor.blue);
+      expect(at(childMac, 1150), isNull);
+      expect(at(childMac, 1600), isNull);
+    });
+
+    test('the unit\'s ACK of the board\'s offer is a message: blue 500 ms', () {
+      tickAt(1000, up(childMac, SafrMsgType.ack));
+      expect(at(childMac, 1050), LedColor.blue);
+      expect(at(childMac, 1450), LedColor.blue);
+      expect(at(childMac, 1550), isNull);
+    });
+
+    test('OTA_ROLLOUT is the board\'s own frame: a tick on the board only',
+        () {
+      tickAt(1000, up(boardMac, SafrMsgType.otaRollout));
+      expect(at(boardMac, 1050), LedColor.blue);
+      expect(at(boardMac, 1150), isNull);
+      expect(at(childMac, 1050), isNull);
+      expect(at(rootMac, 1050), isNot(LedColor.blue));
+    });
+
+    test('the root keeps its green flash while it downloads', () {
+      tickAt(6000, up(rootMac, SafrMsgType.otaStatus));
+      expect(at(rootMac, 6050), LedColor.blue);
+      expect(at(rootMac, 6150), isNull);
+      // 4.5 s after the pulse ended, as after every pulse.
+      expect(at(rootMac, 6100 + 4500 + 50), LedColor.green);
+    });
+
+    test('a unit that restarts into its new firmware is silent: its LED is '
+        'dark on screen, whatever it is supervised as', () {
+      nodes = [
+        node(boardMac, SafrNodeRole.root, 0),
+        node(rootMac, SafrNodeRole.root, 1, heard: false, updating: true),
+        node(childMac, SafrNodeRole.node, 2, heard: false, updating: true),
+      ];
+      // Online for the supervision, and no green flash, no pulse.
+      expect(find(rootMac).online, isTrue);
+      expect(at(rootMac, 100), isNull);
+      expect(engine.animating(find(rootMac)), isFalse);
+      expect(at(childMac, 100), isNull);
+      // The board is not the one restarting.
+      expect(at(boardMac, 100), LedColor.magenta);
+    });
+
+    test('it is back: the first frame it sends lights it again', () {
+      nodes = [
+        node(boardMac, SafrNodeRole.root, 0),
+        node(childMac, SafrNodeRole.node, 2, heard: false, updating: true),
+      ];
+      expect(at(childMac, 100), isNull);
+      nodes = [
+        node(boardMac, SafrNodeRole.root, 0),
+        node(childMac, SafrNodeRole.node, 2, updating: true),
+      ];
+      tickAt(1000, up(childMac, SafrMsgType.otaStatus)); // self-test
+      expect(at(childMac, 1050), LedColor.blue);
+      expect(at(childMac, 1150), isNull);
+    });
+
+    test('an OTA_RESULT of a unit, from the wire to its LED', () async {
+      driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
+      final db = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      final ticks = <SafrTrafficTick>[];
+      final toAck = <SafrWireFrame>[];
+      final ingest = SafrIngestService(
+        db: db,
+        onAckRequired: (f) async => toAck.add(f),
+        onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS) {
+          final tick = SafrTrafficTick(
+            mac: mac,
+            direction: SafrTrafficDirection.uplink,
+            severity: severity,
+            parentMac: parentMac,
+            msgType: msgType,
+            eventCode: eventCode,
+            uptimeS: uptimeS,
+          );
+          ticks.add(tick);
+          engine.onTick(tick);
+        },
+      );
+      final unit = SafrEncoder(srcMac: safrMacToBytes(childMac), bootCtr: 8);
+
+      now = DateTime(2026, 1, 1, 0, 0, 1);
+      await ingest.handleFrame(
+        unit.encode(
+          msgType: SafrMsgType.otaResult,
+          payload:
+              const SafrOtaResultPayload(ok: true, version: '0.2.0').build(),
+          ackRequired: true,
+        ),
+        deviceId: 't',
+      );
+
+      expect(ticks.single.mac, childMac);
+      expect(ticks.single.msgType, SafrMsgType.otaResult);
+      expect(ticks.single.severity, 0);
+      expect(toAck.single.srcMac, childMac, reason: 'the tablet ACKs it');
+      expect(at(childMac, 1050), LedColor.blue);
+      expect(at(childMac, 1150), isNull);
     });
   });
 }

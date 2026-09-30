@@ -12,6 +12,7 @@ import '../../../../core/theme/signal_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../../../core/utils/relative_time.dart';
 import '../../application/ota_push_report.dart';
+import '../../application/ota_rollout_report.dart';
 import '../../application/safr_downlink_provider.dart';
 import '../../application/safr_traffic_provider.dart';
 import '../../application/topology_provider.dart';
@@ -46,6 +47,13 @@ const _otaOrigin = '@ota';
 
 /// One crossing of the tablet–board link by a packet of a push.
 const _otaHop = Duration(milliseconds: 900);
+
+/// `origin` of the packets of a rollout (never a MAC): the image on its way
+/// from the board to the unit that downloads it (protocol §13.4).
+const _rolloutOrigin = '@rollout';
+
+/// While a unit downloads, a packet leaves the board this often.
+const _rolloutPacketEvery = Duration(milliseconds: 1500);
 
 /// The map's zoom factor. The map is only ever translated and uniformly
 /// scaled, so the x-axis entry IS the scale. Never read the "max scale on
@@ -85,6 +93,11 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
     minGap: const Duration(milliseconds: 700),
   );
 
+  /// A rollout: the unit that downloads now, and the packets to it.
+  ProviderSubscription<String?>? _rolloutSub;
+  Timer? _rolloutTimer;
+  String? _downloading;
+
   /// A change of the tree's shape (a node joined, left or moved layer)
   /// re-fits only once the shape has held still for this long, so a
   /// failover does not make the map jump on every intermediate state.
@@ -105,11 +118,18 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
       otaPushViewProvider.select(otaChunksOnTheWay),
       (_, chunks) => _onOtaChunks(chunks),
     );
+    _rolloutSub = ref.listenManual<String?>(
+      otaRolloutOverlayProvider.select((o) => o.downloading),
+      (_, mac) => _onDownloading(mac),
+      fireImmediately: true,
+    );
   }
 
   @override
   void dispose() {
     _refitTimer?.cancel();
+    _rolloutTimer?.cancel();
+    _rolloutSub?.close();
     _trafficSub?.cancel();
     _otaSub?.close();
     _transform.dispose();
@@ -342,15 +362,54 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
     if (_dots.length > 40) _dots.removeRange(0, _dots.length - 40);
   }
 
+  /// A rollout: a unit started or stopped downloading. While it downloads,
+  /// packets leave the board (the CENTRAL chip) and travel the tree to it.
+  void _onDownloading(String? mac) {
+    if (mac == _downloading) return;
+    _downloading = mac;
+    _rolloutTimer?.cancel();
+    _rolloutTimer = null;
+    if (mac == null) {
+      _dots.removeWhere((d) => d.origin == _rolloutOrigin);
+      return;
+    }
+    _sendRolloutPacket();
+    _rolloutTimer =
+        Timer.periodic(_rolloutPacketEvery, (_) => _sendRolloutPacket());
+  }
+
+  /// One blue packet (a frame sent, in the LED language's colours) from
+  /// the central down the unit's parents to the unit.
+  void _sendRolloutPacket() {
+    final mac = _downloading;
+    if (mac == null || !mounted) return;
+    final path =
+        otaDownloadPath(ref.read(topologyProvider), mac, _centralKey);
+    if (path == null) return;
+    _dots.add(_TrafficDot(
+      origin: _rolloutOrigin,
+      uplink: false,
+      severity: 0,
+      path: path,
+      color: AppColors.ledBlue,
+      startedAt: DateTime.now(),
+      duration: Duration(milliseconds: 550 * (path.length - 1)),
+      lane: -4,
+    ));
+    if (_dots.length > 40) _dots.removeRange(0, _dots.length - 40);
+  }
+
   @override
   Widget build(BuildContext context) {
     // The board (layer 0) is folded into the CENTRAL chip, not drawn as its
     // own node; the mesh (layer 1+) hangs off the central directly.
     final allNodes = ref.watch(topologyProvider);
+    // A rollout: what is drawn on every unit of it.
+    final rollout = ref.watch(otaRolloutOverlayProvider);
+    final held = ref.watch(otaHeldOnBoardProvider);
     // A firmware push: what the board is doing with it, and what waits on
     // the board for the units (rebuilt once per percent, not per chunk).
-    final (activity, stored) =
-        ref.watch(otaPushViewProvider.select(otaMapOverlay));
+    final activity = ref.watch(otaPushViewProvider.select(otaBoardActivity));
     if (activity == null) _dots.removeWhere((d) => d.origin == _otaOrigin);
     // Who is root — or that the mesh is still deciding (root_election_provider).
     final election = ref.watch(rootElectionProvider);
@@ -473,8 +532,9 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen>
                                             isCandidate: election.electing &&
                                                 election.candidates
                                                     .contains(node.mac),
+                                            activity: rollout[node.mac],
                                             pending: pendingFirmwareFor(
-                                                node, stored),
+                                                node, held),
                                             onTap: (anchor) =>
                                                 _showNodeMenu(node, anchor),
                                           ),
@@ -1543,10 +1603,17 @@ class _NodeChip extends StatelessWidget {
     required this.isCandidate,
     required this.onTap,
     this.pending,
+    this.activity,
   });
 
   final TopologyNode node;
   final Offset position;
+
+  /// A rollout has this unit in it: a progress ring goes around the avatar
+  /// while it is being updated and the line under its name says where it
+  /// is. The LED lens on top is untouched: it is the unit's LED, the ring
+  /// is not.
+  final OtaUnitActivity? activity;
 
   /// The version of an image of this unit's family that is stored on the
   /// board and was not delivered; null = none.
@@ -1576,10 +1643,21 @@ class _NodeChip extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  DeviceAvatar(
-                    node: node,
-                    isRoot: isRoot,
-                    isCandidate: isCandidate,
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      DeviceAvatar(
+                        node: node,
+                        isRoot: isRoot,
+                        isCandidate: isCandidate,
+                      ),
+                      if (activity?.updating == true)
+                        Positioned(
+                          left: (46 - OtaProgressRing.sizeFor(46)) / 2,
+                          top: (46 - OtaProgressRing.sizeFor(46)) / 2,
+                          child: OtaUnitRing(activity: activity!, diameter: 46),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 5),
                   // Identification: the device's name when set, otherwise the
@@ -1601,8 +1679,12 @@ class _NodeChip extends StatelessWidget {
                     ),
                   ),
                   // The firmware it runs, and whether another waits on the
-                  // board; nothing when the unit never said its version.
-                  FirmwareTag(version: node.fwVersion, pending: pending),
+                  // board; nothing when the unit never said its version. In
+                  // a rollout: where the unit is in it.
+                  if (activity != null)
+                    OtaUnitTag(activity: activity!, version: node.fwVersion)
+                  else
+                    FirmwareTag(version: node.fwVersion, pending: pending),
                 ],
               ),
             ),

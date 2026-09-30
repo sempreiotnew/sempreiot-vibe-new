@@ -47,6 +47,8 @@ typedef enum {
     SIOT_OTA_R_OUT_OF_ORDER  = 15, /* chunk: NEXT_SEQ says where to resume */
     SIOT_OTA_R_BAD_VERSION   = 16, /* not a version this rule can compare */
     SIOT_OTA_R_FORCE_REFUSED = 17, /* FORCE on a production build */
+    SIOT_OTA_R_NOT_VALIDATED = 18, /* the new image started but was reset before its self-test ended */
+    SIOT_OTA_R_NOT_BOOTED    = 19, /* installed, but the bootloader never ran it */
 } siot_ota_reason_t;
 
 /* A unit's STATE in OTA_STATUS and in a rollout entry */
@@ -119,6 +121,8 @@ typedef struct {
     uint8_t  reason;
     uint16_t awake_s;                /* battery unit: seconds awake for this update, else 0 */
     char     version[SIOT_OTA_VER_MAX_LEN + 1]; /* what the unit runs NOW */
+    uint8_t  detail;                 /* optional trailing byte: with NOT_VALIDATED, the chip's reset
+                                        reason (esp_reset_reason_t) that ended the new image; else 0 */
 } siot_ota_result_t;
 
 size_t siot_ota_result_encode(uint8_t *p, const siot_ota_result_t *r);

@@ -18,7 +18,12 @@ import 'topology_provider.dart';
 ///    pulse when it relays someone else's frame;
 ///  * the board pulses for its own frames AND for every frame it relays,
 ///    up to the tablet or down into the mesh;
-///  * cyan 500 ms when the tablet ACKs the unit's EVENT;
+///  * cyan 500 ms when the tablet ACKs the unit's EVENT — or the
+///    OTA_RESULT of its firmware update (protocol §13.4): the node lights
+///    cyan for every ACK addressed to it (siot_netcore.c `on_ack`);
+///  * a firmware update lights nothing of its own: OTA_STATUS is a
+///    background frame and so is OTA_RESULT (blue 100 ms, folded):
+///    `is_message` of siot_ui_led.c names neither;
 ///  * a leaf is dark except for the walk test — a button press, or the one
 ///    it runs by itself right after provisioning (spec §12.8): blue 100 ms
 ///    ("heard you"), blue 500 ms (the MANUAL_TEST left), cyan if the
@@ -80,6 +85,9 @@ class DeviceLedEngine extends ChangeNotifier {
   LedTimeline _led(String mac) =>
       _leds.putIfAbsent(mac, () => LedTimeline(_clock()));
 
+  /// `is_message` of siot_ui_led.c: EVENT, ACK, COMMAND, TIME_SYNC. Every
+  /// other type — the firmware update's OTA_STATUS, OTA_RESULT, OTA_ROLLOUT
+  /// and OTA_PUSH_RESULT too — is background traffic.
   static bool _isMessage(SafrMsgType? t) =>
       t == SafrMsgType.event ||
       t == SafrMsgType.ack ||
@@ -213,16 +221,18 @@ class DeviceLedEngine extends ChangeNotifier {
     return node.layer == 1 ? LedBase.greenFlash : LedBase.off;
   }
 
-  /// What [node]'s LED shows right now; dark for an offline unit.
+  /// What [node]'s LED shows right now; dark for an offline unit, and for
+  /// one that is silent while it restarts into a new firmware (what its LED
+  /// does then never crosses the wire).
   LedLook look(TopologyNode node) {
-    if (!node.online) return LedLook.dark;
+    if (!node.online || !node.heard) return LedLook.dark;
     return _led(node.mac).look(baseOf(node), _clock());
   }
 
   /// True when [node]'s LED changes over time right now, so the screen has
   /// to redraw every frame (a pulse queued, IDENTIFY, a slow flash).
   bool animating(TopologyNode node) {
-    if (!node.online) return false;
+    if (!node.online || !node.heard) return false;
     final base = baseOf(node);
     if (base == LedBase.greenFlash || base == LedBase.magentaFlash) return true;
     return _leds[node.mac]?.busy(_clock()) ?? false;

@@ -52,6 +52,11 @@ static uint32_t epoch_now(void) { return 0; }
 
 /* ---- TX: everything the board originates goes to the tablet ------------ */
 
+/* The one frame that is not a COMMAND and still goes down: the ACK of a
+ * unit's OTA_RESULT (§13.4). Set around that send, under s_tx_mesh_lock. */
+static bool s_tx_to_mesh;
+static SemaphoreHandle_t s_tx_mesh_lock;
+
 static void tx_sink(const uint8_t *frame, size_t len, const uint8_t dst_mac[6], void *ctx)
 {
     (void)ctx;
@@ -60,7 +65,8 @@ static void tx_sink(const uint8_t *frame, size_t len, const uint8_t dst_mac[6], 
      * DECOMMISSION) go downlink into the mesh. Everything else it originates
      * (HEARTBEAT, TOPOLOGY, ACK, INSTALLATION, DEVICE_TABLE, EVENT_LOG_DATA)
      * reports up to the tablet. Relayed frames do not pass through here. */
-    const siot_link_kind_t kind = frame[4] == SAFR_MSG_COMMAND ? SIOT_LINK_MESH : SIOT_LINK_SERIAL;
+    const siot_link_kind_t kind = (frame[4] == SAFR_MSG_COMMAND || s_tx_to_mesh) ? SIOT_LINK_MESH
+                                                                                   : SIOT_LINK_SERIAL;
     if (siot_link_send(kind, dst_mac, frame, len) == ESP_OK) {
         const siot_evt_frame_t ev = {.msg_type = frame[4]};
         siot_evbus_post(SIOT_EVT_SAFR_TX, &ev, sizeof(ev)); /* blue pulse on transmit */
@@ -240,6 +246,47 @@ void siot_coordinator_ack_tablet(uint16_t acked_msg_id, uint8_t status, uint8_t 
 
 bool siot_coordinator_alarm_recent(void) { return coord_admin_alarm_recent(); }
 
+static siot_coordinator_ota_cb_t s_ota_up_cb;
+static void *s_ota_up_ctx;
+
+void siot_coordinator_set_ota_uplink_sink(siot_coordinator_ota_cb_t cb, void *ctx)
+{
+    s_ota_up_cb = cb;
+    s_ota_up_ctx = ctx;
+}
+
+uint16_t siot_coordinator_command_unit(const uint8_t mac[6], uint8_t cmd, const uint8_t *args, size_t alen)
+{
+    uint8_t p[SAFR_MAX_PAYLOAD];
+    if (alen > SAFR_MAX_PAYLOAD - 2) return 0;
+    p[0] = cmd;
+    p[1] = (uint8_t)alen;
+    if (alen) memcpy(&p[2], args, alen);
+    const uint16_t id = siot_safr_next_msg_id();
+    siot_safr_set_level(0);
+    siot_safr_send(mac, SAFR_MSG_COMMAND, id, SAFR_F_ACK_REQ, p, 2 + alen);
+    return id;
+}
+
+void siot_coordinator_ack_unit(const uint8_t mac[6], uint16_t acked_msg_id, uint8_t status, uint8_t detail)
+{
+    const uint8_t p[4] = {(uint8_t)(acked_msg_id >> 8), (uint8_t)acked_msg_id, status, detail};
+    xSemaphoreTake(s_tx_mesh_lock, portMAX_DELAY);
+    s_tx_to_mesh = true;
+    siot_safr_send(mac, SAFR_MSG_ACK, siot_safr_next_msg_id(), 0, p, sizeof(p));
+    s_tx_to_mesh = false;
+    xSemaphoreGive(s_tx_mesh_lock);
+}
+
+bool siot_coordinator_root(uint8_t mac[6])
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    const bool known = s_root_known;
+    if (known) memcpy(mac, s_root_mac, 6);
+    xSemaphoreGive(s_lock);
+    return known;
+}
+
 static bool is_ota_command(const siot_safr_frame_t *f)
 {
     return f->msg_type == SAFR_MSG_COMMAND && f->payload_len >= 1 &&
@@ -371,6 +418,10 @@ static void handle_uplink(const siot_safr_frame_t *f, const uint8_t *raw, size_t
     xSemaphoreGive(s_lock);
     /* Forwarded unchanged, fast retries included: the tablet ACKs every time. */
     relay(SIOT_LINK_SERIAL, raw, raw_len);
+    if (s_ota_up_cb && (f->msg_type == SAFR_MSG_OTA_STATUS || f->msg_type == SAFR_MSG_OTA_RESULT ||
+                        f->msg_type == SAFR_MSG_ACK)) {
+        s_ota_up_cb(f, dup, s_ota_up_ctx); /* the rollout (§13.4) */
+    }
     if (!dup) push_pending(f->src_mac, flags, t);
 }
 
@@ -694,6 +745,7 @@ esp_err_t siot_coordinator_start(void)
     if (!siot_config_has_code() || !siot_identity_valid()) return ESP_ERR_INVALID_STATE;
     if (s_lock == NULL) s_lock = xSemaphoreCreateMutex();
     if (s_rx_lock == NULL) s_rx_lock = xSemaphoreCreateMutex();
+    if (s_tx_mesh_lock == NULL) s_tx_mesh_lock = xSemaphoreCreateMutex();
     ESP_LOGI(TAG, "device table: %u entr%s (cap %d)", (unsigned)siot_devtab_count(),
              siot_devtab_count() == 1 ? "y" : "ies", SIOT_DEVTAB_CAP);
 
@@ -702,10 +754,10 @@ esp_err_t siot_coordinator_start(void)
         const esp_err_t err = siot_safr_register(t, on_frame, NULL);
         if (err != ESP_OK) return err;
     }
-    for (uint8_t t = SAFR_MSG_OTA_PUSH_BEGIN; t <= SAFR_MSG_OTA_PUSH_END; t++) { /* §13.3, serial only */
-        const esp_err_t err = siot_safr_register(t, on_frame, NULL);
-        if (err != ESP_OK) return err;
-    }
+    /* Everything else — the firmware update messages (§13) and whatever a
+     * later revision adds: up from the mesh it is relayed to the tablet, down
+     * from the tablet it is the board's or it is dropped. */
+    siot_safr_register_default(on_frame, NULL);
     siot_safr_set_level(0);
     siot_safr_set_tx(tx_sink, NULL);
     siot_link_set_rx(on_link_rx, NULL);

@@ -116,6 +116,11 @@ static void                        *s_dl_hook_ctx;
 
 void siot_netcore_set_tx_hook(siot_netcore_tx_hook_t hook, void *ctx) { s_tx_hook = hook; s_tx_hook_ctx = ctx; }
 void siot_netcore_set_downlink_hook(siot_netcore_downlink_hook_t hook, void *ctx) { s_dl_hook = hook; s_dl_hook_ctx = ctx; }
+
+static siot_netcore_cmd_hook_t s_cmd_hook;
+static void                   *s_cmd_hook_ctx;
+void siot_netcore_set_command_hook(siot_netcore_cmd_hook_t hook, void *ctx) { s_cmd_hook = hook; s_cmd_hook_ctx = ctx; }
+bool siot_netcore_alarm_active(void) { return s_alarm_active; }
 bool siot_netcore_board_reachable(void) { return board_reachable(now_ms()); }
 uint32_t siot_netcore_epoch(void) { return s_epoch_base ? now_epoch(now_ms()) : 0; }
 
@@ -150,6 +155,13 @@ static esp_err_t send_uplink(uint8_t msg_type, uint16_t msg_id, uint8_t flags,
 {
     siot_safr_set_level(siot_link_mesh_level());
     return siot_safr_send(SAFR_BCAST_MAC, msg_type, msg_id, flags, payload, plen);
+}
+
+static void send_ack_detail(uint16_t acked_msg_id, uint8_t status, uint8_t detail, const uint8_t dst[6])
+{
+    uint8_t p[4] = {(uint8_t)(acked_msg_id >> 8), (uint8_t)acked_msg_id, status, detail};
+    siot_safr_set_level(siot_link_mesh_level());
+    siot_safr_send(dst, SAFR_MSG_ACK, siot_safr_next_msg_id(), 0, p, sizeof(p));
 }
 
 static void send_ack(uint16_t acked_msg_id, uint8_t status, const uint8_t dst[6])
@@ -301,8 +313,17 @@ static void on_ack(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_le
         s_comm_fault = false;
         emit_event(now_ms(), SAFR_EVT_OK, SAFR_EC_RESTORE, false, false);
     }
+    /* A frame is confirmed once, whoever confirms it: an OTA_RESULT is ACKed by
+     * the board and by the tablet (protocol §13.4), a lost ACK is sent again.
+     * One cyan per frame on the LED — and on the tablet's mirror of it. */
+    static uint16_t s_confirmed_id;
+    static int64_t  s_confirmed_ms = -1;
+    const int64_t t = now_ms();
+    const bool again = s_confirmed_ms >= 0 && s_confirmed_id == acked && t - s_confirmed_ms < 30000;
+    s_confirmed_id = acked;
+    s_confirmed_ms = t;
     xSemaphoreGive(s_lock);
-    siot_evbus_post(SIOT_EVT_ACK_RECEIVED, &ev, sizeof(ev));
+    if (!again) siot_evbus_post(SIOT_EVT_ACK_RECEIVED, &ev, sizeof(ev));
 }
 
 /* The board's HEARTBEAT (spec §7.3): only ever reaches a node downlink (a
@@ -376,6 +397,15 @@ static void on_command(const siot_safr_frame_t *f, const uint8_t *raw, size_t ra
     const uint8_t *args = &f->payload[2];
     if (f->payload_len < 2 + alen) return;
     uint8_t status = SAFR_ACK_OK;
+    /* A feature's command (§13.4 OTA_OFFER): never broadcast, and its hook
+     * sees the repeats too — it answers each with what it decided. */
+    if (cmd >= SAFR_CMD_OTA_BAUD && cmd <= SAFR_CMD_OTA_CONTROL) {
+        uint8_t detail = 0;
+        if (s_cmd_hook == NULL || siot_mac_is_bcast(f->dst_mac)) status = SAFR_ACK_ERROR;
+        else status = s_cmd_hook(cmd, args, alen, dup, &detail, s_cmd_hook_ctx);
+        if (f->flags & SAFR_F_ACK_REQ) send_ack_detail(f->msg_id, status, detail, f->src_mac);
+        return;
+    }
     if (!dup) { /* process once */
         switch (cmd) {
         case SAFR_CMD_LINK_CHECK: /* board-level supervision no-op (spec §9.3) */

@@ -2,10 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/app_database.dart';
 import '../domain/safr/safr_v2_payloads.dart';
+import 'ota_rollout_controller.dart';
+import 'ota_rollout_report.dart';
+import 'ota_rollout_state.dart';
 import 'root_election_provider.dart';
 import 'serial_link_provider.dart';
 
@@ -13,18 +17,53 @@ import 'serial_link_provider.dart';
 /// for 3× its heartbeat interval is missing — raise TROUBLE and mark it
 /// offline; any authenticated frame restores it. State is persisted in
 /// MeshDevices.supervisionState so troubles aren't re-raised on restart.
+///
+/// The one exception (protocol §13.4 `DEADLINE_S`): a unit that is being
+/// updated — its row of the rollout is offered / downloading / verifying /
+/// rebooting / in self-test — is UPDATING, not missing, for up to
+/// [otaUpdatingGrace] since its row entered one of those states: it restarts
+/// into the new image and is silent while it does. No "dispositivo ausente"
+/// trouble is raised for it in that time; after it the rule above applies
+/// again.
 const _offlinePowered = Duration(seconds: 45); // root/relay: HB every 15 s
 const _offlineLeaf = Duration(seconds: 180); // leaf: HB every 60 s
 
 class DeviceSupervision {
-  const DeviceSupervision({required this.device, required this.online});
+  const DeviceSupervision({
+    required this.device,
+    required this.online,
+    this.heard = true,
+    this.updating = false,
+  });
 
   final MeshDevice device;
+
+  /// Supervised as present: heard in time, or being updated.
   final bool online;
+
+  /// Heard in time and not reported missing by the board — the rule with
+  /// no exception. False with [online] true: silent because it is being
+  /// updated.
+  final bool heard;
+
+  /// Its row of the rollout is in an active state, within the grace.
+  final bool updating;
 }
 
+/// Since when the unit with a MAC is being updated (its row of the rollout
+/// entered offered … self-test); null = it is not.
+typedef UpdatingSince = DateTime? Function(String mac);
+
 class SupervisionNotifier extends StateNotifier<List<DeviceSupervision>> {
-  SupervisionNotifier(this._db) : super(const []) {
+  SupervisionNotifier(
+    this._db, {
+    UpdatingSince? updatingSince,
+    Duration updatingGrace = otaUpdatingGrace,
+    DateTime Function()? clock,
+  })  : _updatingSince = updatingSince,
+        _updatingGrace = updatingGrace,
+        _clock = clock ?? DateTime.now,
+        super(const []) {
     _watch = _db.select(_db.meshDevices).watch().listen((rows) {
       _devices = rows;
       _evaluate();
@@ -33,6 +72,9 @@ class SupervisionNotifier extends StateNotifier<List<DeviceSupervision>> {
   }
 
   final AppDatabase _db;
+  final UpdatingSince? _updatingSince;
+  final Duration _updatingGrace;
+  final DateTime Function() _clock;
   List<MeshDevice> _devices = const [];
   StreamSubscription<List<MeshDevice>>? _watch;
   Timer? _timer;
@@ -44,11 +86,30 @@ class SupervisionNotifier extends StateNotifier<List<DeviceSupervision>> {
     return isLeaf ? _offlineLeaf : _offlinePowered;
   }
 
+  /// Runs the rule now, on the registry as it is now (the timer does it
+  /// every 5 s, on what the registry last said).
+  @visibleForTesting
+  Future<void> evaluate() async {
+    while (_evaluating) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    _devices = await _db.select(_db.meshDevices).get();
+    await _evaluate();
+  }
+
+  /// Being updated at [now]: in an active state of the rollout, for less
+  /// than the grace since it entered them.
+  bool _updating(String mac, DateTime now) {
+    final since = _updatingSince?.call(mac);
+    if (since == null) return false;
+    return now.difference(since.toUtc()) < _updatingGrace;
+  }
+
   Future<void> _evaluate() async {
     if (_evaluating || !mounted) return;
     _evaluating = true;
     try {
-      final now = DateTime.now().toUtc();
+      final now = _clock().toUtc();
       final result = <DeviceSupervision>[];
 
       for (final d in _devices) {
@@ -61,8 +122,16 @@ class SupervisionNotifier extends StateNotifier<List<DeviceSupervision>> {
         final boardSaysMissing = d.boardState == SafrDeviceState.missing.wire &&
             d.tableSyncedAt != null &&
             d.tableSyncedAt!.isAfter(d.lastSeenAt);
-        final online = heard && !boardSaysMissing;
-        result.add(DeviceSupervision(device: d, online: online));
+        final present = heard && !boardSaysMissing;
+        // The exception: a unit that is being updated is not missing.
+        final updating = _updating(d.mac, now);
+        final online = present || updating;
+        result.add(DeviceSupervision(
+          device: d,
+          online: online,
+          heard: present,
+          updating: updating,
+        ));
 
         final wasOnline = d.supervisionState == 0;
         if (wasOnline && !online) {
@@ -114,7 +183,13 @@ class SupervisionNotifier extends StateNotifier<List<DeviceSupervision>> {
 
 final supervisionProvider =
     StateNotifierProvider<SupervisionNotifier, List<DeviceSupervision>>((ref) {
-  return SupervisionNotifier(ref.watch(appDatabaseProvider));
+  return SupervisionNotifier(
+    ref.watch(appDatabaseProvider),
+    // Read when the rule runs, not watched: the rollout moves often and
+    // the rule runs every 5 s and on every change of the registry.
+    updatingSince: (mac) => ref.read(otaUpdatingUnitsProvider).since(mac),
+    updatingGrace: ref.watch(otaRolloutTimingsProvider).updatingGrace,
+  );
 });
 
 /// State of the mesh network as a whole, for the REDE INTERNA tile and the

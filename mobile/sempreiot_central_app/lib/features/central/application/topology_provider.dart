@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/safr/safr_product.dart';
 import '../domain/safr/safr_v2_payloads.dart';
+import 'ota_rollout_controller.dart';
+import 'ota_rollout_report.dart';
 import 'serial_link_provider.dart';
 import 'supervision_provider.dart';
 
@@ -28,6 +30,8 @@ class TopologyNode {
     this.productCode,
     this.hwRev,
     this.fwVersion,
+    this.updating = false,
+    this.heard = true,
   });
 
   final String mac;
@@ -38,6 +42,18 @@ class TopologyNode {
   final int? batteryPct;
   final bool online;
   final DateTime lastSeenAt;
+
+  /// It is being updated (protocol §13.4): its row of the rollout is
+  /// offered / downloading / verifying / rebooting / in self-test, for less
+  /// than 300 s. It then reads "Atualizando", never "Sem comunicação", and
+  /// stays [online] while it restarts.
+  final bool updating;
+
+  /// Heard within its supervision time — the rule without the exception
+  /// above. False with [online] true: silent because it is restarting into
+  /// its new firmware. Nothing of what it does then crosses the wire, so
+  /// its LED on screen is dark.
+  final bool heard;
 
   /// Alarm held on the panel (SAFR v3 §7.1.4) until the operator RESET.
   final bool alarmLatched;
@@ -151,6 +167,11 @@ List<({String mac, int rssi})> _decodeCandidates(String? json) {
 final topologyProvider = Provider<List<TopologyNode>>((ref) {
   final supervision = ref.watch(supervisionProvider);
   final linkUp = ref.watch(serialLinkProvider) == SerialLinkStatus.connected;
+  // The rollout moves faster than the supervision rule runs: who is being
+  // updated is read from it, the grace from the clock.
+  final updatingUnits = ref.watch(otaUpdatingUnitsProvider);
+  final grace = ref.watch(otaRolloutTimingsProvider).updatingGrace;
+  final now = DateTime.now();
 
   final parents =
       supervision.map((s) => s.device.parentMac).whereType<String>().toSet();
@@ -179,6 +200,9 @@ final topologyProvider = Provider<List<TopologyNode>>((ref) {
         productCode: s.device.productCode,
         hwRev: s.device.hwRev,
         fwVersion: s.device.fwVersion,
+        updating:
+            linkUp && updatingUnits.updatingAt(s.device.mac, now, grace),
+        heard: linkUp && s.heard,
       ),
   ]..sort((a, b) {
       final byLayer = a.layer.compareTo(b.layer);

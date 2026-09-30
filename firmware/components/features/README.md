@@ -22,4 +22,9 @@ This directory is the freeze boundary. Phase 1 (`core`, `platform`, `net`, `ui`)
 
 Built: `siot_leafmgr` (2026-09-28, the node's parent role for battery leafs — protocol §12.11; hooks:
 `siot_survey_set_raw_sink`, `siot_netcore_set_tx_hook`, `siot_netcore_set_downlink_hook`).
-Planned: `siot_sensing`, `siot_alarm_engine`, `siot_ota_client`, `siot_ota_server`, `siot_ota_scheduler`, `siot_siren`.
+`siot_ota_board` (2026-09-29, protocol §13: the push from the tablet, the board's self-update, `fw_store`,
+the file server and the rollout; hooks: `siot_coordinator_set_ota_sink`, `_set_ota_uplink_sink`,
+`siot_link_serial_expect_raw`) and `siot_ota_node` (the unit's side of §13.4; hook:
+`siot_netcore_set_command_hook`). Both behind `CONFIG_SIOT_FEATURE_OTA`, **default y** — the one feature
+that is on by default, because every product image must be updatable.
+Planned: `siot_sensing`, `siot_alarm_engine`, `siot_ota_leaf` (§13.5), `siot_siren`.

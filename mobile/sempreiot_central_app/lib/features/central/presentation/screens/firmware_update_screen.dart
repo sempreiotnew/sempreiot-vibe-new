@@ -11,25 +11,36 @@ import '../../application/ota_board_events_provider.dart';
 import '../../application/ota_push_controller.dart';
 import '../../application/ota_push_report.dart';
 import '../../application/ota_push_state.dart';
+import '../../application/ota_rollout_controller.dart';
+import '../../application/ota_rollout_report.dart';
+import '../../application/ota_rollout_state.dart';
+import '../../application/ota_rollout_words.dart';
+import '../../application/root_election_provider.dart';
 import '../../application/serial_link_provider.dart';
 import '../../application/topology_provider.dart';
 import '../../domain/ota/firmware_image.dart';
 import '../../domain/safr/safr_product.dart';
+import '../../domain/safr/safr_v2_payloads.dart';
 import '../widgets/device_detail_widgets.dart';
 import '../widgets/firmware_update_widgets.dart';
+import '../widgets/ota_rollout_widgets.dart';
 
 /// "Atualização de firmware": sends a firmware file from the tablet to the
-/// board over the USB cable (protocol §13.3) and says plainly what came of
-/// it. Top to bottom:
+/// board over the USB cable (protocol §13.3), has the board send the image
+/// it holds to the units (§13.6), and says plainly what came of both. Top to
+/// bottom:
 ///
 ///  1. the report card — what was sent, who received it, what changed —
 ///     while a push runs and after it ended;
 ///  2. "Versões em execução": what every unit runs NOW, and what waits for
 ///     it on the board;
-///  3. the link and what this session saw stored on the board;
+///  3. the link and what the board holds;
 ///  4. the file and the actions;
-///  5. "Detalhes": the steps, the numbers and the log, which can be copied.
-///     Open while a push runs and after one that did not end well.
+///  5. "Dispositivos": one card per family the board holds an image of —
+///     the form that sends it, and the rollout that runs or ran;
+///  6. "Detalhes": the steps, the numbers and the log — of the push and of
+///     the rollout — which can be copied. Open while something runs and
+///     after something that did not end well.
 ///
 /// One column in both orientations, as wide as reads well; the whole page
 /// scrolls.
@@ -60,7 +71,7 @@ class _FirmwareUpdateScreenState extends ConsumerState<FirmwareUpdateScreen> {
   bool? _detailsChoice;
   DateTime? _detailsFor;
 
-  bool _detailsOpen(OtaPushState state) {
+  bool _detailsOpen(OtaPushState state, OtaRolloutState rollout) {
     if (_detailsFor != state.startedAt) {
       _detailsFor = state.startedAt;
       _detailsChoice = null;
@@ -68,15 +79,25 @@ class _FirmwareUpdateScreenState extends ConsumerState<FirmwareUpdateScreen> {
     return _detailsChoice ??
         (state.running ||
             state.phase == OtaPushPhase.failed ||
-            state.phase == OtaPushPhase.rolledBack);
+            state.phase == OtaPushPhase.rolledBack ||
+            rollout.running != null);
   }
 
   @override
   void initState() {
     super.initState();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted || !ref.read(otaPushProvider).running) return;
+      if (!mounted) return;
+      if (!ref.read(otaPushProvider).running &&
+          ref.read(otaRolloutProvider).running == null) {
+        return;
+      }
       setState(() => _now = DateTime.now());
+    });
+    // What the board holds and where its rollout is: asked every time the
+    // screen opens (GET_ROLLOUT).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ref.read(otaRolloutProvider.notifier).refresh();
     });
   }
 
@@ -110,6 +131,134 @@ class _FirmwareUpdateScreenState extends ConsumerState<FirmwareUpdateScreen> {
     messenger.showSnackBar(
       SnackBar(content: Text(text), behavior: SnackBarBehavior.floating),
     );
+  }
+
+  // ── The rollout ──────────────────────────────────────────────────────────
+
+  Future<void> _startRollout(
+    OtaRolloutRequest request,
+    String version,
+    String? rootName,
+  ) async {
+    final controller = ref.read(otaRolloutProvider.notifier);
+    final messenger = ScaffoldMessenger.of(context);
+
+    final blocker = await controller.startBlocker(request.family);
+    if (!mounted) return;
+    if (blocker != null) {
+      _say(messenger, blocker);
+      return;
+    }
+    final go = await _confirmRollout(request, version, rootName);
+    if (go != true || !mounted) return;
+    final refused = await controller.start(
+      request.family,
+      request.filter,
+      expected: request.units.length,
+      filterText: request.filterText,
+    );
+    if (refused != null && mounted) _say(messenger, refused);
+  }
+
+  Future<void> _steer(
+      Future<String?> Function(OtaRolloutController c) action) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final refused = await action(ref.read(otaRolloutProvider.notifier));
+    if (refused != null && mounted) _say(messenger, refused);
+  }
+
+  Future<void> _abortRollout(OtaFamilyRollout rollout) async {
+    final waiting = rollout.count(SafrOtaUnitState.waiting);
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        scrollable: true,
+        icon: const Icon(Icons.warning_amber_rounded,
+            color: AppColors.warning, size: 32),
+        title: const Text('Cancelar a atualização?'),
+        content: Text(
+          '${rollout.current == null ? '' : 'O dispositivo que está sendo atualizado agora termina a sua atualização. '}'
+          '${waiting == 0 ? 'Nenhum dispositivo está aguardando.' : waiting == 1 ? 'O dispositivo que ainda aguarda não será atualizado.' : 'Os $waiting dispositivos que ainda aguardam não serão atualizados.'}'
+          '\n\nOs que já foram atualizados continuam com a versão '
+          '${rollout.target}.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Continuar atualizando'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Cancelar a atualização'),
+          ),
+        ],
+      ),
+    );
+    if (go != true || !mounted) return;
+    await _steer((c) => c.abort(rollout.family));
+  }
+
+  /// How many units, and that they restart one at a time: the operator says
+  /// yes to that.
+  Future<bool?> _confirmRollout(
+    OtaRolloutRequest request,
+    String version,
+    String? rootName,
+  ) {
+    final n = request.units.length;
+    final rootIn = rootName != null;
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        scrollable: true,
+        icon: const Icon(Icons.system_update_alt_rounded,
+            color: AppColors.secondary, size: 32),
+        title: Text(n == 1
+            ? 'Atualizar 1 dispositivo?'
+            : 'Atualizar $n dispositivos?'),
+        content: Text(
+          'A placa vai enviar o ${otaFirmwareWord(request.family)} $version '
+          '${n == 1 ? 'a 1 dispositivo' : 'a $n dispositivos'} '
+          '(${request.filterText}).\n\n'
+          '${n == 1 ? 'Ele reinicia' : 'Eles reiniciam um de cada vez,'} '
+          'com o novo firmware e '
+          '${n == 1 ? 'fica' : 'cada um fica'} sem responder enquanto '
+          'reinicia.'
+          '${rootIn ? ' $rootName é o root da malha e é atualizado por último: a rede se reorganiza enquanto ele reinicia.' : ''}'
+          '\n\nSe um alarme acontecer, a atualização pausa sozinha.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(n == 1
+                ? 'Atualizar 1 dispositivo'
+                : 'Atualizar $n dispositivos'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Why nothing can be sent to the units now; null = it can.
+  static String? _rolloutBlocked({
+    required bool linkUp,
+    required bool alarm,
+    required bool pushRunning,
+    required bool otherRunning,
+  }) {
+    if (!linkUp) return 'A placa não está respondendo. Verifique o cabo USB.';
+    if (alarm) {
+      return 'Há alarme ativo. Rearme a central antes de atualizar os '
+          'dispositivos.';
+    }
+    if (pushRunning) return 'Aguarde o envio do arquivo à placa terminar.';
+    if (otherRunning) return 'Já há uma atualização em andamento.';
+    return null;
   }
 
   /// A board image restarts the board: the operator says yes to the site
@@ -146,8 +295,13 @@ class _FirmwareUpdateScreenState extends ConsumerState<FirmwareUpdateScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(otaPushProvider);
+    final rollout = ref.watch(otaRolloutProvider);
+    final held = ref.watch(otaHeldOnBoardProvider);
+    final rootMac = ref.watch(rootElectionProvider.select((e) => e.rootMac));
     final board = ref.watch(boardDeviceProvider).valueOrNull;
-    final units = OtaUnitGroups.of(ref.watch(topologyProvider));
+    final nodes = ref.watch(topologyProvider);
+    final units = OtaUnitGroups.of(nodes);
+    final byMac = {for (final n in nodes) n.mac: n};
     final link = ref.watch(serialLinkProvider);
     final alarm = ref.watch(activeAlarmProvider);
     final controller = ref.read(otaPushProvider.notifier);
@@ -158,7 +312,13 @@ class _FirmwareUpdateScreenState extends ConsumerState<FirmwareUpdateScreen> {
     final canStart =
         file != null && !state.running && linkUp && !blockedByAlarm;
     final report = otaPushReport(state);
-    final detailsOpen = _detailsOpen(state);
+    final detailsOpen = _detailsOpen(state, rollout);
+    final log = otaMergedLog(state.log, rollout.log);
+    // The families the board holds an image of that goes to units.
+    final families = [
+      for (final f in const [SafrProductFamily.node, SafrProductFamily.leaf])
+        if (held[f]?.isNotEmpty == true) f
+    ];
 
     return Scaffold(
       backgroundColor: context.bgColor,
@@ -205,10 +365,7 @@ class _FirmwareUpdateScreenState extends ConsumerState<FirmwareUpdateScreen> {
                 ],
                 const InfoSectionHeader('VERSÕES EM EXECUÇÃO'),
                 const SizedBox(height: 10),
-                OtaRunningVersions(
-                  units: units,
-                  storedOnBoard: state.storedOnBoard,
-                ),
+                OtaRunningVersions(units: units, storedOnBoard: held),
                 const SizedBox(height: 24),
                 const InfoSectionHeader('LIGAÇÃO'),
                 const SizedBox(height: 10),
@@ -219,12 +376,12 @@ class _FirmwareUpdateScreenState extends ConsumerState<FirmwareUpdateScreen> {
                       value: _linkText(link, state.baud),
                       icon: Icons.usb_rounded,
                     ),
-                    for (final e in state.storedOnBoard.entries) ...[
+                    for (final e in held.entries) ...[
                       const InfoRowDivider(),
                       InfoReadRow(
                         label: 'Guardado na placa',
-                        value: '${otaFirmwareShortName(e.key)} ${e.value} · '
-                            'ainda não enviado aos dispositivos',
+                        value: otaHeldLine(
+                            e.key, e.value, rollout.families[e.key]),
                         icon: Icons.inventory_2_outlined,
                       ),
                     ],
@@ -238,10 +395,16 @@ class _FirmwareUpdateScreenState extends ConsumerState<FirmwareUpdateScreen> {
                     file.family != SafrProductFamily.board &&
                     !state.finished) ...[
                   const SizedBox(height: 10),
-                  const _Hint(
-                    'Este arquivo fica guardado na placa. Nenhum dispositivo '
-                    'é atualizado neste envio: mandar da placa para os '
-                    'dispositivos ainda não está disponível.',
+                  _Hint(
+                    file.family == SafrProductFamily.leaf
+                        ? 'Este arquivo fica guardado na placa. Nenhum '
+                            'dispositivo é atualizado neste envio: os '
+                            'detectores a bateria serão atualizados em uma '
+                            'etapa futura.'
+                        : 'Este arquivo fica guardado na placa. Nenhum '
+                            'dispositivo é atualizado neste envio: depois de '
+                            'guardado, use "Enviar aos dispositivos", mais '
+                            'abaixo.',
                     icon: Icons.info_outline_rounded,
                   ),
                 ],
@@ -286,10 +449,48 @@ class _FirmwareUpdateScreenState extends ConsumerState<FirmwareUpdateScreen> {
                     ),
                   ),
                 ],
+                if (families.isNotEmpty) ...[
+                  const SizedBox(height: 24),
+                  const InfoSectionHeader('DISPOSITIVOS'),
+                  for (final family in families) ...[
+                    const SizedBox(height: 10),
+                    OtaRolloutCard(
+                      family: family,
+                      version: held[family]!,
+                      rollout: rollout.families[family],
+                      fromBoard: rollout.boardAnswered == true,
+                      candidates: OtaRolloutCandidates.of(nodes, family),
+                      nodes: byMac,
+                      rootMac: rootMac,
+                      now: _now,
+                      busy: rollout.command != null,
+                      blocked: _rolloutBlocked(
+                        linkUp: linkUp,
+                        alarm: alarm,
+                        pushRunning: state.running,
+                        otherRunning: rollout.running != null &&
+                            rollout.running!.family != family,
+                      ),
+                      onStart: (request) => _startRollout(
+                        request,
+                        held[family]!,
+                        request.units.any((n) => n.mac == rootMac)
+                            ? _nameOf(byMac[rootMac])
+                            : null,
+                      ),
+                      onPause: () => _steer((c) => c.pause(family)),
+                      onResume: () => _steer((c) => c.resume(family)),
+                      onAbort: () {
+                        final f = rollout.families[family];
+                        if (f != null) _abortRollout(f);
+                      },
+                    ),
+                  ],
+                ],
                 const SizedBox(height: 24),
                 OtaDetailsHeader(
                   open: detailsOpen,
-                  summary: _detailsSummary(state),
+                  summary: _detailsSummary(state, log.length),
                   onToggle: () =>
                       setState(() => _detailsChoice = !detailsOpen),
                 ),
@@ -309,7 +510,7 @@ class _FirmwareUpdateScreenState extends ConsumerState<FirmwareUpdateScreen> {
                   const SizedBox(height: 20),
                   const InfoSectionHeader('REGISTRO'),
                   const SizedBox(height: 10),
-                  OtaLogCard(state: state),
+                  OtaLogCard(state: state, log: log),
                 ],
               ],
             ),
@@ -319,9 +520,12 @@ class _FirmwareUpdateScreenState extends ConsumerState<FirmwareUpdateScreen> {
     );
   }
 
-  static String _detailsSummary(OtaPushState state) {
+  static String? _nameOf(TopologyNode? n) => n == null
+      ? null
+      : (n.name?.isNotEmpty == true ? n.name! : n.mac);
+
+  static String _detailsSummary(OtaPushState state, int lines) {
     final steps = state.steps.length;
-    final lines = state.log.length;
     if (steps == 0 && lines == 0) return 'Passos e registro do envio';
     return '$steps ${steps == 1 ? 'passo' : 'passos'} · '
         '$lines ${lines == 1 ? 'linha' : 'linhas'} de registro';

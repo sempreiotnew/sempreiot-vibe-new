@@ -110,7 +110,10 @@ class RootElectionNotifier extends StateNotifier<RootElectionState> {
     _linkUp = linkUp;
     _candidates = {
       for (final n in nodes)
-        if (n.online && n.layer == 1) n.mac
+        // Heard, not only supervised as present: a unit that is silent
+        // because it restarts into a new firmware (protocol §13.4) bridges
+        // nothing and is no contender.
+        if (n.online && n.heard && n.layer == 1) n.mac
     };
     _evaluate();
   }

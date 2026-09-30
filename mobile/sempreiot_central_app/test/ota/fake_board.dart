@@ -9,6 +9,8 @@ import 'package:sempreiot_central_app/features/central/domain/safr/safr_identity
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_frame.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
 
+import 'fake_rollout.dart';
+
 /// The serial port with a board behind it, byte for byte: what the tablet
 /// writes is reframed and handled the way the board firmware does
 /// (firmware/components/features/siot_ota_board, net/siot_link link_core.c),
@@ -25,13 +27,20 @@ class FakeBoard extends SerialNotifier {
     this.verifyTime = const Duration(milliseconds: 20),
     this.restartTime = const Duration(milliseconds: 60),
     this.selfTestTime = const Duration(milliseconds: 200),
+    this.rollout,
     Duration baudSilence = SerialNotifier.defaultBaudSilence,
   }) : super.detached(
           baudSilence: baudSilence,
           baudSettle: const Duration(milliseconds: 2),
         ) {
     _newEncoder();
+    rollout?.attach(this);
   }
+
+  /// The board's rollout and the mesh behind it (protocol §13.4, §13.6);
+  /// null = a board of before the rollout: GET_ROLLOUT and OTA_CONTROL are
+  /// not answered.
+  final FakeRollout? rollout;
 
   static const mac = '7C:4F:AD:AE:85:90';
   static const unitMac = '5A:46:52:00:00:02';
@@ -317,6 +326,14 @@ class FakeBoard extends SerialNotifier {
       _announce();
       return;
     }
+    if (c.cmdRaw == SafrCommand.getRollout.wire) {
+      rollout?.onGet(c.args);
+      return;
+    }
+    if (c.cmdRaw == SafrCommand.otaControl.wire) {
+      rollout?.onControl(f.msgId, c.args);
+      return;
+    }
     if (c.cmdRaw == SafrCommand.getInstallation.wire) {
       // The board answers INSTALLATION and no ACK, and the tablet waits 6 s
       // for one before it goes on with its link-up sequence. Here it gets
@@ -464,6 +481,7 @@ class FakeBoard extends SerialNotifier {
     images[img.family] = data;
     imageVersions[img.family] = img.version;
     _result(SafrOtaPushPhase.ok, 0, img.family, 0, img.version);
+    if (img.family != 0x01) rollout?.onStored(img.family, img.version);
     if (img.family == 0x01) _later(restartTime, () => _restartInto(img));
   }
 
@@ -586,6 +604,19 @@ class FakeBoard extends SerialNotifier {
       debugReceive(frame);
     });
   }
+
+  // ── For the rollout (fake_rollout.dart) ──────────────────────────────────
+
+  /// A frame of the board itself, to the tablet.
+  void sendToTablet(SafrMsgType type, Uint8List payload) =>
+      _send(type, payload);
+
+  /// The board's ACK of a frame of the tablet.
+  void ackTablet(int msgId, {SafrOtaReason? reason}) =>
+      _ack(msgId, reason: reason);
+
+  /// A frame of a unit, relayed unchanged to the tablet.
+  void relayUp(Uint8List frame) => _deliver(frame, latency);
 
   void _later(Duration after, void Function() what) {
     _timers.add(Timer(after, () {

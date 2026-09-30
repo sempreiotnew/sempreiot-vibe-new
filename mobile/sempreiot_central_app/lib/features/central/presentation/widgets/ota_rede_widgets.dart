@@ -5,20 +5,25 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../application/ota_push_report.dart';
 import '../../application/ota_push_state.dart';
+import '../../application/ota_rollout_report.dart';
+import '../../domain/safr/safr_v2_payloads.dart';
 import '../screens/firmware_update_screen.dart';
 import 'firmware_update_widgets.dart';
 
-// What the Rede screens (map and 3D) show of a firmware push. They draw
-// what `otaPushProvider` says; nothing here decides anything about the push.
+// What the Rede screens (map and 3D) show of a firmware push and of a
+// rollout. They draw what `otaPushProvider` and `otaRolloutProvider` say;
+// nothing here decides anything about either.
 //
 // None of this is a unit's LED. The LED mirror (device_led_provider.dart)
 // keeps its own colours and patterns; the ring, the caption and the banner
 // are drawings of the tablet, in the app's accent colour.
 
-/// The strip at the top of the Rede screens: while a push runs, what is
-/// going where and how far; after it, the outcome in one line until the
-/// operator closes it or starts another push. A tap opens "Atualização de
-/// firmware". Takes no room when there is nothing to say.
+/// The strip at the top of the Rede screens. While a push runs: what is
+/// going to the board and how far. While a rollout runs: what is going from
+/// the board to which unit ("Atualização: placa → Sirene hall (2 de 5)" ·
+/// "40 %"). After either, its outcome in one line until the operator closes
+/// it or another one starts. A tap opens "Atualização de firmware". Takes no
+/// room when there is nothing to say.
 class OtaRedeBanner extends ConsumerWidget {
   const OtaRedeBanner({super.key});
 
@@ -29,20 +34,111 @@ class OtaRedeBanner extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(otaPushViewProvider);
     final dismissed = ref.watch(otaBannerDismissedProvider);
-    final report = otaPushReport(state);
-    if (report == null) return const SizedBox.shrink();
-    if (!report.running && dismissed == _keyOf(state)) {
-      return const SizedBox.shrink();
+    final rollout = ref.watch(otaRolloutBannerProvider);
+    var report = otaPushReport(state);
+    if (report != null && !report.running && dismissed == _keyOf(state)) {
+      report = null; // its outcome was closed
     }
 
-    final color = otaToneColor(context, report.tone);
-    final sending = state.phase == OtaPushPhase.sending;
-    final tail = report.lineTail;
+    // What runs now comes first, the push before the rollout (the board
+    // refuses a push of the family that rolls out, and the tablet starts
+    // no rollout while it pushes). Of two outcomes, the one that came last.
+    final showPush = report != null &&
+        (report.running ||
+            rollout == null ||
+            (!rollout.running && _pushEndedLast(state, rollout)));
+    if (showPush) return _push(context, ref, state, report);
+    if (rollout != null) return _rollout(context, ref, rollout);
+    return const SizedBox.shrink();
+  }
 
+  static bool _pushEndedLast(OtaPushState state, OtaRolloutBanner rollout) {
+    final push = state.endedAt;
+    final ro = rollout.endedAt;
+    if (push == null) return false;
+    return ro == null || push.isAfter(ro);
+  }
+
+  Widget _push(
+    BuildContext context,
+    WidgetRef ref,
+    OtaPushState state,
+    OtaPushReport report,
+  ) {
+    return _Strip(
+      stripKey: const ValueKey('ota-rede-banner'),
+      icon: otaReportIcon(report.kind),
+      color: otaToneColor(context, report.tone),
+      line: report.line,
+      tail: report.lineTail,
+      label: report.fullLine,
+      running: report.running,
+      progress: state.phase == OtaPushPhase.sending ? state.progress : null,
+      onClose: () => ref.read(otaBannerDismissedProvider.notifier).state =
+          _keyOf(state),
+    );
+  }
+
+  Widget _rollout(BuildContext context, WidgetRef ref, OtaRolloutBanner b) {
+    return _Strip(
+      stripKey: const ValueKey('ota-rollout-banner'),
+      icon: switch (b.kind) {
+        OtaRolloutBannerKind.rolling => Icons.system_update_alt_rounded,
+        OtaRolloutBannerKind.paused => Icons.pause_circle_outline_rounded,
+        OtaRolloutBannerKind.done => Icons.verified_rounded,
+        OtaRolloutBannerKind.partial => Icons.warning_amber_rounded,
+      },
+      color: otaToneColor(context, b.tone),
+      line: b.line,
+      tail: b.tail,
+      label: b.fullLine,
+      running: b.running,
+      progress: b.progress,
+      onClose: () =>
+          ref.read(otaRolloutDismissedProvider.notifier).state = b.endedAt,
+    );
+  }
+}
+
+/// One line, how far it is, and either the way in or the way out.
+class _Strip extends StatelessWidget {
+  const _Strip({
+    required this.stripKey,
+    required this.icon,
+    required this.color,
+    required this.line,
+    required this.label,
+    required this.running,
+    required this.onClose,
+    this.tail,
+    this.progress,
+  });
+
+  /// Of the strip itself, without the room around it.
+  final Key stripKey;
+  final IconData icon;
+  final Color color;
+  final String line;
+
+  /// How far it is: on its own, never cut off.
+  final String? tail;
+
+  /// The whole sentence, for a screen reader.
+  final String label;
+  final bool running;
+
+  /// 0…1 under the line; null = no bar.
+  final double? progress;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final tail = this.tail;
+    final progress = this.progress;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
       child: Material(
-        key: const ValueKey('ota-rede-banner'),
+        key: stripKey,
         color: Color.alphaBlend(
             color.withValues(alpha: 0.10), context.surfaceColor),
         shape: RoundedRectangleBorder(
@@ -56,7 +152,7 @@ class OtaRedeBanner extends ConsumerWidget {
           ),
           child: Semantics(
             container: true,
-            label: report.fullLine,
+            label: label,
             hint: 'Abrir a atualização de firmware',
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -66,13 +162,13 @@ class OtaRedeBanner extends ConsumerWidget {
                   padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
                   child: Row(
                     children: [
-                      Icon(otaReportIcon(report.kind), size: 18, color: color),
+                      Icon(icon, size: 18, color: color),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 5),
                           child: Text(
-                            report.line,
+                            line,
                             // A phone is narrow: a third line rather
                             // than a sentence without its end.
                             maxLines: 3,
@@ -100,7 +196,7 @@ class OtaRedeBanner extends ConsumerWidget {
                           ),
                         ),
                       ],
-                      if (report.running)
+                      if (running)
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 6),
                           child: Icon(Icons.chevron_right_rounded,
@@ -117,16 +213,14 @@ class OtaRedeBanner extends ConsumerWidget {
                           ),
                           icon: Icon(Icons.close_rounded,
                               size: 18, color: context.textSecondary),
-                          onPressed: () => ref
-                              .read(otaBannerDismissedProvider.notifier)
-                              .state = _keyOf(state),
+                          onPressed: onClose,
                         ),
                     ],
                   ),
                 ),
-                if (sending)
+                if (progress != null)
                   LinearProgressIndicator(
-                    value: state.progress,
+                    value: progress,
                     minHeight: 2.5,
                     backgroundColor: context.borderColor.withValues(alpha: 0.5),
                     color: AppColors.secondary,
@@ -320,6 +414,160 @@ class FirmwareTag extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+// ── A unit of a rollout ──────────────────────────────────────────────────────
+
+/// The ring around a unit's avatar while it is being updated: how far its
+/// download is, or turning while it verifies, restarts or tests itself.
+/// Like the board's ring during a push, it is a drawing of the tablet, in
+/// the app's accent colour — never the unit's LED.
+class OtaUnitRing extends StatelessWidget {
+  const OtaUnitRing({
+    super.key,
+    required this.activity,
+    required this.diameter,
+  });
+
+  final OtaUnitActivity activity;
+  final double diameter;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = OtaProgressRing.sizeFor(diameter);
+    return IgnorePointer(
+      child: SizedBox(
+        key: const ValueKey('ota-unit-ring'),
+        width: size,
+        height: size,
+        child: Padding(
+          padding: const EdgeInsets.all(OtaProgressRing.stroke / 2),
+          child: CircularProgressIndicator(
+            value: activity.progress,
+            strokeWidth: OtaProgressRing.stroke,
+            strokeCap: StrokeCap.round,
+            color: AppColors.secondary,
+            backgroundColor: context.borderColor.withValues(alpha: 0.7),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Under the name of a unit of a rollout, in the place of [FirmwareTag] so
+/// the chip keeps its height: the phase while it is being updated
+/// ("baixando 40 %"), a small "aguardando" marker while it waits ("por
+/// último" on the mesh root), the new version once it runs it, a failure
+/// marker when it does not.
+class OtaUnitTag extends StatelessWidget {
+  const OtaUnitTag({super.key, required this.activity, this.version});
+
+  final OtaUnitActivity activity;
+
+  /// What the registry says the unit runs; the rollout's word wins when it
+  /// has one.
+  final String? version;
+
+  @override
+  Widget build(BuildContext context) {
+    final a = activity;
+    final runs = a.version.isNotEmpty ? a.version : (version ?? '');
+    final tag = runs.isEmpty ? null : firmwareTagText(runs);
+
+    if (a.updating) {
+      return Semantics(
+        label: 'Atualizando: ${a.caption}',
+        excludeSemantics: true,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            a.caption,
+            key: const ValueKey('ota-unit-caption'),
+            maxLines: 1,
+            style: const TextStyle(
+              color: AppColors.secondary,
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final (IconData icon, Color color, String word, String key) =
+        switch (a.state) {
+      SafrOtaUnitState.done => (
+          Icons.check_circle_rounded,
+          AppColors.success,
+          '',
+          'ota-unit-done',
+        ),
+      SafrOtaUnitState.failed => (
+          Icons.error_rounded,
+          AppColors.error,
+          'falhou',
+          'ota-unit-failed',
+        ),
+      SafrOtaUnitState.skipped => (
+          Icons.remove_circle_outline_rounded,
+          context.textSecondary,
+          'ignorado',
+          'ota-unit-skipped',
+        ),
+      _ => (
+          Icons.hourglass_empty_rounded,
+          context.textSecondary,
+          a.caption,
+          'ota-unit-waiting',
+        ),
+    };
+
+    return Semantics(
+      label: [
+        if (tag != null) 'Firmware $runs',
+        if (a.state == SafrOtaUnitState.done) 'atualizado' else word,
+      ].join(', '),
+      excludeSemantics: true,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (tag != null) ...[
+              Text(
+                tag,
+                maxLines: 1,
+                style: TextStyle(
+                  color: a.state == SafrOtaUnitState.done
+                      ? context.textPrimary
+                      : context.textSecondary,
+                  fontSize: 8,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+              const SizedBox(width: 3),
+            ],
+            Icon(icon, key: ValueKey(key), size: 9, color: color),
+            if (word.isNotEmpty) ...[
+              const SizedBox(width: 2),
+              Text(
+                word,
+                maxLines: 1,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 8,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

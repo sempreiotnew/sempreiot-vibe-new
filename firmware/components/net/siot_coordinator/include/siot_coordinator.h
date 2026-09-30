@@ -69,6 +69,22 @@ bool siot_coordinator_alarm_recent(void);
 /* The board's own NAME_ANNOUNCE (§7.11): what it is and the firmware it runs. */
 void siot_coordinator_announce_board(void);
 
+/* ---- rollout (protocol §13.4, §13.6) ---------------------------------------- */
+
+/* What came UP from the mesh and the rollout wants to see: OTA_STATUS,
+ * OTA_RESULT and every ACK (one of them answers the offer). The frame is
+ * relayed to the tablet whatever the sink does. Runs in the mesh rx task. */
+void siot_coordinator_set_ota_uplink_sink(siot_coordinator_ota_cb_t cb, void *ctx);
+
+/* A COMMAND the board originates for one unit, F_ACK_REQ; returns its MSG_ID. */
+uint16_t siot_coordinator_command_unit(const uint8_t mac[6], uint8_t cmd, const uint8_t *args, size_t alen);
+
+/* The ACK of a unit's frame, sent down the mesh (the board's other ACKs go to the tablet). */
+void siot_coordinator_ack_unit(const uint8_t mac[6], uint16_t acked_msg_id, uint8_t status, uint8_t detail);
+
+/* The unit that is the mesh root now; false when no root is known. */
+bool siot_coordinator_root(uint8_t mac[6]);
+
 #ifdef __cplusplus
 }
 #endif

@@ -10,10 +10,11 @@ import 'topology_provider.dart';
 // it, what changed. One place, so the update screen, the Rede banner and the
 // device menu say the same thing.
 //
-// What the push can do today (protocol §13.3): send an image to the BOARD.
-// A board image is installed by the board itself. A node or leaf image is
-// only STORED on the board: no device receives anything. Nothing here may
-// read as "the devices were updated".
+// What a push does (protocol §13.3): send an image to the BOARD. A board
+// image is installed by the board itself. A node or leaf image is only
+// STORED on the board: no device receives anything in a push. Nothing here
+// may read as "the devices were updated" — that is the rollout's to say
+// (§13.6, ota_rollout_report.dart).
 
 /// The push as every screen but "Atualização de firmware" reads it. A
 /// provider of its own so a widget test can hand a state over without a
@@ -65,9 +66,10 @@ SafrProductFamily unitFamily(TopologyNode node) {
   return node.isLeaf ? SafrProductFamily.leaf : SafrProductFamily.node;
 }
 
-/// The version of the image of [node]'s family that this session saw stored
-/// on the board and that the unit does not run; null when there is none.
-/// Stored is not delivered: the unit still runs what it ran.
+/// The version of the image of [node]'s family that the board holds
+/// ([storedOnBoard]: `otaHeldOnBoardProvider`) and that the unit does not
+/// run; null when there is none. Stored is not delivered: the unit still
+/// runs what it ran.
 String? pendingFirmwareFor(
   TopologyNode node,
   Map<SafrProductFamily, String> storedOnBoard,
@@ -388,9 +390,13 @@ OtaPushReport? otaPushReport(OtaPushState s) {
         sent: sent,
         receiver: 'Só a placa. Ela guardou o ${otaFirmwareName(family)} '
             '$version.',
-        changed: 'Nenhum dispositivo foi atualizado. Os dispositivos '
-            'continuam com o firmware que já tinham, porque o envio da '
-            'placa para os dispositivos ainda não está disponível.',
+        changed: family == SafrProductFamily.leaf
+            ? 'Nenhum dispositivo foi atualizado. Os detectores a bateria '
+                'continuam com o firmware que já tinham: eles serão '
+                'atualizados em uma etapa futura.'
+            : 'Nenhum dispositivo foi atualizado. Os dispositivos '
+                'continuam com o firmware que já tinham até você usar '
+                '"Enviar aos dispositivos" na tela Atualização de firmware.',
         line: 'Guardado na placa: $short · nenhum dispositivo foi '
             'atualizado',
       );

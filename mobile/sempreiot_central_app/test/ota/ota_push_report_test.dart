@@ -145,7 +145,15 @@ void main() {
         expect(r.title, 'Imagem guardada na placa');
         expect(r.receiver, startsWith('Só a placa.'));
         expect(r.changed, startsWith('Nenhum dispositivo foi atualizado.'));
-        expect(r.changed, contains('ainda não está disponível'));
+        expect(r.changed, contains('continuam com o firmware que já tinham'));
+        // What comes next: the rollout for the mains units, a later step
+        // for the battery units.
+        expect(
+          r.changed,
+          project == 'sempreiot-node'
+              ? contains('"Enviar aos dispositivos"')
+              : contains('etapa futura'),
+        );
         expect(r.line, contains('nenhum dispositivo foi atualizado'));
         expect(r.lineTail, isNull, reason: 'it ended: one sentence');
         expect(r.versionChange, isNull);

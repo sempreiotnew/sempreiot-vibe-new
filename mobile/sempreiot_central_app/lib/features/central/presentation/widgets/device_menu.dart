@@ -8,6 +8,7 @@ import '../../../../core/utils/relative_time.dart';
 import '../../application/device_led_provider.dart';
 import '../../application/device_sound_provider.dart';
 import '../../application/ota_push_report.dart';
+import '../../application/ota_rollout_report.dart';
 import '../../application/safr_downlink_provider.dart';
 import '../../application/topology_provider.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
@@ -59,9 +60,9 @@ Future<void> showDeviceMenu({
         node: node,
         all: ref.read(topologyProvider),
         // An image of this unit's family stored on the board and not
-        // delivered (this session's knowledge; protocol §13.3).
-        pendingFirmware: pendingFirmwareFor(
-            node, ref.read(otaPushViewProvider).storedOnBoard),
+        // delivered to it (what the board says it holds; protocol §13.6).
+        pendingFirmware:
+            pendingFirmwareFor(node, ref.read(otaHeldOnBoardProvider)),
       ),
       const PopupMenuDivider(height: 1),
       _item(context, _DeviceAction.settings, 'Dispositivo', Icons.tune_rounded,
@@ -294,9 +295,11 @@ class _MenuHeader extends StatelessWidget {
         ? AppColors.error
         : node.alarmLatched
             ? AppColors.error
-            : node.sleeping
-                ? context.textSecondary
-                : AppColors.success;
+            : node.updating
+                ? AppColors.secondary
+                : node.sleeping
+                    ? context.textSecondary
+                    : AppColors.success;
     final parent = _parentLabel();
 
     return Padding(

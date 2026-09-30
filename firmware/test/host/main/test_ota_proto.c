@@ -195,9 +195,21 @@ TEST_CASE("ota: OTA_OFFER args, OTA_STATUS, OTA_RESULT", "[ota][mesh]")
     TEST_ASSERT_FALSE(rb.ok);
     TEST_ASSERT_EQUAL(62, rb.awake_s);
     TEST_ASSERT_EQUAL_STRING("0.1.0", rb.version);
-    TEST_ASSERT_FALSE(siot_ota_result_decode(p, m + 1, &rb));
+    TEST_ASSERT_EQUAL(0, rb.detail);
+    TEST_ASSERT_FALSE(siot_ota_result_decode(p, m + 2, &rb));
     p[0] = 2;
     TEST_ASSERT_FALSE(siot_ota_result_decode(p, m, &rb));
+
+    /* v3.5: an optional DETAIL byte after VERSION — the reset reason with NOT_VALIDATED */
+    siot_ota_result_t rd = {.ok = false, .reason = SIOT_OTA_R_NOT_VALIDATED, .awake_s = 0, .detail = 4};
+    strcpy(rd.version, "0.1.0");
+    const size_t md = siot_ota_result_encode(p, &rd);
+    TEST_ASSERT_EQUAL(sizeof(want) + 1, md);
+    TEST_ASSERT_EQUAL_HEX8(4, p[md - 1]);
+    TEST_ASSERT_TRUE(siot_ota_result_decode(p, md, &rb));
+    TEST_ASSERT_EQUAL(SIOT_OTA_R_NOT_VALIDATED, rb.reason);
+    TEST_ASSERT_EQUAL(4, rb.detail);
+    TEST_ASSERT_EQUAL_STRING("0.1.0", rb.version);
 }
 
 TEST_CASE("ota: OTA_CONTROL filters", "[ota][control]")

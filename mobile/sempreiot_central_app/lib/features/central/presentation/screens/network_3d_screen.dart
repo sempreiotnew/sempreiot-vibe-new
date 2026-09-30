@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../application/ota_push_report.dart';
+import '../../application/ota_rollout_report.dart';
 import '../../application/root_election_provider.dart';
 import '../../application/safr_traffic_provider.dart';
 import '../../application/topology_provider.dart';
@@ -90,6 +91,14 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
   /// One crossing of the tablet–board link by a packet of a push.
   static const _otaHop = Duration(milliseconds: 900);
 
+  /// A rollout: what is drawn on every unit of it, the unit that downloads
+  /// now, and the packets that travel to it.
+  OtaRolloutOverlay _rollout = OtaRolloutOverlay.none;
+  ProviderSubscription<String?>? _rolloutSub;
+  Timer? _rolloutTimer;
+  String? _downloading;
+  static const _rolloutPacketEvery = Duration(milliseconds: 1500);
+
   Size _size = Size.zero;
   bool _fitted = false;
   _Flight? _flight;
@@ -115,6 +124,11 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
       otaPushViewProvider.select(otaChunksOnTheWay),
       (_, chunks) => _onOtaChunks(chunks),
     );
+    _rolloutSub = ref.listenManual<String?>(
+      otaRolloutOverlayProvider.select((o) => o.downloading),
+      (_, mac) => _onDownloading(mac),
+      fireImmediately: true,
+    );
     DetectorSprites.load().then((s) {
       if (mounted) setState(() => _sprites = s);
     });
@@ -123,6 +137,8 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
   @override
   void dispose() {
     _tourTimer?.cancel();
+    _rolloutTimer?.cancel();
+    _rolloutSub?.close();
     _trafficSub?.cancel();
     _otaSub?.close();
     _ticker.dispose();
@@ -221,6 +237,43 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
         duration: _otaHop,
         lane: -4,
       ));
+    while (_packets.length > 40) {
+      _packets.removeAt(0);
+    }
+  }
+
+  /// A rollout: a unit started or stopped downloading. While it downloads,
+  /// packets leave the board (the CENTRAL) and travel the tree to it — as
+  /// on the Rede map.
+  void _onDownloading(String? mac) {
+    if (mac == _downloading) return;
+    _downloading = mac;
+    _rolloutTimer?.cancel();
+    _rolloutTimer = null;
+    if (mac == null) {
+      _packets.removeWhere((p) => p.origin == rolloutPacketOrigin);
+      return;
+    }
+    _sendRolloutPacket();
+    _rolloutTimer =
+        Timer.periodic(_rolloutPacketEvery, (_) => _sendRolloutPacket());
+  }
+
+  void _sendRolloutPacket() {
+    final mac = _downloading;
+    if (mac == null || !mounted) return;
+    final path = otaDownloadPath(_nodes.values, mac, graphCentralKey);
+    if (path == null) return;
+    _packets.add(Packet3d(
+      origin: rolloutPacketOrigin,
+      uplink: false,
+      path: path,
+      color: packetColor(0, false),
+      severity: 0,
+      startedAt: DateTime.now(),
+      duration: Duration(milliseconds: packetHopMs.node * (path.length - 1)),
+      lane: -4,
+    ));
     while (_packets.length > 40) {
       _packets.removeAt(0);
     }
@@ -516,11 +569,11 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
     _sync(ref.watch(topologyProvider));
     final election = ref.watch(rootElectionProvider);
     // A firmware push (rebuilt once per percent, not per chunk).
-    final (activity, stored) =
-        ref.watch(otaPushViewProvider.select(otaMapOverlay));
+    final activity = ref.watch(otaPushViewProvider.select(otaBoardActivity));
     final appeared = (activity == null) != (_activity == null);
     _activity = activity;
-    _stored = stored;
+    _stored = ref.watch(otaHeldOnBoardProvider);
+    _rollout = ref.watch(otaRolloutOverlayProvider);
     if (activity == null) {
       _packets.removeWhere((p) => p.origin == otaPacketOrigin);
     }
@@ -736,6 +789,7 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
                 isRoot: node.online && node.mac == election.rootMac,
                 isCandidate: candidates.contains(node.mac),
                 pending: pending,
+                activity: _rollout[node.mac],
               );
     final w = isCentral ? Central3dChip.width : Device3dChip.width;
     final top = isCentral ? central3dAnchorY : device3dAnchorY;

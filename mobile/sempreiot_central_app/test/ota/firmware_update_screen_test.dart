@@ -9,6 +9,7 @@ import 'package:sempreiot_central_app/features/central/application/alarm_latch_p
 import 'package:sempreiot_central_app/features/central/application/ota_board_events_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_controller.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_state.dart';
+import 'package:sempreiot_central_app/features/central/application/ota_rollout_controller.dart';
 import 'package:sempreiot_central_app/features/central/application/serial_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/topology_provider.dart';
 import 'package:sempreiot_central_app/core/theme/app_colors.dart';
@@ -46,6 +47,14 @@ class _Controller extends OtaPushController {
 
   @override
   void cancel() => cancels++;
+}
+
+/// The rollout as the screen sees it: nothing of it here, and no board asked.
+class _Rollout extends OtaRolloutController {
+  _Rollout(super.ref);
+
+  @override
+  Future<void> refresh() async {}
 }
 
 class _Port extends SerialNotifier {
@@ -181,6 +190,7 @@ void main() {
           topologyProvider.overrideWithValue([_boardUnit(boardRuns), ...units]),
           otaPushProvider
               .overrideWith((ref) => controller = _Controller(ref, state)),
+          otaRolloutProvider.overrideWith((ref) => _Rollout(ref)),
         ],
         child: const MaterialApp(home: FirmwareUpdateScreen()),
       ),
@@ -628,8 +638,9 @@ void main() {
         await reveal(
             tester,
             find.text('Nenhum dispositivo foi atualizado. Os dispositivos '
-                'continuam com o firmware que já tinham, porque o envio da '
-                'placa para os dispositivos ainda não está disponível.'));
+                'continuam com o firmware que já tinham até você usar '
+                '"Enviar aos dispositivos" na tela Atualização de '
+                'firmware.'));
         expect(find.text('Placa atualizada'), findsNothing);
         expect(find.textContaining('→'), findsNothing);
         // Not the look of a success.

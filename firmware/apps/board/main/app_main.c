@@ -106,7 +106,9 @@ void app_main(void)
     ESP_ERROR_CHECK(siot_link_serial_init());
     ESP_ERROR_CHECK(siot_link_mesh_board_init(code));
     ESP_ERROR_CHECK(siot_coordinator_start());
-    if (siot_ota_board_init() != ESP_OK) ESP_LOGE(TAG, "firmware update unavailable"); /* protocol §13.3 */
+#if CONFIG_SIOT_FEATURE_OTA
+    if (siot_ota_board_init() != ESP_OK) ESP_LOGE(TAG, "firmware update unavailable"); /* protocol §13 */
+#endif
     if (siot_survey_init(0) == ESP_OK) siot_survey_set_online(true); /* answers survey probes (lifecycle §6) */
     ESP_LOGI(TAG, "normal mode: system_id=0x%04X ssid=%s name=%s",
              code->system_id, code->net_ssid, code->name);

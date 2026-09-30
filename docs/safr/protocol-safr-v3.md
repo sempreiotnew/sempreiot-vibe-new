@@ -1213,10 +1213,11 @@ alarm keeps the radio on.
 The messages that carry a firmware image from the tablet to the board and
 from the board to every unit. Design and reasons: `docs/ota/ota-and-production-blueprint-v1.md`
 §3–§4; plan and bench checklist: `docs/phases-development/phase3-ota-brief.md`.
-**Status: §13.2, §13.3 and §13.7 implemented on the board
-(`siot_ota_board`, `link_serial.c`) and on the tablet, 2026-09-29 — bench
-pending; §13.4–§13.6 specified, codecs written and host-tested
-(`siot_ota_proto`), no scheduler or client yet** (brief step 2). All additive, `VER` unchanged: a unit that does not know a
+**Status, 2026-09-29: §13.2, §13.3 and §13.7 implemented and seen working
+on the bench (a node image stored, the board updated itself); §13.4 and §13.6
+implemented — board: `siot_ota_board` (`ota_rollout.c`, `ota_server.c`), node:
+`siot_ota_node`, tablet — bench pending; §13.5 (battery units) reserved, not
+written.** All additive, `VER` unchanged: a unit that does not know a
 message answers nothing (`NO_HANDLER`) and a board treats that as "cannot be
 updated over the air".
 
@@ -1344,21 +1345,62 @@ cannot read its own version accepts.
 |---|---|---|---|
 | `OTA_OFFER` | `COMMAND 0x1B`, `DST_MAC` = one unit, `F_ACK_REQ` | ↓ | `FAMILY u8 ‖ SIZE u32 ‖ SHA256[32] ‖ DEADLINE_S u16 ‖ FLAGS u8 ‖ VER_LEN u8 ‖ VERSION` |
 | `OTA_STATUS` | `MSG_TYPE 0x13` | ↑ | `STATE u8 ‖ PERCENT u8` |
-| `OTA_RESULT` | `MSG_TYPE 0x14`, `F_ACK_REQ` | ↑ | `OK u8 ‖ REASON u8 ‖ AWAKE_S u16 ‖ VER_LEN u8 ‖ VERSION` |
+| `OTA_RESULT` | `MSG_TYPE 0x14`, `F_ACK_REQ` | ↑ | `OK u8 ‖ REASON u8 ‖ AWAKE_S u16 ‖ VER_LEN u8 ‖ VERSION [‖ DETAIL u8]` |
 
+- **Where the unit pulls from:** `http://192.168.4.1:8070/fw/node.bin` (or
+  `leaf.bin`) — the board's fixed address on the installation network, plain
+  HTTP `GET`, the whole file. The network is WPA2 and the image is signed; the
+  offer's `SIZE` and `SHA256` are checked on what arrives. A unit at depth ≥ 2
+  reaches the board through its parents (NAPT). The server runs only while a
+  rollout is `rolling` or `paused`.
 - The unit ACKs the offer at once: `OK` = it will pull; `ERROR` = refused,
-  followed by `OTA_RESULT {OK = 0, REASON}`. Refusals: `WRONG_FAMILY`,
-  `NOT_NEWER`, `BUSY_ALARM`, `LOW_BATTERY`, `FORCE_REFUSED`, `BAD_VERSION`.
+  with the `REASON` in `DETAIL` (no `OTA_RESULT` follows a refusal).
+  Refusals: `WRONG_FAMILY`, `NOT_NEWER`, `BUSY_ALARM`, `LOW_BATTERY`,
+  `FORCE_REFUSED`, `BAD_VERSION`, `BUSY` (it is already updating, or the
+  image it runs is still in its self-test).
+- **A unit that knows nothing of this section** (firmware before v3.5) ACKs
+  any command `OK` and does nothing. The board therefore waits 30 s after the
+  ACK for the first `OTA_STATUS`; none → the unit is `failed`, `TIMED_OUT`,
+  and it is not offered the image again in this rollout.
 - `DEADLINE_S` (design value 300): for that long the board shows the unit as
-  **UPDATING**, not missing (§9.2) — the only exception to supervision.
+  **UPDATING**, not missing (§9.2) — the only exception to supervision. The
+  tablet does the same from the unit's row in `OTA_ROLLOUT`.
+- **What the unit does:** `OTA_STATUS downloading` with the percent →
+  `verifying` (size, `SHA256`, `project_name`, version, signature) →
+  `rebooting` → restart into the new image → `selftest`: it has 120 s to be
+  back on the mesh **and** to hear the board (any downlink frame, §9.3) →
+  it confirms the image and sends `OTA_RESULT {OK = 1}`. Otherwise the
+  bootloader returns to the previous image, which sends `OTA_RESULT {OK = 0,
+  SELFTEST_FAIL}` once it hears the board.
+- **Every one of these frames reaches the tablet too:** the board forwards
+  uplink frames unchanged (§7), so the tablet sees a unit's `OTA_STATUS` and
+  `OTA_RESULT` as they happen; `OTA_ROLLOUT` (§13.6) is the board's own view
+  and the one that counts.
 - `OTA_STATUS`: on every state change and every 10 % while downloading; never
   acknowledged, never retried. `STATE`: `0` waiting · `1` offered ·
   `2` downloading · `3` verifying · `4` rebooting · `5` self-test · `6` done ·
   `7` failed · `8` skipped.
-- `OTA_RESULT`: once per offer, by the image that is running when the matter
-  is settled — the new one after its self-test passed (`OK = 1`), or the old
-  one after a refusal, a failed download or a rollback (`OK = 0`,
-  `SELFTEST_FAIL`). `VERSION` = what the unit runs **now**. `AWAKE_S` =
+- `OTA_RESULT`: once per offer **that was taken**, by the image that is
+  running when the matter is settled — the new one after its self-test passed
+  (`OK = 1`), or the old one after a failed download (`OK = 0`, the reason)
+  or a rollback (`OK = 0`, `SELFTEST_FAIL`). A refused offer has no result,
+  only its ACK. The old image tells the three ways a new one can be thrown
+  away apart, from the state the bootloader left in `otadata`:
+  `SELFTEST_FAIL` — the new image ran and gave up its own self-test;
+  `NOT_VALIDATED` (18) — it started but was reset (crash, watchdog, power)
+  before its self-test ended; `NOT_BOOTED` (19) — it was written and never
+  ran at all. The unit remembers what it installed (NVS) until the board
+  acknowledges the result, so a lost report is made again on the next boot —
+  every attempt is reported, never "once per image". With `NOT_VALIDATED`
+  the optional trailing `DETAIL` byte is the chip's reset reason
+  (`esp_reset_reason_t`: 3 software, 4 panic, 5/6/7 watchdogs, 9 brownout,
+  …) that ended the new image — the RTC keeps it across the boot into the old
+  one. Absent otherwise (a decoder accepts both lengths). The board does not
+  offer the same image again to a unit that answered `SELFTEST_FAIL`,
+  `NOT_VALIDATED` or `NOT_BOOTED`: it is final for that rollout (the image
+  demonstrably does not run there); the retry of §13.6 is for the download. The board ACKs it (down the mesh) and so does the tablet that
+  sees it relayed: **the unit counts a frame as confirmed once**, whoever
+  confirms it — one cyan on its LED. `VERSION` = what the unit runs **now**. `AWAKE_S` =
   seconds a battery unit stayed awake for this update, `0` on a mains unit.
   The board journals it; the tablet keeps it (§13.6).
 
@@ -1394,8 +1436,43 @@ REASON u8 ‖ AGE_S u16 ‖ VER_LEN u8 ‖ VERSION` — `STATE` as in `OTA_STATU
 `AGE_S` = seconds since this entry last changed (`0xFFFF` never), `VERSION` =
 what the unit runs now. 15 to 39 bytes: at least 4 entries per page.
 
+`ATTEMPTS` = offers of this rollout that ended without the image running on
+the unit (`0` = none yet; a `waiting` row with `1` will be tried once more, a
+`failed` row has `2`).
+
 Sent in reply to `GET_ROLLOUT`, on every change, and every 5 s while
-`rolling`.
+`rolling` or `paused`. **`GET_ROLLOUT` is always answered:** a board that
+holds nothing and rolls nothing out sends one header, `STATE` idle,
+`TOTAL = 0` — silence means a board that does not know this section. The
+header carries neither the reason of a pause nor the time the rollout began;
+the tablet shows what it knows of them. `TOTAL = 0` with `STATE` idle = no
+rollout. After a `FAMILY` was
+stored by a push and no rollout was started, `STATE` is `staged`, `TARGET` =
+the stored version and `TOTAL = 0`: **this is how the tablet learns what the
+board holds**, also after the app restarted. `GET_ROLLOUT` answers one header
+per family that has something stored (or a rollout), each with its own pages.
+
+**`OTA_CONTROL`, board side:**
+
+- `start`: needs a stored image of `FAMILY` (`BAD_ARGS` without one), no
+  rollout running (`BUSY`), no ALARM in the last 10 minutes (`BUSY_ALARM`).
+  `FAMILY 0x03` (leaf) is refused with `BAD_ARGS` until §13.5 exists. The
+  queue = the units of the board's device table that are **online**, whose
+  `PRODUCT` is of that family (a unit that never announced one is not
+  offered anything) and that pass the filter. An empty queue → `BAD_ARGS`.
+- **Order:** one unit at a time; the unit that is the mesh root goes last.
+- **A unit that fails** (refusal, no status in 30 s, no result by
+  `DEADLINE_S`, `OTA_RESULT` not ok) is offered the image once more, after
+  the others; a second failure → `failed`, and the rollout ends `partial`.
+  `NOT_NEWER` is not a failure: the unit is `skipped` (it already runs it).
+- **`pause`** / an ALARM crossing the board: no new offer; the unit that is
+  downloading finishes. Only `resume` from the tablet continues.
+- **`abort`:** no new offer; units still `waiting` become `skipped`
+  (`ABORTED`); the rollout ends `partial` (or `done` when nothing was left).
+- A push (§13.3) of the family that is rolling out is refused with `BUSY`.
+- The board keeps the rollout in `fw_store` (`/fw/rollout.dat`): after a
+  restart it goes on from the first unit that is not settled, `paused` — the
+  tablet says `resume`.
 
 ### 13.7 `REASON`
 
@@ -1405,7 +1482,7 @@ Sent in reply to `GET_ROLLOUT`, on every change, and every 5 s while
 | `4` `SIG_FAIL` | `5` `SHA_FAIL` | `6` `WRONG_FAMILY` | `7` `NO_SPACE` |
 | `8` `HTTP_ERR` | `9` `SELFTEST_FAIL` | `10` `TIMED_OUT` | `11` `ABORTED` |
 | `12` `BAD_ARGS` | `13` `BUSY` | `14` `BAD_CRC` | `15` `OUT_OF_ORDER` |
-| `16` `BAD_VERSION` | `17` `FORCE_REFUSED` | | |
+| `16` `BAD_VERSION` | `17` `FORCE_REFUSED` | `18` `NOT_VALIDATED` | `19` `NOT_BOOTED` |
 
 An ACK `ERROR` to any message of this section carries the `REASON` in its
 `DETAIL` byte — never one of the general `DETAIL` codes of §7.5, whose numbers

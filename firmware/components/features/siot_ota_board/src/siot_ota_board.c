@@ -28,6 +28,7 @@
 #include "sdkconfig.h"
 #include "wear_levelling.h"
 
+#include "ota_internal.h"
 #include "siot_config.h"
 #include "siot_coordinator.h"
 #include "siot_evbus.h"
@@ -40,7 +41,7 @@
 
 static const char *TAG = "siot_ota";
 
-#define FW_MOUNT          "/fw"
+#define FW_MOUNT          OTA_FW_MOUNT
 #define FW_PARTITION      "fw_store"
 #define SIG_SECTOR        4096                /* sizeof(ets_secure_boot_signature_t) */
 #define APP_DESC_OFFSET   (sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t)) /* 32 */
@@ -92,6 +93,7 @@ typedef struct {
 static push_t s_push;
 static SemaphoreHandle_t s_lock;
 static bool s_store_ok;                /* fw_store mounted */
+static uint8_t s_stored_family;        /* a push was just stored: the rollout must hear of it */
 static wl_handle_t s_wl = WL_INVALID_HANDLE;
 static int64_t s_reboot_at_ms;         /* 0 = no reboot pending */
 static bool s_selftest;                /* this boot is the first of a new image */
@@ -102,7 +104,14 @@ static uint8_t s_rollback_id[8];
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 
-static const char *family_name(uint8_t family)
+const char *ota_family_name(uint8_t family);
+bool ota_store_ok(void) { return s_store_ok; }
+void ota_path_for(uint8_t family, const char *ext, char out[24])
+{
+    snprintf(out, 24, FW_MOUNT "/%s.%s", ota_family_name(family), ext); /* 8.3 names: no LFN needed */
+}
+
+const char *ota_family_name(uint8_t family)
 {
     switch (family) {
     case SAFR_FAMILY_BOARD: return "board";
@@ -112,10 +121,8 @@ static const char *family_name(uint8_t family)
     }
 }
 
-static void path_for(uint8_t family, const char *ext, char out[24])
-{
-    snprintf(out, 24, FW_MOUNT "/%s.%s", family_name(family), ext); /* 8.3 names: no LFN needed */
-}
+#define family_name ota_family_name
+#define path_for    ota_path_for
 
 static void send_result(uint8_t phase, uint8_t reason, uint8_t family, uint32_t next_seq, const char *version)
 {
@@ -339,7 +346,8 @@ static void on_begin(const siot_safr_frame_t *f)
         }
     } else {
         siot_ota_version_t v;
-        if (!siot_ota_version_parse(img.version, &v)) why = SIOT_OTA_R_BAD_VERSION;
+        if (ota_rollout_busy(img.family)) why = SIOT_OTA_R_BUSY; /* it is being handed out (§13.6) */
+        else if (!siot_ota_version_parse(img.version, &v)) why = SIOT_OTA_R_BAD_VERSION;
         /* a signed image: whole sectors, the last one is the signature */
         else if (img.size <= SIG_SECTOR || img.size % SIG_SECTOR != 0) why = SIOT_OTA_R_BAD_ARGS;
     }
@@ -562,6 +570,7 @@ static void push_verdict(void)
     } else {
         ESP_LOGW(TAG, "%s image %s verified and stored (%lu B)", family_name(img.family), img.version,
                  (unsigned long)img.size);
+        s_stored_family = img.family; /* the rollout is told outside s_lock */
     }
 }
 
@@ -592,7 +601,9 @@ static void ota_sink(const siot_safr_frame_t *f, bool dup, void *ctx)
         break;
     case SAFR_MSG_COMMAND:
         if (f->payload[0] == SAFR_CMD_OTA_BAUD) on_baud(f);
-        else siot_coordinator_ack_tablet(f->msg_id, SAFR_ACK_ERROR, SIOT_OTA_R_BAD_ARGS); /* rollout: step 2 */
+        else if (f->payload[0] == SAFR_CMD_OTA_CONTROL) { if (!dup) ota_rollout_on_control(f); else siot_coordinator_ack_tablet(f->msg_id, SAFR_ACK_OK, SIOT_OTA_R_NONE); }
+        else if (f->payload[0] == SAFR_CMD_GET_ROLLOUT) ota_rollout_on_get(f);
+        else siot_coordinator_ack_tablet(f->msg_id, SAFR_ACK_ERROR, SIOT_OTA_R_BAD_ARGS); /* OTA_OFFER is the board's to send */
         break;
     default:
         break;
@@ -681,10 +692,14 @@ static void ota_task(void *arg)
         const int64_t t = now_ms();
         xSemaphoreTake(s_lock, portMAX_DELAY);
         if (s_push.active && s_push.verify) push_verdict();
+        const uint8_t stored = s_stored_family;
+        s_stored_family = 0;
         if (s_push.active && t - s_push.last_ms > STALL_MS) push_drop("nobody continued it");
         const bool reboot = s_reboot_at_ms != 0 && t >= s_reboot_at_ms;
         const bool rollback = s_selftest && t >= s_selftest_deadline_ms;
         xSemaphoreGive(s_lock);
+        if (stored) ota_rollout_on_stored(stored);
+        ota_rollout_tick(t);
         if (rollback) {
             ESP_LOGE(TAG, "self-test: the tablet was not heard in %d s → back to the previous firmware",
                      CONFIG_SIOT_OTA_SELFTEST_S);
@@ -709,6 +724,7 @@ esp_err_t siot_ota_board_init(void)
     if (s_lock == NULL) return ESP_ERR_NO_MEM;
     store_mount();
     boot_state();
+    if (ota_rollout_init() != ESP_OK) return ESP_ERR_NO_MEM;
     esp_err_t err = siot_evbus_subscribe(SIOT_EVT_SAFR_RX, on_tablet_frame, NULL, NULL);
     if (err != ESP_OK) return err;
     siot_coordinator_set_ota_sink(ota_sink, NULL);

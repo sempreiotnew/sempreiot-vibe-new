@@ -155,6 +155,7 @@ size_t siot_ota_result_encode(uint8_t *p, const siot_ota_result_t *r)
     p[off++] = r->reason;
     siot_put_u16(&p[off], r->awake_s); off += 2;
     off += put_str(&p[off], r->version, SIOT_OTA_VER_MAX_LEN);
+    if (r->detail != 0) p[off++] = r->detail; /* absent when there is nothing to say */
     return off;
 }
 
@@ -166,7 +167,9 @@ bool siot_ota_result_decode(const uint8_t *p, size_t len, siot_ota_result_t *r)
     r->ok = p[off++] == 1;
     r->reason = p[off++];
     r->awake_s = siot_get_u16(&p[off]); off += 2;
-    return get_str(p, len, &off, r->version, SIOT_OTA_VER_MAX_LEN) && off == len;
+    if (!get_str(p, len, &off, r->version, SIOT_OTA_VER_MAX_LEN)) return false;
+    if (off + 1 == len) r->detail = p[off++];
+    return off == len;
 }
 
 /* ---- OTA_CONTROL ---------------------------------------------------------------------- */

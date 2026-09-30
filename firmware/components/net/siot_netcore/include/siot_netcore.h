@@ -47,6 +47,17 @@ void siot_netcore_set_downlink_hook(siot_netcore_downlink_hook_t hook, void *ctx
 
 /* This node's view for a leaf's ACK (§12.4): a path to the board exists
  * (spec §9.3 rule), and the wall clock adopted from TIME_SYNC (0 = none yet). */
+/* A COMMAND addressed to this unit that netcore itself does not know (the
+ * firmware update's OTA_OFFER, protocol §13.4). Returns SAFR_ACK_OK / _ERROR
+ * and the ACK's DETAIL; called again with `dup` for a retransmission. Runs in
+ * the link's rx task. Without a hook such a command is ACKed OK and ignored. */
+typedef uint8_t (*siot_netcore_cmd_hook_t)(uint8_t cmd, const uint8_t *args, size_t alen, bool dup,
+                                           uint8_t *detail, void *ctx);
+void siot_netcore_set_command_hook(siot_netcore_cmd_hook_t hook, void *ctx);
+
+/* This unit is in alarm (latched until RESET). */
+bool     siot_netcore_alarm_active(void);
+
 bool     siot_netcore_board_reachable(void);
 uint32_t siot_netcore_epoch(void);
 

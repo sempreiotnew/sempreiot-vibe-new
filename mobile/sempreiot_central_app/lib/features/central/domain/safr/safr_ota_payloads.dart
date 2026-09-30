@@ -42,6 +42,8 @@ enum SafrOtaReason {
   outOfOrder(15),
   badVersion(16),
   forceRefused(17),
+  notValidated(18),
+  notBooted(19),
 
   /// A value this app does not know (a newer board).
   unknown(0xFF);
@@ -84,6 +86,12 @@ enum SafrOtaReason {
           'A versão do arquivo não tem um formato válido.',
         SafrOtaReason.forceRefused =>
           'Esta placa não aceita instalação forçada.',
+        SafrOtaReason.notValidated =>
+          'O novo firmware reiniciou antes de concluir o autoteste; a placa '
+              'voltou à versão anterior.',
+        SafrOtaReason.notBooted =>
+          'O novo firmware foi gravado mas nunca chegou a iniciar; a placa '
+              'continua na versão anterior.',
         SafrOtaReason.unknown => 'Motivo desconhecido.',
       };
 }

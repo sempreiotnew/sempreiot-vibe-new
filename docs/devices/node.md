@@ -121,7 +121,7 @@ mesh.
 |---|---|---|---|
 | 7.1 | Rename / retire / replace / forget | `SET_DEVICE` and `DECOMMISSION` reach the node; retire / unretire / replace / forget are board-side only. A retired node that still holds the code can still join the Wi-Fi mesh; the board just drops its frames — true exclusion is decommission or re-key | Implemented (bench pending) |
 | 7.3 | Channel change | Learns `SET_CHANNEL {channel, switch_at}` from downlink; switches at `switch_at` | Planned (undefined) |
-| 7.4 | OTA | Pulls `/fw/node.bin` from the board over plain HTTP (through its parent's NAPT at depth ≥ 2), writes the inactive slot, self-tests, `esp_ota_mark_app_valid_cancel_rollback()` or rolls back; one node at a time, root last | Planned, not scheduled |
+| 7.4 | OTA | Takes the board's `OTA_OFFER` (refuses: another family, not newer, in alarm, busy), pulls `http://192.168.4.1:8070/fw/node.bin` (through its parent's NAPT at depth ≥ 2) into the inactive slot, checks size, SHA-256, project name, version and signature, restarts, has 120 s to be on the mesh and hear the board, then confirms (`OTA_RESULT` ok) or the previous image comes back and says `SELFTEST_FAIL`; `OTA_STATUS` on the way; an alarm on the unit stops a download. Protocol §13.4 | **Done in code 2026-09-29 (`siot_ota_node`), bench pending** |
 | 7.7 | LED language | See §5 | Phase 1 firmware |
 
 ## 5. States, modes and LED language
@@ -203,7 +203,7 @@ three blues 2 s apart and no cyan = no ACK (tablet not connected or link down).
 5. Heap fields in `TOPOLOGY`; the root-heap load-mode test that closes the N4 purchase (ref §4.1).
 6. Parent role bench pass (brief items L3–L13); the alarm broadcast fallback end to end (leaf step 4).
 7. Sensing, sirens / `COMMAND SOUND`, relay, power / tamper troubles (ref 5.5–5.8).
-8. `SET_CHANNEL`, OTA pull, factory identity station (ref 7.3–7.5).
+8. `SET_CHANNEL`, factory identity station (ref 7.3, 7.5); the OTA pull is written, bench pending (ref 7.4).
 9. `siot_console` (brief §11); bench passes 3, 4, 6–8, 10 of the lifecycle brief.
 
 ## 10. Where it lives

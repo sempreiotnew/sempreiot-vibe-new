@@ -65,9 +65,8 @@ enum SafrMsgType {
   otaPushEnd(0x11),
   otaPushResult(0x12),
 
-  /// v3.5 (spec §13.4, §13.6): a unit's update progress and result, and the
-  /// board's rollout table. Named here so diagnostics can show them; their
-  /// payloads are decoded in a later step.
+  /// v3.5 (spec §13.4, §13.6): a unit's update progress and result (relayed
+  /// unchanged by the board), and the board's rollout table.
   otaStatus(0x13),
   otaResult(0x14),
   otaRollout(0x15),
@@ -292,11 +291,10 @@ SafrWireFrame parseSafrWireFrame(
     SafrMsgType.otaPushChunk => SafrOtaPushChunkPayload.parse(plaintext),
     SafrMsgType.otaPushEnd => SafrOtaPushEndPayload.parse(plaintext),
     SafrMsgType.otaPushResult => SafrOtaPushResultPayload.parse(plaintext),
-    SafrMsgType.otaStatus ||
-    SafrMsgType.otaResult ||
-    SafrMsgType.otaRollout ||
-    SafrMsgType.unknown =>
-      SafrUnknownPayload(plaintext),
+    SafrMsgType.otaStatus => SafrOtaStatusPayload.parse(plaintext),
+    SafrMsgType.otaResult => SafrOtaResultPayload.parse(plaintext),
+    SafrMsgType.otaRollout => SafrOtaRolloutPayload.parse(plaintext),
+    SafrMsgType.unknown => SafrUnknownPayload(plaintext),
   };
 
   return SafrWireFrame(

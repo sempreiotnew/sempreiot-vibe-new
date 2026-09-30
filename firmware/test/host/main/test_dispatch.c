@@ -64,6 +64,34 @@ TEST_CASE("dispatch: frames route to the handler registered for their MSG_TYPE",
     siot_safr_unregister(SAFR_MSG_COMMAND);
 }
 
+TEST_CASE("dispatch: a default handler takes the types nobody registered", "[safr][dispatch]")
+{
+    ts_safr_init(TS_OTHER_MAC, 1);
+    ts_clock_set(0);
+    memset(s_hits, 0, sizeof(s_hits));
+    int ctx_own = 1, ctx_def = 2;
+    TEST_ASSERT_EQUAL(ESP_OK, siot_safr_register(SAFR_MSG_EVENT, hit, &ctx_own));
+    TEST_ASSERT_EQUAL(ESP_OK, siot_safr_register_default(hit, &ctx_def));
+
+    uint8_t f[SAFR_MAX_FRAME];
+    size_t n = from_node(f, SAFR_MSG_OTA_STATUS, 1, 1); /* a type added after the table was written */
+    TEST_ASSERT_EQUAL(SIOT_SAFR_RX_OK, siot_safr_rx(f, n));
+    TEST_ASSERT_EQUAL_PTR(&ctx_def, s_last_ctx);
+    TEST_ASSERT_EQUAL(1, s_hits[SAFR_MSG_OTA_STATUS]);
+
+    n = from_node(f, SAFR_MSG_EVENT, 2, 2); /* its own handler still wins */
+    TEST_ASSERT_EQUAL(SIOT_SAFR_RX_OK, siot_safr_rx(f, n));
+    TEST_ASSERT_EQUAL_PTR(&ctx_own, s_last_ctx);
+
+    n = from_node(f, SAFR_MSG_OTA_STATUS, 1, 3); /* a repeat is still marked as one */
+    TEST_ASSERT_EQUAL(SIOT_SAFR_RX_DUPLICATE, siot_safr_rx(f, n));
+
+    TEST_ASSERT_EQUAL(ESP_OK, siot_safr_register_default(NULL, NULL));
+    n = from_node(f, SAFR_MSG_OTA_RESULT, 4, 4);
+    TEST_ASSERT_EQUAL(SIOT_SAFR_RX_NO_HANDLER, siot_safr_rx(f, n));
+    siot_safr_unregister(SAFR_MSG_EVENT);
+}
+
 TEST_CASE("dispatch: handler table is bounded and a handler may send from inside", "[safr][dispatch]")
 {
     ts_safr_init(TS_OTHER_MAC, 1);

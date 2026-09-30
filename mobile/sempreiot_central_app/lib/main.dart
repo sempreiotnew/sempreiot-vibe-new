@@ -13,6 +13,7 @@ import 'core/database/app_database.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_provider.dart';
 import 'features/app/application/app_init_provider.dart';
+import 'features/central/application/ota_rollout_controller.dart';
 import 'features/central/application/safr_ingest_provider.dart';
 import 'features/central/application/supervision_provider.dart';
 import 'features/central/data/services/factory_init_service.dart';
@@ -94,6 +95,9 @@ final centralInitProvider = FutureProvider<void>((ref) async {
   // and downlink (TIME_SYNC on link-up).
   ref.read(safrIngestProvider);
   ref.read(supervisionProvider);
+  // The rollout (protocol §13.6) hears the board from the first frame on:
+  // it asks what the board holds when the link comes up.
+  ref.read(otaRolloutProvider);
 
   await db.deleteOlderThan(
     DateTime.now().toUtc().subtract(const Duration(days: 30)),

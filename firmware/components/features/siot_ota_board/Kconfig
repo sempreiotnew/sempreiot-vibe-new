@@ -1,4 +1,14 @@
-menu "SempreIoT firmware update, board (siot_ota_board)"
+menu "SempreIoT firmware update (siot_ota_board, siot_ota_node)"
+
+    config SIOT_FEATURE_OTA
+        bool "Firmware update over the link and the mesh (protocol section 13)"
+        default y
+        help
+            Board: takes an image from the tablet, updates itself, hands a
+            stored image to the units. Node: takes the board's offer. On by
+            default, unlike the other features: every product image must be
+            updatable. The options below are the same for the board and the
+            node.
 
     config SIOT_OTA_TEST_ANY_VERSION
         bool "TEST ONLY: accept any version (the same one again, an older one)"

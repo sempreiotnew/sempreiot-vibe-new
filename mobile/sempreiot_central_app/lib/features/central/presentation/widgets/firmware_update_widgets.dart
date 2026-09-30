@@ -807,15 +807,40 @@ class _Counter extends StatelessWidget {
 
 // ── Log ───────────────────────────────────────────────────────────────────────
 
+/// The log of the push and the log of the rollout as one, oldest first. Two
+/// lines of the same instant keep the order they have in their own log, the
+/// push's first.
+List<OtaLogLine> otaMergedLog(List<OtaLogLine> push, List<OtaLogLine> rollout) {
+  if (rollout.isEmpty) return push;
+  if (push.isEmpty) return rollout;
+  final out = <OtaLogLine>[];
+  var i = 0, j = 0;
+  while (i < push.length && j < rollout.length) {
+    if (rollout[j].at.isBefore(push[i].at)) {
+      out.add(rollout[j++]);
+    } else {
+      out.add(push[i++]);
+    }
+  }
+  return out
+    ..addAll(push.skip(i))
+    ..addAll(rollout.skip(j));
+}
+
 /// What happened, oldest first, with the time to the second; "Copiar" puts
 /// all of it on the clipboard.
 class OtaLogCard extends StatelessWidget {
-  const OtaLogCard({super.key, required this.state});
+  const OtaLogCard({super.key, required this.state, this.log});
   final OtaPushState state;
+
+  /// The lines to show; null = the push's own.
+  final List<OtaLogLine>? log;
+
+  List<OtaLogLine> get _lines => log ?? state.log;
 
   @override
   Widget build(BuildContext context) {
-    final log = state.log;
+    final log = _lines;
     return Container(
       decoration: BoxDecoration(
         color: context.surfaceColor,
@@ -866,7 +891,8 @@ class OtaLogCard extends StatelessWidget {
 
   Future<void> _copy(BuildContext context) async {
     final messenger = ScaffoldMessenger.of(context);
-    await Clipboard.setData(ClipboardData(text: state.logText));
+    await Clipboard.setData(
+        ClipboardData(text: _lines.map((l) => l.toString()).join('\n')));
     messenger.showSnackBar(
       const SnackBar(
         content: Text('Registro copiado.'),

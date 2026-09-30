@@ -26,7 +26,14 @@ String deviceRoleLabel(TopologyNode node) => node.layer == 0
         _ => 'Desconhecido',
       };
 
-String deviceStateLabel(TopologyNode node) => node.online
+/// A unit that is being updated reads "Atualizando" — never "Sem
+/// comunicação": it is silent while it restarts into its new firmware
+/// (protocol §13.4).
+String deviceStateLabel(TopologyNode node) => node.updating
+    ? 'Atualizando'
+    : _deviceStateLabel(node);
+
+String _deviceStateLabel(TopologyNode node) => node.online
     ? (node.sleeping
         ? 'Dormindo'
         : node.isLeaf

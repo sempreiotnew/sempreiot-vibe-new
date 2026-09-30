@@ -8,6 +8,7 @@ import '../../../core/database/app_database.dart';
 import '../domain/safr/safr_encoder.dart';
 import '../domain/safr/safr_identity.dart';
 import 'central_installation_provider.dart';
+import 'ota_rollout_events_provider.dart';
 import '../domain/safr/safr_v2_frame.dart';
 import '../domain/safr/safr_v2_payloads.dart';
 import 'safr_ingest_provider.dart' show setupChannelProvider;
@@ -28,7 +29,9 @@ import 'serial_provider.dart';
 ///   after the root confirms;
 /// - carries the frames of a firmware push (§13.3) through the same
 ///   pending-ACK tracking, with the timeouts the push asks for and, for a
-///   chunk, its raw bytes right behind the frame.
+///   chunk, its raw bytes right behind the frame;
+/// - asks for the rollout table and steers a rollout (§13.6): GET_ROLLOUT
+///   like GET_DEVICE_TABLE, OTA_CONTROL tracked like every command.
 class SafrDownlink {
   SafrDownlink(this._ref);
 
@@ -45,6 +48,7 @@ class SafrDownlink {
   bool _linkCheckFailing = false;
   bool _journalDraining = false;
   int _jrnHighWater = 0;
+  bool _disposed = false;
 
   /// Re-keys the encoder for the imported installation. A fresh BOOT_CTR
   /// keeps CCM nonces unique across the switch (spec §9.1); MSG_ID restarts,
@@ -98,6 +102,9 @@ class SafrDownlink {
     await requestJournalBackfill();
     await sendGetInstallation();
     await sendGetDeviceTable();
+    // Whoever asks the board something once the link is up does it now:
+    // the rollout controller sends GET_ROLLOUT (§13.6).
+    if (!_disposed) _ref.read(linkUpSequenceProvider.notifier).state++;
   }
 
   /// v3.2 (spec §7.6 0x18): asks the board for its device table; the pages
@@ -283,10 +290,13 @@ class SafrDownlink {
     );
     await _write(frame);
     // The cyan packet going down = the unit's cyan LED: the tablet's ACK for
-    // an EVENT it sent. Heartbeats are ACKed on the wire too (spec §7.5) but
-    // the parent never hands those to a leaf, so they never light a LED and
-    // never travel the map.
-    if (source.msgType == SafrMsgType.event) {
+    // an EVENT it sent, or for the OTA_RESULT of its update (§13.4 — the
+    // node posts SIOT_EVT_ACK_RECEIVED for every ACK addressed to it,
+    // siot_netcore.c `on_ack`). Heartbeats are ACKed on the wire too (spec
+    // §7.5) but the parent never hands those to a leaf, so they never light
+    // a LED and never travel the map.
+    if (source.msgType == SafrMsgType.event ||
+        source.msgType == SafrMsgType.otaResult) {
       _ref.read(safrTrafficProvider).emit(SafrTrafficTick(
             mac: source.srcMac,
             direction: SafrTrafficDirection.downlink,
@@ -391,6 +401,44 @@ class SafrDownlink {
           cmd: SafrCommand.otaBaud, args: SafrOtaBaudArgs.build(baud)),
       dstMac: safrBroadcastMacBytes,
       description: 'velocidade do enlace',
+      notifyOnFail: false,
+      backoff: ackTimeout,
+      maxAttempts: attempts,
+    );
+    return tx.ack;
+  }
+
+  // ── Rollout (§13.6) ────────────────────────────────────────────
+
+  /// GET_ROLLOUT (COMMAND 0x1C): asks the board for its rollout table; the
+  /// pages come back as OTA_ROLLOUT frames routed by ingest, one header per
+  /// family that has something. No ACK expected. False = no port.
+  Future<bool> sendGetRollout({int page = 0}) {
+    final frame = _encoder.encode(
+      msgType: SafrMsgType.command,
+      payload: SafrCommandPayload.build(
+          cmd: SafrCommand.getRollout,
+          args: SafrGetRolloutArgs.build(page: page)),
+      dstMac: safrBroadcastMacBytes,
+    );
+    return _write(frame);
+  }
+
+  /// OTA_CONTROL (COMMAND 0x1D): start / pause / resume / abort. Tracked
+  /// like every F_ACK_REQ frame; an ACK ERROR carries the §13.7 REASON in
+  /// its DETAIL. Null = never confirmed, or no port. A failure raises no
+  /// TROUBLE: the rollout reports it on its own screen.
+  Future<SafrAckPayload?> sendOtaControl(
+    SafrOtaControlArgs args, {
+    Duration ackTimeout = _retryBackoff,
+    int attempts = _retryMax,
+  }) async {
+    final tx = await _sendTrackedTx(
+      msgType: SafrMsgType.command,
+      payload: SafrCommandPayload.build(
+          cmd: SafrCommand.otaControl, args: args.build()),
+      dstMac: safrBroadcastMacBytes,
+      description: 'envio do firmware aos dispositivos',
       notifyOnFail: false,
       backoff: ackTimeout,
       maxAttempts: attempts,
@@ -639,6 +687,7 @@ class SafrDownlink {
   }
 
   void dispose() {
+    _disposed = true;
     _hourlySync?.cancel();
     _linkCheck?.cancel();
     for (final p in _pending.values) {

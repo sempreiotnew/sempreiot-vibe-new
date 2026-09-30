@@ -17,6 +17,7 @@
 #include "siot_identity.h"
 #include "siot_link.h"
 #include "siot_netcore.h"
+#include "siot_ota_node.h"
 #include "siot_provisioning.h"
 #include "siot_safr.h"
 #include "siot_survey.h"
@@ -106,6 +107,9 @@ void app_main(void)
     if (siot_survey_init(0xFF) != ESP_OK) ESP_LOGW(TAG, "survey mode unavailable (ESP-NOW init failed)");
 #if CONFIG_SIOT_FEATURE_LEAFMGR
     if (siot_leafmgr_init() != ESP_OK) ESP_LOGW(TAG, "leaf manager unavailable"); /* parent role, protocol §12.11 */
+#endif
+#if CONFIG_SIOT_FEATURE_OTA
+    if (siot_ota_node_init() != ESP_OK) ESP_LOGE(TAG, "firmware update unavailable"); /* protocol §13.4 */
 #endif
     ESP_LOGI(TAG, "normal mode: system_id=0x%04X ssid=%s name=%s",
              code->system_id, code->net_ssid, code->name);

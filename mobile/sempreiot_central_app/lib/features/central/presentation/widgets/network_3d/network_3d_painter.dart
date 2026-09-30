@@ -15,6 +15,10 @@ const graphTabletKey = '@tablet';
 /// `origin` of the packets of a firmware push (never a MAC).
 const otaPacketOrigin = '@ota';
 
+/// `origin` of the packets of a rollout (never a MAC): the image on its way
+/// from the board to the unit that downloads it (protocol §13.4).
+const rolloutPacketOrigin = '@rollout';
+
 /// A frame travelling the tree (same rules as the Rede map's packets).
 class Packet3d {
   Packet3d({

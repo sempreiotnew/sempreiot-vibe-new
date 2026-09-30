@@ -321,13 +321,15 @@ void main() {
         SafrOtaReason.outOfOrder: 15,
         SafrOtaReason.badVersion: 16,
         SafrOtaReason.forceRefused: 17,
+        SafrOtaReason.notValidated: 18,
+        SafrOtaReason.notBooted: 19,
       };
       for (final e in want.entries) {
         expect(e.key.wire, e.value, reason: e.key.name);
         expect(SafrOtaReason.fromWire(e.value), e.key);
       }
       expect(SafrOtaReason.values.length, want.length + 1); // + unknown
-      expect(SafrOtaReason.fromWire(18), SafrOtaReason.unknown);
+      expect(SafrOtaReason.fromWire(20), SafrOtaReason.unknown);
       expect(SafrOtaReason.fromWire(0xFF), SafrOtaReason.unknown);
     });
 

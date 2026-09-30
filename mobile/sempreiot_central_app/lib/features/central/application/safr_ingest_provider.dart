@@ -11,6 +11,7 @@ import '../domain/safr/safr_v2_payloads.dart';
 import '../domain/safr/safr_identity.dart';
 import 'central_installation_provider.dart';
 import 'ota_board_events_provider.dart';
+import 'ota_rollout_events_provider.dart';
 import 'safr_downlink_provider.dart';
 import 'safr_traffic_provider.dart';
 import 'serial_link_provider.dart';
@@ -44,6 +45,7 @@ class SafrIngestService {
     this.setupIdentity,
     this.onCode,
     this.onOtaBoardEvent,
+    this.onOtaRolloutEvent,
   });
 
   final AppDatabase db;
@@ -80,6 +82,11 @@ class SafrIngestService {
   /// NAME_ANNOUNCE of a unit of the board family (the version it runs) and
   /// every HEARTBEAT of the board itself (LAYER 0: it is up).
   final void Function(OtaBoardEvent event)? onOtaBoardEvent;
+
+  /// Rollout (spec §13.4, §13.6): every OTA_ROLLOUT page of the board and
+  /// every OTA_STATUS / OTA_RESULT of a unit — once each: a replay or a
+  /// retransmission of one already handled is ACKed and not handed over.
+  final void Function(OtaRolloutEvent event)? onOtaRolloutEvent;
 
   /// Recent (SRC_MAC, MSG_ID) pairs → dedupes fast retransmissions of
   /// non-EVENT frames (same MSG_ID, fresh MSG_CTR — spec §9.1). EVENTs are
@@ -150,7 +157,14 @@ class SafrIngestService {
     );
 
     if (frame.msgType == SafrMsgType.ack && frame.payload is SafrAckPayload) {
-      onAckReceived?.call(frame.payload as SafrAckPayload);
+      // Only an ACK addressed to the tablet confirms a frame of the tablet.
+      // A unit's ACK of a command of the board (OTA_OFFER, spec §13.4) is
+      // relayed up like every uplink frame and carries a MSG_ID of the
+      // board's own sequence: it must never confirm the tablet's frame that
+      // happens to have the same number.
+      if (frame.dstMac == safrCentralMac || frame.isDstBroadcast) {
+        onAckReceived?.call(frame.payload as SafrAckPayload);
+      }
       return;
     }
 
@@ -187,7 +201,35 @@ class SafrIngestService {
       return; // the board's own report: not a device to register
     }
 
-    final accepted = await _updateTrustedState(frame, packetId, now);
+    // Rollout (spec §13.6): the board's table, page by page. Its own
+    // report, handed over in the order it arrived.
+    if (frame.msgType == SafrMsgType.otaRollout &&
+        frame.payload is SafrOtaRolloutPayload) {
+      onOtaRolloutEvent?.call(
+          OtaRolloutPageEvent(frame.payload as SafrOtaRolloutPayload));
+      if (frame.ackRequired) await onAckRequired?.call(frame);
+      return; // the board's own report: not a device to register
+    }
+
+    final trusted = await _updateTrustedState(frame, packetId, now);
+    final accepted = trusted.eventId;
+
+    // A unit's update progress and result (spec §13.4), relayed by the
+    // board: after the unit's row was refreshed (it was heard).
+    if (trusted.fresh) {
+      switch (frame.payload) {
+        case SafrOtaStatusPayload status
+            when frame.msgType == SafrMsgType.otaStatus:
+          onOtaRolloutEvent
+              ?.call(OtaUnitStatusEvent(mac: frame.srcMac, status: status));
+        case SafrOtaResultPayload result
+            when frame.msgType == SafrMsgType.otaResult:
+          onOtaRolloutEvent
+              ?.call(OtaUnitResultEvent(mac: frame.srcMac, result: result));
+        default:
+          break;
+      }
+    }
 
     final heartbeat = frame.payload;
     if (heartbeat is SafrHeartbeatPayload && heartbeat.layer == 0) {
@@ -254,8 +296,10 @@ class SafrIngestService {
     });
   }
 
-  /// Returns the inserted DeviceEvents id when an EVENT row was created.
-  Future<int?> _updateTrustedState(
+  /// `eventId`: the inserted DeviceEvents id when an EVENT row was created.
+  /// `fresh`: the frame is neither a replay nor a retransmission of one
+  /// already handled.
+  Future<({int? eventId, bool fresh})> _updateTrustedState(
     SafrWireFrame frame,
     int packetId,
     DateTime now,
@@ -270,7 +314,7 @@ class SafrIngestService {
       if (existing != null &&
           frame.bootCtr == existing.lastBootCtr &&
           frame.msgCtr <= existing.lastMsgCtr) {
-        return null;
+        return (eventId: null, fresh: false);
       }
 
       final event = frame.msgType == SafrMsgType.event &&
@@ -285,7 +329,10 @@ class SafrIngestService {
       if (event != null && event.devSeq != null) {
         isDuplicate = await _isDuplicateEvent(frame.srcMac, event.devSeq);
       } else {
-        final dedupeKey = '${frame.srcMac}#${frame.msgId}';
+        // BOOT_CTR is part of the identity: a retransmission comes from
+        // the same boot; a unit that restarted (into a new firmware, §13.4)
+        // counts its MSG_IDs from the start again.
+        final dedupeKey = '${frame.srcMac}#${frame.bootCtr}#${frame.msgId}';
         _recentMsgIds.removeWhere(
             (_, at) => now.difference(at) > const Duration(seconds: 30));
         isDuplicate = _recentMsgIds.containsKey(dedupeKey);
@@ -293,10 +340,10 @@ class SafrIngestService {
       }
 
       await _upsertDevice(frame, existing, now);
-      if (isDuplicate) return null;
+      if (isDuplicate) return (eventId: null, fresh: false);
 
       if (event != null) {
-        return _insertEvent(
+        final id = await _insertEvent(
           srcMac: frame.srcMac,
           msgId: frame.msgId,
           hops: frame.hops,
@@ -305,8 +352,9 @@ class SafrIngestService {
           now: now,
           retx: frame.isRetx,
         );
+        return (eventId: id, fresh: true);
       }
-      return null;
+      return (eventId: null, fresh: true);
     });
   }
 
@@ -690,6 +738,7 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
   final downlink = ref.read(safrDownlinkProvider);
   final traffic = ref.read(safrTrafficProvider);
   final otaBus = ref.read(otaBoardBusProvider);
+  final rolloutBus = ref.read(otaRolloutBusProvider);
 
   final service = SafrIngestService(
     db: ref.watch(appDatabaseProvider),
@@ -701,6 +750,7 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
     setupIdentity: () => ref.read(setupChannelProvider),
     onCode: downlink.handleCode,
     onOtaBoardEvent: otaBus.emit,
+    onOtaRolloutEvent: rolloutBus.emit,
     onValidFrame: link.reportValidFrame,
     onInvalidFrame: link.reportInvalidFrame,
     onAckRequired: downlink.sendAck,

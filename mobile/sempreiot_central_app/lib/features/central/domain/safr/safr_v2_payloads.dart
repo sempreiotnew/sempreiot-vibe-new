@@ -5,6 +5,7 @@ import 'safr_product.dart';
 import 'safr_v2_frame.dart';
 
 part 'safr_ota_payloads.dart';
+part 'safr_ota_rollout_payloads.dart';
 
 /// Payload models and per-MSG_TYPE fixed-layout codecs.
 /// Layouts: docs/safr/protocol-safr-v3.md §7 (v2 §6 layouts decode-compatibly:
@@ -141,13 +142,14 @@ enum SafrCommand {
   /// Board-only: line speed of the tablet link, ARGS `BAUD u32` (§13.3).
   otaBaud(0x1A),
 
-  /// To one unit: the image the board offers it (§13.4). Later step.
+  /// Board → one unit: the image the board offers it (§13.4). The tablet
+  /// never sends it.
   otaOffer(0x1B),
 
-  /// Board-only: reply with OTA_ROLLOUT pages (§13.6). Later step.
+  /// Board-only: reply with OTA_ROLLOUT pages (§13.6).
   getRollout(0x1C),
 
-  /// Board-only: start / pause / resume / abort a rollout (§13.6). Later step.
+  /// Board-only: start / pause / resume / abort a rollout (§13.6).
   otaControl(0x1D);
 
   const SafrCommand(this.wire);

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../../core/theme/app_colors.dart';
 import '../../../../../core/theme/theme_ext.dart';
 import '../../../application/ota_push_report.dart';
+import '../../../application/ota_rollout_report.dart';
 import '../../../application/topology_provider.dart';
 import '../../../domain/safr/safr_v2_payloads.dart';
 import '../device_avatar.dart';
@@ -40,12 +41,19 @@ class Device3dChip extends StatelessWidget {
     this.isRoot = false,
     this.isCandidate = false,
     this.pending,
+    this.activity,
   });
 
   final TopologyNode node;
   final Alignment light;
   final bool isRoot;
   final bool isCandidate;
+
+  /// A rollout has this unit in it: a progress ring goes around the sphere
+  /// while it is being updated and the line under its name says where it
+  /// is. The LED lens on top is untouched: it is the unit's LED, the ring
+  /// is not.
+  final OtaUnitActivity? activity;
 
   /// The version of an image of this unit's family that is stored on the
   /// board and was not delivered; null = none.
@@ -127,6 +135,12 @@ class Device3dChip extends StatelessWidget {
                           ),
                   ),
                 ),
+                if (activity?.updating == true)
+                  Positioned(
+                    left: cx - OtaProgressRing.sizeFor(_d) / 2,
+                    top: cy - OtaProgressRing.sizeFor(_d) / 2,
+                    child: OtaUnitRing(activity: activity!, diameter: _d),
+                  ),
                 // The unit's LED: a lens on top of the sphere.
                 Positioned(
                   left: cx - 5,
@@ -201,7 +215,11 @@ class Device3dChip extends StatelessWidget {
             ),
           ),
           // The firmware it runs, and whether another waits on the board.
-          FirmwareTag(version: node.fwVersion, pending: pending),
+          // In a rollout: where the unit is in it.
+          if (activity != null)
+            OtaUnitTag(activity: activity!, version: node.fwVersion)
+          else
+            FirmwareTag(version: node.fwVersion, pending: pending),
         ],
       ),
     );

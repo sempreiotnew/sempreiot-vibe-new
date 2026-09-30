@@ -11,7 +11,8 @@
 #
 #   board-<version>.bin                 good board image                       → O2, O3
 #   board-<next>-selftest-fail.bin      board image that fails its self-test   → O4 (rolls back)
-#   node-<version>.bin                  good node image                        → O5 (stored on the board)
+#   node-<version>.bin                  good node image                        → O5, O7 (stored, then rolled out)
+#   node-<next>-selftest-fail.bin       node image that fails its self-test    → a node rolls back
 #   leaf-<version>.bin                  good leaf image                        → stored on the board
 #   board-<version>-UNSIGNED.bin        the same board image without signature → O1 (refused)
 #   board-<version>-WRONGKEY.bin        signed with a throw-away key           → O1 (refused)
@@ -62,12 +63,14 @@ printf 'CONFIG_SIOT_OTA_SELFTEST_FAIL=y\n' > "$FRAG"
 build board build-ota-good "$VERSION"
 build board build-ota-fail "$NEXT" "$FRAG"
 build node  build-ota-good "$VERSION"
+build node  build-ota-fail "$NEXT" "$FRAG"
 build leaf  build-ota-good "$VERSION"
 
 cp "$FW_DIR/apps/board/build-ota-good/sempreiot-board.bin"          "$OUT/board-$VERSION.bin"
 cp "$FW_DIR/apps/board/build-ota-good/sempreiot-board-unsigned.bin" "$OUT/board-$VERSION-UNSIGNED.bin"
 cp "$FW_DIR/apps/board/build-ota-fail/sempreiot-board.bin"          "$OUT/board-$NEXT-selftest-fail.bin"
 cp "$FW_DIR/apps/node/build-ota-good/sempreiot-node.bin"            "$OUT/node-$VERSION.bin"
+cp "$FW_DIR/apps/node/build-ota-fail/sempreiot-node.bin"            "$OUT/node-$NEXT-selftest-fail.bin"
 cp "$FW_DIR/apps/leaf/build-ota-good/sempreiot-leaf.bin"            "$OUT/leaf-$VERSION.bin"
 
 WRONG="$OUT/throwaway_key.pem"

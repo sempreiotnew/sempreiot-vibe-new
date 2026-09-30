@@ -326,6 +326,12 @@ typedef void (*siot_safr_handler_t)(const siot_safr_frame_t *frame, const uint8_
 /* One handler per MSG_TYPE; registering the same type again replaces it.
  * ESP_ERR_NO_MEM when CONFIG_SIOT_SAFR_HANDLERS_MAX distinct types exist. */
 esp_err_t siot_safr_register(uint8_t msg_type, siot_safr_handler_t handler, void *ctx);
+
+/* The handler of every MSG_TYPE that has none of its own (NULL removes it). A
+ * unit that relays what it does not understand — the board, towards the
+ * tablet — registers one, so a message added to the protocol later crosses it
+ * without a change here. Without one such a frame is counted no_handler. */
+esp_err_t siot_safr_register_default(siot_safr_handler_t handler, void *ctx);
 esp_err_t siot_safr_unregister(uint8_t msg_type);
 
 typedef enum {
