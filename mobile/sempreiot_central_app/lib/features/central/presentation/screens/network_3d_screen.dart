@@ -8,12 +8,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
-import '../../application/ota_push_report.dart';
-import '../../application/ota_rollout_report.dart';
 import '../../application/root_election_provider.dart';
 import '../../application/safr_traffic_provider.dart';
 import '../../application/topology_provider.dart';
-import '../../domain/safr/safr_product.dart';
 import '../widgets/device_avatar.dart';
 import '../widgets/device_menu.dart';
 import '../widgets/network_3d/detector_sprites.dart';
@@ -21,7 +18,7 @@ import '../widgets/network_3d/device_3d_chip.dart';
 import '../widgets/network_3d/force_graph_3d.dart';
 import '../widgets/network_3d/network_3d_math.dart';
 import '../widgets/network_3d/network_3d_painter.dart';
-import '../widgets/ota_rede_widgets.dart';
+import '../widgets/device_update_rede_line.dart';
 
 /// Rede 3D — PROTOTYPE. The Rede map's network as a force-directed 3D
 /// graph (like Obsidian's graph view), in the Rede map's own look: the same
@@ -76,29 +73,6 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
   String? _graphKey;
   final _packets = <Packet3d>[];
 
-  /// A firmware push, as the map draws it: what the board is doing with it
-  /// and what waits on the board for the units.
-  OtaBoardActivity? _activity;
-  Map<SafrProductFamily, String> _stored = const {};
-
-  /// Chunks of a firmware push, turned into packets a few at a time.
-  ProviderSubscription<int>? _otaSub;
-  final _otaThrottle = OtaPacketThrottle(
-    every: 8,
-    minGap: const Duration(milliseconds: 700),
-  );
-
-  /// One crossing of the tablet–board link by a packet of a push.
-  static const _otaHop = Duration(milliseconds: 900);
-
-  /// A rollout: what is drawn on every unit of it, the unit that downloads
-  /// now, and the packets that travel to it.
-  OtaRolloutOverlay _rollout = OtaRolloutOverlay.none;
-  ProviderSubscription<String?>? _rolloutSub;
-  Timer? _rolloutTimer;
-  String? _downloading;
-  static const _rolloutPacketEvery = Duration(milliseconds: 1500);
-
   Size _size = Size.zero;
   bool _fitted = false;
   _Flight? _flight;
@@ -120,15 +94,6 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
           ..addListener(_onFrame)
           ..repeat();
     _trafficSub = ref.read(safrTrafficProvider).stream.listen(_onTraffic);
-    _otaSub = ref.listenManual<int>(
-      otaPushViewProvider.select(otaChunksOnTheWay),
-      (_, chunks) => _onOtaChunks(chunks),
-    );
-    _rolloutSub = ref.listenManual<String?>(
-      otaRolloutOverlayProvider.select((o) => o.downloading),
-      (_, mac) => _onDownloading(mac),
-      fireImmediately: true,
-    );
     DetectorSprites.load().then((s) {
       if (mounted) setState(() => _sprites = s);
     });
@@ -137,10 +102,7 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
   @override
   void dispose() {
     _tourTimer?.cancel();
-    _rolloutTimer?.cancel();
-    _rolloutSub?.close();
     _trafficSub?.cancel();
-    _otaSub?.close();
     _ticker.dispose();
     _focus.dispose();
     super.dispose();
@@ -194,88 +156,6 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
       // Opening: start settled, not as an explosion.
       if (first) _graph.settle();
       if (_touring) _tourOrder = _treeOrder();
-    }
-  }
-
-  /// The tablet while a push runs: beside the CENTRAL, on its level, on
-  /// the side the lane label is not (right of a row; under a column in the
-  /// wide view).
-  Vec3? get _tabletPos {
-    if (_activity == null) return null;
-    final central = _graph.pos[graphCentralKey];
-    if (central == null) return null;
-    return central +
-        (_graph.axis == GraphAxis.vertical
-            ? const Vec3(150, 0, 0)
-            : const Vec3(0, -130, 0));
-  }
-
-  /// A firmware push: the board confirmed chunks. One blue packet from the
-  /// tablet to the board (a frame sent), one cyan packet back behind it
-  /// (the board's ACK) — as on the Rede map, and on this link only.
-  void _onOtaChunks(int chunks) {
-    final now = DateTime.now();
-    if (!_otaThrottle.take(chunks, now)) return;
-    _packets
-      ..add(Packet3d(
-        origin: otaPacketOrigin,
-        uplink: false,
-        path: const [graphTabletKey, graphCentralKey],
-        color: packetColor(0, false),
-        severity: 0,
-        startedAt: now,
-        duration: _otaHop,
-        lane: -4,
-      ))
-      ..add(Packet3d(
-        origin: otaPacketOrigin,
-        uplink: true,
-        path: const [graphCentralKey, graphTabletKey],
-        color: packetColor(0, true),
-        severity: 0,
-        startedAt: now.add(_otaHop),
-        duration: _otaHop,
-        lane: -4,
-      ));
-    while (_packets.length > 40) {
-      _packets.removeAt(0);
-    }
-  }
-
-  /// A rollout: a unit started or stopped downloading. While it downloads,
-  /// packets leave the board (the CENTRAL) and travel the tree to it — as
-  /// on the Rede map.
-  void _onDownloading(String? mac) {
-    if (mac == _downloading) return;
-    _downloading = mac;
-    _rolloutTimer?.cancel();
-    _rolloutTimer = null;
-    if (mac == null) {
-      _packets.removeWhere((p) => p.origin == rolloutPacketOrigin);
-      return;
-    }
-    _sendRolloutPacket();
-    _rolloutTimer =
-        Timer.periodic(_rolloutPacketEvery, (_) => _sendRolloutPacket());
-  }
-
-  void _sendRolloutPacket() {
-    final mac = _downloading;
-    if (mac == null || !mounted) return;
-    final path = otaDownloadPath(_nodes.values, mac, graphCentralKey);
-    if (path == null) return;
-    _packets.add(Packet3d(
-      origin: rolloutPacketOrigin,
-      uplink: false,
-      path: path,
-      color: packetColor(0, false),
-      severity: 0,
-      startedAt: DateTime.now(),
-      duration: Duration(milliseconds: packetHopMs.node * (path.length - 1)),
-      lane: -4,
-    ));
-    while (_packets.length > 40) {
-      _packets.removeAt(0);
     }
   }
 
@@ -347,12 +227,6 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
   void _fit({bool animate = true}) {
     if (_size.isEmpty) return;
     var (lo, hi) = _graph.bounds();
-    // The tablet of a push is part of the picture while it is drawn.
-    final tablet = _tabletPos;
-    if (tablet != null) {
-      lo = Vec3(math.min(lo.x, tablet.x), math.min(lo.y, tablet.y), lo.z);
-      hi = Vec3(math.max(hi.x, tablet.x), math.max(hi.y, tablet.y), hi.z);
-    }
     final center = Vec3.lerp(lo, hi, 0.5);
     // Half extents plus a chip's margin; the focal length is set by the
     // short side, the long side sees proportionally more.
@@ -568,20 +442,6 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
   Widget build(BuildContext context) {
     _sync(ref.watch(topologyProvider));
     final election = ref.watch(rootElectionProvider);
-    // A firmware push (rebuilt once per percent, not per chunk).
-    final activity = ref.watch(otaPushViewProvider.select(otaBoardActivity));
-    final appeared = (activity == null) != (_activity == null);
-    _activity = activity;
-    _stored = ref.watch(otaHeldOnBoardProvider);
-    _rollout = ref.watch(otaRolloutOverlayProvider);
-    if (activity == null) {
-      _packets.removeWhere((p) => p.origin == otaPacketOrigin);
-    }
-    if (appeared && _fitted) {
-      // The tablet came or went: frame the picture again.
-      WidgetsBinding.instance
-          .addPostFrameCallback((_) => mounted && !_touring ? _fit() : null);
-    }
 
     final tourKey = _touring && _tourOrder.isNotEmpty
         ? _tourOrder[_tourIndex % _tourOrder.length]
@@ -607,7 +467,7 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
         onKeyEvent: _onKey,
         child: Column(
           children: [
-            const OtaRedeBanner(),
+            const DeviceUpdateRedeLine(),
             Expanded(
               child: LayoutBuilder(builder: (context, c) {
                 final size = Size(c.maxWidth, c.maxHeight);
@@ -624,9 +484,7 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
                   _fitted = true;
                   _fit(animate: false);
                 }
-                // A push is drawn on the central: it is on the map while
-                // one runs, mesh or no mesh.
-                if (_nodes.isEmpty && _activity == null) {
+                if (_nodes.isEmpty) {
                   return const _EmptyGraph();
                 }
                 return Stack(
@@ -663,7 +521,7 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
                                 ? 'Central'
                                 : deviceDisplayName(_nodes[tourKey]!),
                             subtitle: tourKey == graphCentralKey
-                                ? 'Placa + tablet'
+                                ? 'Placa'
                                 : deviceStateLabel(_nodes[tourKey]!),
                             index: _tourIndex % _tourOrder.length + 1,
                             total: _tourOrder.length,
@@ -713,8 +571,6 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
     final candidates = election.electing ? election.candidates : <String>{};
     final order = projected.keys.toList()
       ..sort((a, b) => projected[b]!.depth.compareTo(projected[a]!.depth));
-    final tablet = _tabletPos;
-    final tabletAt = tablet == null ? null : proj.project(tablet);
 
     return Stack(
       clipBehavior: Clip.none,
@@ -731,30 +587,12 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
               depthFade: fade,
               rootMac: election.rootMac,
               candidates: candidates,
-              tablet: tablet,
             ),
           ),
         ),
-        if (tabletAt != null) _tabletChip(tabletAt, fade),
         for (final key in order)
           _chip(key, projected[key]!, fade, election, candidates),
       ],
-    );
-  }
-
-  Widget _tabletChip(Projected pr, double Function(double) fade) {
-    final s = pr.scale.clamp(0.2, 2.8);
-    return Positioned(
-      left: pr.offset.dx - OtaTabletChip.width / 2 * s,
-      top: pr.offset.dy - OtaTabletChip.circle / 2 * s,
-      child: Transform.scale(
-        scale: s,
-        alignment: Alignment.topLeft,
-        child: Opacity(
-          opacity: fade(pr.depth),
-          child: const OtaTabletChip(),
-        ),
-      ),
     );
   }
 
@@ -771,9 +609,8 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
     // graph moves their highlight.
     final light = sphereLightFor(_camera.yaw, _camera.pitch);
     final sprites = _sprites;
-    final pending = node == null ? null : pendingFirmwareFor(node, _stored);
     final child = isCentral
-        ? Central3dChip(light: light, board: _board, activity: _activity)
+        ? Central3dChip(light: light, board: _board)
         // Sensors are smoke detectors: the Blender model once it is loaded.
         : node!.isLeaf && sprites != null
             ? Detector3dChip(
@@ -781,15 +618,12 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
                 sprites: sprites,
                 yaw: _camera.yaw,
                 pitch: _camera.pitch,
-                pending: pending,
               )
             : Device3dChip(
                 node: node,
                 light: light,
                 isRoot: node.online && node.mac == election.rootMac,
                 isCandidate: candidates.contains(node.mac),
-                pending: pending,
-                activity: _rollout[node.mac],
               );
     final w = isCentral ? Central3dChip.width : Device3dChip.width;
     final top = isCentral ? central3dAnchorY : device3dAnchorY;

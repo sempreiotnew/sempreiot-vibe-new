@@ -15,7 +15,7 @@ import '../../../../features/central/application/device_info_provider.dart';
 import '../../../../features/central/presentation/screens/device_access_screen.dart';
 import '../../../../features/central/presentation/screens/central_installation_screen.dart';
 import '../../../../features/central/presentation/screens/device_info_screen.dart';
-import '../../../../features/central/presentation/screens/firmware_update_screen.dart';
+import '../../../../features/central/presentation/screens/device_update_screen.dart';
 import '../../../../features/central/presentation/screens/network_3d_screen.dart';
 import '../../../../features/central/presentation/screens/serial_logs_screen.dart';
 import '../../../../features/installation/presentation/screens/installations_screen.dart';
@@ -57,7 +57,8 @@ class MainDrawer extends ConsumerWidget {
     // Central mode: header shows the central's own name from the "info"
     // metadata (set via FACTORY), not a fixed label.
     final centralName = AppConfig.isCentral
-        ? ((ref.watch(deviceInfoProvider).valueOrNull?['name'] as String?) ?? '')
+        ? ((ref.watch(deviceInfoProvider).valueOrNull?['name'] as String?) ??
+            '')
         : '';
     final headerTitle = restricted
         ? ((saved?.name.isNotEmpty ?? false) ? saved!.name : 'Central')
@@ -82,24 +83,26 @@ class MainDrawer extends ConsumerWidget {
         shape: const RoundedRectangleBorder(),
         child: Column(
           children: [
-            _DrawerHeader(initials: initials, userId: userId, title: headerTitle),
+            _DrawerHeader(
+                initials: initials, userId: userId, title: headerTitle),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 children: [
                   const _SectionLabel('NAVEGAÇÃO'),
                   const SizedBox(height: 4),
                   ...(restricted ? MainTab.centralDetailTabs : MainTab.tabs)
                       .map(
-                        (tab) => _NavItem(
-                          tab: tab,
-                          active: tab == currentTab,
-                          onTap: () {
-                            Navigator.pop(context);
-                            onTabSelected(tab);
-                          },
-                        ),
-                      ),
+                    (tab) => _NavItem(
+                      tab: tab,
+                      active: tab == currentTab,
+                      onTap: () {
+                        Navigator.pop(context);
+                        onTabSelected(tab);
+                      },
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   const _SectionLabel('SISTEMA'),
                   const SizedBox(height: 4),
@@ -188,16 +191,16 @@ class MainDrawer extends ConsumerWidget {
                           ),
                         );
                       }),
-                      // Firmware from the tablet to the board over the
-                      // USB cable (protocol §13.3).
+                      // The firmware update on the Rede map: choose units,
+                      // or update everything (board, nodes, detectors).
                       _DrawerItem(
-                        icon: Icons.system_update_alt_rounded,
-                        label: 'Atualização de firmware',
+                        icon: Icons.system_update_rounded,
+                        label: 'Atualizar dispositivos',
                         onTap: () {
                           Navigator.pop(context);
                           Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (_) => const FirmwareUpdateScreen(),
+                              builder: (_) => const DeviceUpdateScreen(),
                             ),
                           );
                         },

@@ -7,8 +7,6 @@ import '../../../../core/theme/theme_ext.dart';
 import '../../../../core/utils/relative_time.dart';
 import '../../application/device_led_provider.dart';
 import '../../application/device_sound_provider.dart';
-import '../../application/ota_push_report.dart';
-import '../../application/ota_rollout_report.dart';
 import '../../application/safr_downlink_provider.dart';
 import '../../application/topology_provider.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
@@ -59,10 +57,6 @@ Future<void> showDeviceMenu({
       _HeaderEntry(
         node: node,
         all: ref.read(topologyProvider),
-        // An image of this unit's family stored on the board and not
-        // delivered to it (what the board says it holds; protocol §13.6).
-        pendingFirmware:
-            pendingFirmwareFor(node, ref.read(otaHeldOnBoardProvider)),
       ),
       const PopupMenuDivider(height: 1),
       _item(context, _DeviceAction.settings, 'Dispositivo', Icons.tune_rounded,
@@ -235,12 +229,10 @@ class _HeaderEntry extends PopupMenuEntry<_DeviceAction> {
   const _HeaderEntry({
     required this.node,
     required this.all,
-    this.pendingFirmware,
   });
 
   final TopologyNode node;
   final List<TopologyNode> all;
-  final String? pendingFirmware;
 
   @override
   double get height => 120;
@@ -254,11 +246,9 @@ class _HeaderEntry extends PopupMenuEntry<_DeviceAction> {
 
 class _HeaderEntryState extends State<_HeaderEntry> {
   @override
-  Widget build(BuildContext context) =>
-      _MenuHeader(
+  Widget build(BuildContext context) => _MenuHeader(
         node: widget.node,
         all: widget.all,
-        pendingFirmware: widget.pendingFirmware,
       );
 }
 
@@ -267,15 +257,10 @@ class _MenuHeader extends StatelessWidget {
   const _MenuHeader({
     required this.node,
     required this.all,
-    this.pendingFirmware,
   });
 
   final TopologyNode node;
   final List<TopologyNode> all;
-
-  /// Stored on the board for this unit's family, not delivered: the unit
-  /// still runs the version in "Firmware".
-  final String? pendingFirmware;
 
   String? _parentLabel() {
     final mac = node.parentMac;
@@ -410,10 +395,6 @@ class _MenuHeader extends StatelessWidget {
               node.firmwareLabel.isEmpty ? '—' : node.firmwareLabel,
               valueColor:
                   node.firmwareLabel.isEmpty ? context.textSecondary : null),
-          if (pendingFirmware != null)
-            _fact(context, Icons.inventory_2_outlined, 'Na placa',
-                '$pendingFirmware (ainda não enviado)',
-                valueColor: AppColors.warning, maxLines: 2),
         ],
       ),
     );

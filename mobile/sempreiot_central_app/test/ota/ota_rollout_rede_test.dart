@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sempreiot_central_app/core/database/app_database.dart';
-import 'package:sempreiot_central_app/core/theme/app_colors.dart';
 import 'package:sempreiot_central_app/features/central/application/alarm_latch_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_board_events_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_controller.dart';
@@ -19,12 +18,15 @@ import 'package:sempreiot_central_app/features/central/application/root_election
 import 'package:sempreiot_central_app/features/central/application/safr_traffic_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/serial_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/topology_provider.dart';
+import 'package:sempreiot_central_app/features/central/data/services/firmware_library_store.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_product.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
-import 'package:sempreiot_central_app/features/central/presentation/screens/firmware_update_screen.dart';
+import 'package:sempreiot_central_app/features/central/presentation/screens/device_update_screen.dart';
 import 'package:sempreiot_central_app/features/central/presentation/screens/network_3d_screen.dart';
 import 'package:sempreiot_central_app/features/central/presentation/screens/topology_screen.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/device_avatar.dart';
+
+import 'fake_library.dart';
 
 /// The Rede screens (map and 3D) while the board sends its image to the
 /// units and after it: who is being updated and how far, who waits, who is
@@ -54,8 +56,8 @@ class _Rollout extends OtaRolloutController {
 
 class _Root extends RootElectionNotifier {
   _Root(super.db, String? root) {
-    state = RootElectionState(
-        rootMac: root, candidates: {if (root != null) root});
+    state =
+        RootElectionState(rootMac: root, candidates: {if (root != null) root});
   }
 
   @override
@@ -237,6 +239,7 @@ void main() {
           otaPushProvider.overrideWith((ref) => _Push(ref)),
           otaRolloutProvider
               .overrideWith((ref) => _Rollout(ref, ref.read(_shown))),
+          firmwareLibraryStoreProvider.overrideWithValue(MemoryFirmwareStore()),
         ],
         child: MaterialApp(home: home),
       ),
@@ -264,281 +267,68 @@ void main() {
   const skipped = ValueKey('ota-unit-skipped');
   const pending = ValueKey('fw-pending');
 
-  Finder inBanner(Finder f) =>
-      find.descendant(of: find.byKey(banner), matching: f);
+  const line = ValueKey('device-update-rede-line');
 
   final screens = <String, Widget Function()>{
     'Rede': () => const TopologyScreen(),
     'Rede 3D': () => const Network3dScreen(),
   };
 
+  // Rede is the alarm view: a rollout is drawn on "Atualizar dispositivos"
+  // only. Here: one quiet line, the way there, and "Atualizando" for a unit
+  // that restarts (supervision, not a drawing of the update).
   for (final screen in screens.entries) {
     group(screen.key, () {
       for (final s in sizes.entries) {
-        testWidgets('a unit downloads: ring, phase, who waits, who is done — '
+        testWidgets(
+            'a unit downloads: nothing of it drawn, one line — '
             '${s.key}', (tester) async {
-          await pump(tester, s.value, screen.value(), rolling(),
-              nodes: mesh(updating: _button));
-          expect(tester.takeException(), isNull);
-
-          // The banner: what is going where, which of how many, how far.
-          expect(find.byKey(banner), findsOneWidget);
-          expect(
-            inBanner(find.text(
-                'Atualização: placa → Botoeira garagem (2 de 3)')),
-            findsOneWidget,
-          );
-          final far = inBanner(find.text('40 %'));
-          expect(far, findsOneWidget);
-          expect(tester.getRect(far).right,
-              lessThan(tester.getRect(find.byKey(banner)).right));
-          expect(find.byTooltip('Fechar aviso'), findsNothing);
-          final bar = tester
-              .widget<LinearProgressIndicator>(
-                  inBanner(find.byType(LinearProgressIndicator)));
-          expect(bar.value, closeTo(0.4, 1e-9));
-
-          // One ring on the whole map, around the unit that downloads; the
-          // board has none, and no tablet is drawn: this is not a push.
-          expect(find.byKey(ring), findsOneWidget);
-          final indicator = tester.widget<CircularProgressIndicator>(
-            find.descendant(
-              of: find.byKey(ring),
-              matching: find.byType(CircularProgressIndicator),
-            ),
-          );
-          expect(indicator.value, closeTo(0.4, 1e-9));
-          expect(indicator.color, AppColors.secondary,
-              reason: 'the app\'s accent colour, not an LED colour');
+          await pump(tester, s.value, screen.value(), rolling());
+          expect(find.byKey(line), findsOneWidget);
+          expect(find.text('A placa está atualizando dispositivos'),
+              findsOneWidget);
+          for (final k in [ring, caption, waiting, done, failed, skipped]) {
+            expect(find.byKey(k), findsNothing, reason: '$k');
+          }
+          expect(find.byKey(banner), findsNothing);
+          expect(find.byKey(pushBanner), findsNothing);
           expect(find.byKey(boardRing), findsNothing);
           expect(find.byKey(tablet), findsNothing);
-          expect(find.byKey(pushBanner), findsNothing);
-          expect(find.text('CENTRAL'), findsOneWidget);
-
-          // Under the names.
-          expect(find.byKey(caption), findsOneWidget);
-          expect(find.text('baixando 40 %'), findsOneWidget);
-          expect(find.byKey(waiting), findsOneWidget);
-          expect(find.text('por último'), findsOneWidget,
-              reason: 'the root waits for everybody else');
-          expect(find.byKey(done), findsOneWidget);
-          expect(find.text('v0.2.0'), findsOneWidget,
-              reason: 'the unit that is done shows its new version');
-          expect(find.byKey(failed), findsNothing);
-          // The battery detector is in no rollout: as every other day.
-          expect(find.text('Detector sala'), findsOneWidget);
-
-          // The banner sits inside the screen.
-          final view = tester.view.physicalSize / tester.view.devicePixelRatio;
-          final rect = tester.getRect(find.byKey(banner));
-          expect(rect.left, greaterThanOrEqualTo(0));
-          expect(rect.right, lessThanOrEqualTo(view.width));
-          expect(rect.height, lessThan(76), reason: 'a strip, not a panel');
-
-          // A packet leaves the board every so often while it downloads.
-          await tester.pump(const Duration(milliseconds: 1600));
-          await tester.pump(const Duration(milliseconds: 1600));
-          expect(tester.takeException(), isNull);
-        });
-
-        testWidgets('it ended with a failure — ${s.key}', (tester) async {
-          await pump(tester, s.value, screen.value(), rolling());
-          await move(
-            tester,
-            rollout(
-              SafrOtaRolloutState.partial,
-              [
-                row(_root, SafrOtaUnitState.done, version: '0.2.0'),
-                row(_siren, SafrOtaUnitState.done, version: '0.2.0'),
-                row(_button, SafrOtaUnitState.failed, reason: 8),
-              ],
-              endedAt: DateTime(2026, 9, 29, 14, 6),
-            ),
-          );
-          expect(tester.takeException(), isNull);
-
-          expect(
-            inBanner(find.text('Atualização parcial: 2 atualizados, 1 com '
-                'falha, de 3 · versão 0.2.0')),
-            findsOneWidget,
-          );
-          expect(find.byKey(ring), findsNothing);
-          expect(find.byKey(caption), findsNothing);
-          expect(find.byKey(done), findsNWidgets(2));
-          expect(find.byKey(failed), findsOneWidget);
-          expect(find.text('falhou'), findsOneWidget);
-          expect(find.text('v0.2.0'), findsNWidgets(2));
-          // The one that failed runs what it ran.
-          expect(find.text('v0.1.0'), findsWidgets);
-
-          final rect = tester.getRect(find.byKey(banner));
-          final view = tester.view.physicalSize / tester.view.devicePixelRatio;
-          expect(rect.right, lessThanOrEqualTo(view.width));
-          expect(rect.height, lessThan(76));
-
-          // Closed: the banner and the markers leave; the versions stay.
-          await tester.tap(find.byTooltip('Fechar aviso'));
-          await tester.pump();
-          await tester.pump(const Duration(milliseconds: 50));
-          expect(find.byKey(banner), findsNothing);
-          expect(find.byKey(done), findsNothing);
-          expect(find.byKey(failed), findsNothing);
           expect(tester.takeException(), isNull);
         });
       }
 
-      testWidgets('nothing sent yet: what waits on the board, as in a push',
-          (tester) async {
-        await pump(tester, const Size(1280, 800), screen.value(), staged);
-        expect(find.byKey(banner), findsNothing);
-        expect(find.byKey(ring), findsNothing);
-        expect(find.byKey(waiting), findsNothing);
-        // Three mains units run 0.1.0 and 0.2.0 waits for them.
-        expect(find.byKey(pending), findsNWidgets(3));
-        expect(tester.takeException(), isNull);
-      });
-
-      testWidgets('the phases of a unit, one after the other', (tester) async {
-        await pump(tester, const Size(1280, 800), screen.value(),
-            rolling(button: SafrOtaUnitState.offered, percent: 0),
-            nodes: mesh(updating: _button));
-        expect(find.text('oferta enviada'), findsNWidgets(2),
-            reason: 'under the unit and on the banner');
-        expect(inBanner(find.text('oferta enviada')), findsOneWidget);
-        CircularProgressIndicator indicator() =>
-            tester.widget<CircularProgressIndicator>(find.descendant(
-              of: find.byKey(ring),
-              matching: find.byType(CircularProgressIndicator),
-            ));
-        expect(indicator().value, isNull,
-            reason: 'no number to show: the ring turns');
-
-        await move(tester, rolling(percent: 10));
-        expect(find.text('baixando 10 %'), findsOneWidget);
-        expect(indicator().value, closeTo(0.1, 1e-9));
-        await move(tester, rolling(percent: 90));
-        expect(find.text('baixando 90 %'), findsOneWidget);
-        expect(inBanner(find.text('90 %')), findsOneWidget);
-
-        await move(tester,
-            rolling(button: SafrOtaUnitState.verifying, percent: 100));
-        expect(find.text('verificando'), findsNWidgets(2),
-            reason: 'under the unit and on the banner');
-        expect(indicator().value, isNull);
-        expect(inBanner(find.byType(LinearProgressIndicator)), findsNothing);
-
-        await move(tester,
-            rolling(button: SafrOtaUnitState.rebooting, percent: 100));
-        expect(find.text('reiniciando'), findsNWidgets(2));
-
-        await move(tester,
-            rolling(button: SafrOtaUnitState.selfTest, percent: 100));
-        expect(find.text('autoteste'), findsNWidgets(2));
-        expect(find.byKey(ring), findsOneWidget);
-
-        // Done: its ring leaves, the next unit is the root.
+      testWidgets('it ended: the line goes away', (tester) async {
+        await pump(tester, const Size(1280, 800), screen.value(), rolling());
+        expect(find.byKey(line), findsOneWidget);
         await move(
-          tester,
-          rollout(SafrOtaRolloutState.rolling, [
-            row(_root, SafrOtaUnitState.downloading, percent: 20),
-            row(_siren, SafrOtaUnitState.done, version: '0.2.0'),
-            row(_button, SafrOtaUnitState.done, version: '0.2.0'),
-          ]),
-        );
-        expect(
-          inBanner(find.text(
-              'Atualização: placa → Repetidor escada (3 de 3)')),
-          findsOneWidget,
-        );
-        expect(find.byKey(ring), findsOneWidget);
-        expect(find.text('baixando 20 %'), findsOneWidget);
-        expect(find.text('por último'), findsNothing);
-        expect(find.byKey(done), findsNWidgets(2));
-        expect(tester.takeException(), isNull);
-      });
-
-      testWidgets('paused by an alarm', (tester) async {
-        await pump(
-          tester,
-          const Size(360, 640),
-          screen.value(),
-          rollout(
-            SafrOtaRolloutState.paused,
-            [
-              row(_root, SafrOtaUnitState.waiting),
-              row(_siren, SafrOtaUnitState.done, version: '0.2.0'),
-              row(_button, SafrOtaUnitState.waiting),
-            ],
-            cause: OtaPauseCause.alarm,
-          ),
-        );
-        expect(
-          inBanner(find.text(
-              'Atualização pausada por alarme: 1 de 3 concluídos')),
-          findsOneWidget,
-        );
-        expect(inBanner(find.text('pausado')), findsOneWidget);
-        expect(find.byKey(ring), findsNothing);
-        expect(find.byKey(waiting), findsNWidgets(2));
-        expect(find.text('aguardando'), findsOneWidget);
-        expect(find.text('por último'), findsOneWidget);
-        expect(find.byTooltip('Fechar aviso'), findsNothing,
-            reason: 'it is not over');
-        expect(tester.takeException(), isNull);
-      });
-
-      testWidgets('it ended well', (tester) async {
-        await pump(tester, const Size(640, 360), screen.value(), rolling());
-        await move(
-          tester,
-          rollout(
-            SafrOtaRolloutState.done,
-            [
+            tester,
+            rollout(SafrOtaRolloutState.done, [
               row(_root, SafrOtaUnitState.done, version: '0.2.0'),
               row(_siren, SafrOtaUnitState.done, version: '0.2.0'),
-              row(_button, SafrOtaUnitState.skipped,
-                  reason: 1, version: '0.2.0'),
-            ],
-            endedAt: DateTime(2026, 9, 29, 14, 6),
-          ),
-        );
-        expect(
-          inBanner(find.text('Atualização concluída: 2 atualizados, 1 '
-              'ignorado, de 3 · versão 0.2.0')),
-          findsOneWidget,
-        );
-        expect(find.byKey(done), findsNWidgets(2));
-        expect(find.byKey(skipped), findsOneWidget);
-        expect(find.text('ignorado'), findsOneWidget);
-        expect(tester.takeException(), isNull);
-      });
-
-      testWidgets('a rollout that was over before the app looked: no news',
-          (tester) async {
-        await pump(
-          tester,
-          const Size(1280, 800),
-          screen.value(),
-          rollout(SafrOtaRolloutState.done, [
-            row(_siren, SafrOtaUnitState.done, version: '0.2.0'),
-          ]),
-        );
-        expect(find.byKey(banner), findsNothing);
+              row(_button, SafrOtaUnitState.done, version: '0.2.0'),
+            ]));
+        expect(find.byKey(line), findsNothing);
         expect(find.byKey(done), findsNothing);
-        expect(tester.takeException(), isNull);
       });
 
-      testWidgets('a tap on the banner opens the update screen',
-          (tester) async {
+      testWidgets('nothing sent yet: no marker on the units', (tester) async {
+        await pump(tester, const Size(1280, 800), screen.value(), staged);
+        expect(find.byKey(pending), findsNothing);
+        expect(find.byKey(line), findsNothing);
+      });
+
+      testWidgets('the line opens "Atualizar dispositivos"', (tester) async {
         await pump(tester, const Size(800, 1280), screen.value(), rolling());
-        await tester.tap(find.byKey(banner));
+        await tester.tap(find.byKey(line));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 500));
-        expect(find.byType(FirmwareUpdateScreen), findsOneWidget);
+        expect(find.byType(DeviceUpdateScreen), findsOneWidget);
         expect(tester.takeException(), isNull);
       });
 
-      testWidgets('a unit that restarts is "Atualizando" in its menu, never '
+      testWidgets(
+          'a unit that restarts is "Atualizando" in its menu, never '
           '"Sem comunicação"', (tester) async {
         final nodes = mesh(updating: _root, silent: true);
         await pump(
@@ -552,7 +342,6 @@ void main() {
           ]),
           nodes: nodes,
         );
-        expect(find.text('reiniciando'), findsNWidgets(2));
         expect(deviceStateLabel(nodes.firstWhere((n) => n.mac == _root)),
             'Atualizando');
 

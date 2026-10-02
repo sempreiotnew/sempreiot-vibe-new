@@ -108,7 +108,7 @@ void main() {
   /// two, stealing a third of a landscape screen).
   void expectSingleLineStrip(WidgetTester tester) {
     final strip = tester.getRect(find.byWidgetPredicate(
-        (w) => w.runtimeType.toString() == '_MeshStatusBar'));
+        (w) => w.runtimeType.toString() == 'MeshStatusBar'));
     expect(strip.height, lessThan(60), reason: 'status strip is one line');
   }
 

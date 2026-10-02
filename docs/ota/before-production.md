@@ -22,7 +22,7 @@ means removing both.
 | 5 | **The images are signed with the development key** | There is no production key yet | `~/.sempreiot/keys/sempreiot_dev_signing_key.pem` (`docs/ota/signing-key.md`) | the production key, made on a machine that is not a developer laptop, backed up in two places; every production unit flashed once with images signed by it | `ci/check.sh --release` compares the fingerprint of the key in use with the development key's |
 | 6 | The version is a pre-release (`0.1.0-dev`) | Nothing was released yet | `firmware/VERSION` | a release number from the git tag (OTA brief decision 12) | `ci/check.sh --release` |
 | 7 | **No hardware security:** anyone with a cable can flash any image or read the flash | Stage 1 is reversible, stage 2 burns eFuses | Secure Boot V2 + flash encryption (`docs/ota/secure-signed-firmware-howto.md` §4) | on, production units only | not automated — OTA blueprint Phase 6 |
-| 8 | **The firmware update screen has no PIN of its own** | Open decision, asked 2026-09-29, not answered | `firmware_update_screen.dart` (no `EditorGate`) | to be decided: Master / Nível 4 PIN like the other maintenance actions | not automated |
+| 8 | **The firmware update screen has no PIN of its own** | Open decision, asked 2026-09-29, not answered | `device_update_screen.dart` — "Atualizar dispositivos" (no `EditorGate`) | to be decided: Master / Nível 4 PIN like the other maintenance actions | not automated |
 | 9 | The update history is not kept: the push log lives in memory | Step 1 scope | `otaPushProvider` | persisted per unit (OTA brief decision 9; a new table, reference §3.6.1) | not automated — OTA brief step 3 |
 
 ## When the version rule comes back (item 1)

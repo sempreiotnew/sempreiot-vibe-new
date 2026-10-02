@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sempreiot_central_app/features/central/application/ota_push_report.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_state.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_rollout_report.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_rollout_state.dart';
@@ -8,7 +7,6 @@ import 'package:sempreiot_central_app/features/central/application/topology_prov
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_product.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/firmware_update_widgets.dart';
-import 'package:sempreiot_central_app/features/central/presentation/widgets/ota_rollout_widgets.dart';
 
 /// What a rollout means, in words and for the maps (protocol §13.6): pure
 /// functions over a state.
@@ -71,13 +69,6 @@ void main() {
         families: {for (final f in families) f.family: f},
       );
 
-  String nameOf(String mac) => switch (mac) {
-        root => 'Repetidor escada',
-        siren => 'Sirene hall',
-        button => 'Botoeira garagem',
-        _ => mac,
-      };
-
   group('what the board holds', () {
     test('the board\'s headers, when it answered', () {
       final s = state([
@@ -86,63 +77,23 @@ void main() {
       ]);
       expect(otaHeldOnBoard(s, const {node: '0.1.9'}),
           {node: '0.2.0', leaf: '0.3.1'});
-      expect(otaNothingSentYet(s, node), isTrue);
-      expect(otaNothingSentYet(s, leaf), isFalse);
     });
 
     test('this session\'s memory, when it never did', () {
       const session = {node: '0.1.9'};
       expect(otaHeldOnBoard(const OtaRolloutState(), session), session);
       expect(
-          otaHeldOnBoard(
-              const OtaRolloutState(boardAnswered: false), session),
+          otaHeldOnBoard(const OtaRolloutState(boardAnswered: false), session),
           session);
-      expect(otaNothingSentYet(const OtaRolloutState(), node), isTrue);
     });
 
     test('a header with no version holds nothing', () {
       final s = state([family(SafrOtaRolloutState.staged, target: '')]);
       expect(otaHeldOnBoard(s, const {node: '0.1.9'}), isEmpty);
     });
-
-    test('the line of the link card', () {
-      expect(otaHeldLine(node, '0.2.0', null),
-          'firmware de rede elétrica 0.2.0 · ainda não enviado aos dispositivos');
-      expect(
-          otaHeldLine(node, '0.2.0', family(SafrOtaRolloutState.rolling)),
-          'firmware de rede elétrica 0.2.0 · sendo enviado aos dispositivos');
-      expect(otaHeldLine(node, '0.2.0', family(SafrOtaRolloutState.paused)),
-          'firmware de rede elétrica 0.2.0 · envio aos dispositivos pausado');
-      expect(otaHeldLine(node, '0.2.0', family(SafrOtaRolloutState.done)),
-          'firmware de rede elétrica 0.2.0 · enviado aos dispositivos');
-      expect(
-          otaHeldLine(node, '0.2.0', family(SafrOtaRolloutState.partial)),
-          'firmware de rede elétrica 0.2.0 · enviado a parte dos dispositivos');
-      expect(otaHeldLine(leaf, '0.3.1', family(SafrOtaRolloutState.staged)),
-          'firmware de bateria 0.3.1 · ainda não enviado aos dispositivos');
-    });
   });
 
   group('the header', () {
-    test('ENVIANDO, PAUSADO, PAUSADO POR ALARME, CONCLUÍDO, PARCIAL', () {
-      expect(otaRolloutHeadline(family(SafrOtaRolloutState.rolling)),
-          'ENVIANDO');
-      expect(otaRolloutHeadline(family(SafrOtaRolloutState.paused)),
-          'PAUSADO');
-      expect(
-          otaRolloutHeadline(family(SafrOtaRolloutState.paused,
-              cause: OtaPauseCause.operator)),
-          'PAUSADO');
-      expect(
-          otaRolloutHeadline(family(SafrOtaRolloutState.paused,
-              cause: OtaPauseCause.alarm)),
-          'PAUSADO POR ALARME');
-      expect(otaRolloutHeadline(family(SafrOtaRolloutState.done)),
-          'CONCLUÍDO');
-      expect(otaRolloutHeadline(family(SafrOtaRolloutState.partial)),
-          'PARCIAL');
-    });
-
     test('counts', () {
       final f = family(SafrOtaRolloutState.partial, units: [
         row(root, SafrOtaUnitState.done),
@@ -190,8 +141,8 @@ void main() {
           'Ignorado',
         ],
       );
-      expect(otaUnitStateLog(SafrOtaUnitState.downloading, 70),
-          'baixando 70 %');
+      expect(
+          otaUnitStateLog(SafrOtaUnitState.downloading, 70), 'baixando 70 %');
     });
 
     test('every reason has words of its own, none about the push', () {
@@ -212,14 +163,13 @@ void main() {
           'Motivo desconhecido (código 42).');
       expect(otaReasonLogText(8),
           'motivo 8: o dispositivo não conseguiu baixar a imagem da placa');
-      expect(otaReasonLogText(42),
-          'motivo 42: motivo desconhecido (código 42)');
+      expect(
+          otaReasonLogText(42), 'motivo 42: motivo desconhecido (código 42)');
       expect(otaReasonLogText(0), 'motivo 0');
     });
 
     test('the tries: ATTEMPTS counts the offers that failed', () {
-      expect(otaAttemptsText(row(siren, SafrOtaUnitState.downloading)),
-          isNull);
+      expect(otaAttemptsText(row(siren, SafrOtaUnitState.downloading)), isNull);
       expect(
           otaAttemptsText(
               row(siren, SafrOtaUnitState.waiting, attempts: 1, reason: 8)),
@@ -230,57 +180,22 @@ void main() {
           '2ª tentativa');
       expect(otaAttemptsText(row(siren, SafrOtaUnitState.done, attempts: 1)),
           'na 2ª tentativa');
-      expect(
-          otaAttemptsText(row(siren, SafrOtaUnitState.failed, attempts: 2)),
+      expect(otaAttemptsText(row(siren, SafrOtaUnitState.failed, attempts: 2)),
           '2 tentativas');
-      expect(
-          otaAttemptsText(row(siren, SafrOtaUnitState.failed, attempts: 1)),
+      expect(otaAttemptsText(row(siren, SafrOtaUnitState.failed, attempts: 1)),
           '1 tentativa');
-      expect(
-          otaAttemptsText(row(siren, SafrOtaUnitState.skipped, attempts: 1)),
+      expect(otaAttemptsText(row(siren, SafrOtaUnitState.skipped, attempts: 1)),
           isNull);
-    });
-
-    test('"versão agora → alvo"', () {
-      expect(
-          otaVersionChangeText(row(siren, SafrOtaUnitState.waiting), '0.2.0'),
-          '0.1.0 → 0.2.0');
-      // The board does not know what it runs: the registry may.
-      expect(
-          otaVersionChangeText(
-              row(siren, SafrOtaUnitState.waiting, version: ''), '0.2.0',
-              known: '0.1.0-dev'),
-          '0.1.0-dev → 0.2.0');
-      expect(
-          otaVersionChangeText(
-              row(siren, SafrOtaUnitState.waiting, version: ''), '0.2.0'),
-          '— → 0.2.0');
-      expect(
-          otaVersionChangeText(
-              row(siren, SafrOtaUnitState.done, version: '0.2.0'), '0.2.0'),
-          '0.1.0 → 0.2.0');
-      expect(
-          otaVersionChangeText(
-              row(siren, SafrOtaUnitState.done,
-                  version: '0.2.0', before: null),
-              '0.2.0'),
-          '0.2.0');
-      // Failed: it runs what it ran, the target is still the target.
-      expect(
-          otaVersionChangeText(
-              row(siren, SafrOtaUnitState.failed, reason: 9), '0.2.0'),
-          '0.1.0 → 0.2.0');
     });
 
     test('a row of the table, for the log', () {
       expect(
-          otaUnitRowLog(row(siren, SafrOtaUnitState.failed,
-              attempts: 2, reason: 10)),
+          otaUnitRowLog(
+              row(siren, SafrOtaUnitState.failed, attempts: 2, reason: 10)),
           'falhou, 2 tentativas, motivo 10: o dispositivo não respondeu a '
           'tempo, versão 0.1.0');
       expect(
-          otaUnitRowLog(
-              row(siren, SafrOtaUnitState.downloading, percent: 30)),
+          otaUnitRowLog(row(siren, SafrOtaUnitState.downloading, percent: 30)),
           'baixando 30 %, versão 0.1.0');
     });
 
@@ -302,151 +217,19 @@ void main() {
     });
 
     test('the filter, in words', () {
-      expect(otaFilterText(const SafrOtaFilter.all()),
-          'todos os dispositivos');
+      expect(otaFilterText(const SafrOtaFilter.all()), 'todos os dispositivos');
       expect(otaFilterText(const SafrOtaFilter.product(0x0201)),
           'produto Sirene (0x0201)');
       expect(otaFilterText(const SafrOtaFilter.product(0x0277)),
           'produto Produto desconhecido 0x0277 (0x0277)');
-      expect(otaFilterText(const SafrOtaFilter.zone('Térreo')),
-          'zona "Térreo"');
-      expect(otaFilterText(const SafrOtaFilter.unit(siren)),
-          'dispositivo $siren');
+      expect(
+          otaFilterText(const SafrOtaFilter.zone('Térreo')), 'zona "Térreo"');
+      expect(
+          otaFilterText(const SafrOtaFilter.unit(siren)), 'dispositivo $siren');
       expect(
           otaFilterText(const SafrOtaFilter.unit(siren),
               unitName: 'Sirene hall'),
           'dispositivo Sirene hall ($siren)');
-    });
-  });
-
-  group('the banner', () {
-    final units = [
-      row(root, SafrOtaUnitState.waiting),
-      row(siren, SafrOtaUnitState.done, version: '0.2.0'),
-      row(button, SafrOtaUnitState.downloading, percent: 40),
-    ];
-
-    test('what is going where, which of how many, how far', () {
-      final b = otaRolloutBanner(
-        state([family(SafrOtaRolloutState.rolling, units: units)]),
-        nameOf: nameOf,
-      )!;
-      expect(b.kind, OtaRolloutBannerKind.rolling);
-      expect(b.line, 'Atualização: placa → Botoeira garagem (2 de 3)');
-      expect(b.tail, '40 %');
-      expect(b.fullLine,
-          'Atualização: placa → Botoeira garagem (2 de 3) · 40 %');
-      expect(b.progress, closeTo(0.4, 1e-9));
-      expect(b.running, isTrue);
-      expect(b.tone, OtaReportTone.progress);
-    });
-
-    test('a phase with no number', () {
-      final b = otaRolloutBanner(
-        state([
-          family(SafrOtaRolloutState.rolling, units: [
-            row(siren, SafrOtaUnitState.selfTest, percent: 100),
-          ]),
-        ]),
-        nameOf: nameOf,
-      )!;
-      expect(b.fullLine, 'Atualização: placa → Sirene hall (1 de 1) · '
-          'autoteste');
-      expect(b.progress, isNull);
-    });
-
-    test('between two units', () {
-      final b = otaRolloutBanner(
-        state([
-          family(SafrOtaRolloutState.rolling, units: [
-            row(root, SafrOtaUnitState.waiting),
-            row(siren, SafrOtaUnitState.done),
-          ]),
-        ]),
-        nameOf: nameOf,
-      )!;
-      expect(b.line, 'Atualização: placa → dispositivos de rede elétrica '
-          '(1 de 2 concluídos)');
-      expect(b.tail, 'próximo');
-    });
-
-    test('paused', () {
-      final b = otaRolloutBanner(
-        state([
-          family(SafrOtaRolloutState.paused,
-              units: units, cause: OtaPauseCause.alarm),
-        ]),
-        nameOf: nameOf,
-      )!;
-      expect(b.kind, OtaRolloutBannerKind.paused);
-      expect(b.line, 'Atualização pausada por alarme: 1 de 3 concluídos · '
-          'Botoeira garagem termina a sua');
-      expect(b.tail, 'pausado');
-      expect(b.running, isTrue);
-      expect(b.tone, OtaReportTone.warning);
-    });
-
-    test('done and partial are news only when this session saw them end',
-        () {
-      final ended = DateTime(2026, 9, 29, 14, 6);
-      final done = [
-        row(root, SafrOtaUnitState.done),
-        row(siren, SafrOtaUnitState.done),
-      ];
-      expect(
-          otaRolloutBanner(
-              state([family(SafrOtaRolloutState.done, units: done)]),
-              nameOf: nameOf),
-          isNull);
-      final b = otaRolloutBanner(
-        state([
-          family(SafrOtaRolloutState.done, units: done, endedAt: ended),
-        ]),
-        nameOf: nameOf,
-      )!;
-      expect(b.kind, OtaRolloutBannerKind.done);
-      expect(b.line,
-          'Atualização concluída: 2 de 2 dispositivos na versão 0.2.0');
-      expect(b.tail, isNull);
-      expect(b.running, isFalse);
-      expect(b.endedAt, ended);
-      expect(b.tone, OtaReportTone.good);
-
-      final p = otaRolloutBanner(
-        state([
-          family(SafrOtaRolloutState.partial,
-              units: [
-                row(root, SafrOtaUnitState.done),
-                row(siren, SafrOtaUnitState.failed, reason: 9),
-              ],
-              endedAt: ended),
-        ]),
-        nameOf: nameOf,
-      )!;
-      expect(p.line, 'Atualização parcial: 1 atualizado, 1 com falha, de 2 · '
-          'versão 0.2.0');
-      expect(p.tone, OtaReportTone.warning, reason: 'never the green');
-
-      // Closed by the operator.
-      expect(
-        otaRolloutBanner(
-          state([
-            family(SafrOtaRolloutState.done, units: done, endedAt: ended),
-          ]),
-          nameOf: nameOf,
-          dismissed: ended,
-        ),
-        isNull,
-      );
-    });
-
-    test('nothing to say: staged, nothing at all', () {
-      expect(
-          otaRolloutBanner(state([family(SafrOtaRolloutState.staged)]),
-              nameOf: nameOf),
-          isNull);
-      expect(otaRolloutBanner(const OtaRolloutState(), nameOf: nameOf),
-          isNull);
     });
   });
 
@@ -510,8 +293,7 @@ void main() {
       expect(o.downloading, siren);
     });
 
-    test('equal when it reads the same: a map is rebuilt once per change',
-        () {
+    test('equal when it reads the same: a map is rebuilt once per change', () {
       OtaRolloutOverlay at(int percent) => otaRolloutOverlay(state([
             family(SafrOtaRolloutState.rolling, units: [
               row(siren, SafrOtaUnitState.downloading, percent: percent),
@@ -520,14 +302,14 @@ void main() {
       expect(at(40), at(40));
       expect(at(40).hashCode, at(40).hashCode);
       expect(at(40) == at(50), isFalse);
-      expect(otaRolloutOverlay(const OtaRolloutState()),
-          OtaRolloutOverlay.none);
       expect(
-          otaRolloutOverlay(state([family(SafrOtaRolloutState.staged)])),
+          otaRolloutOverlay(const OtaRolloutState()), OtaRolloutOverlay.none);
+      expect(otaRolloutOverlay(state([family(SafrOtaRolloutState.staged)])),
           OtaRolloutOverlay.none);
     });
 
-    test('over before the app looked: nothing on the map; seen ending: there '
+    test(
+        'over before the app looked: nothing on the map; seen ending: there '
         'until closed', () {
       final ended = DateTime(2026, 9, 29, 14, 6);
       final rows = [row(siren, SafrOtaUnitState.done, version: '0.2.0')];
@@ -539,8 +321,7 @@ void main() {
         family(SafrOtaRolloutState.done, units: rows, endedAt: ended),
       ]);
       expect(otaRolloutOverlay(seen)[siren]!.state, SafrOtaUnitState.done);
-      expect(otaRolloutOverlay(seen, dismissed: ended),
-          OtaRolloutOverlay.none);
+      expect(otaRolloutOverlay(seen, dismissed: ended), OtaRolloutOverlay.none);
     });
 
     TopologyNode unit(String mac, int layer, String? parent) => TopologyNode(
@@ -582,80 +363,6 @@ void main() {
             unit(button, 2, siren),
           ], siren, '@central'),
           ['@central', button, siren]);
-    });
-  });
-
-  group('who can be updated', () {
-    TopologyNode unit(
-      String mac, {
-      String? name,
-      String? zone,
-      int? product,
-      bool online = true,
-      SafrNodeRole role = SafrNodeRole.node,
-      int layer = 2,
-      SafrDeviceState? board,
-    }) =>
-        TopologyNode(
-          mac: mac,
-          role: role,
-          layer: layer,
-          parentMac: null,
-          rssi: -60,
-          batteryPct: null,
-          online: online,
-          lastSeenAt: t0,
-          alarmLatched: false,
-          name: name,
-          zone: zone,
-          productCode: product,
-          boardState: board,
-        );
-
-    final nodes = [
-      unit('B', layer: 0, role: SafrNodeRole.root, product: 0x0100),
-      unit(root, name: 'Repetidor', zone: 'Térreo', product: 0x0204, layer: 1),
-      unit(siren, name: 'sirene hall', zone: 'Térreo', product: 0x0201),
-      unit(button, name: 'Botoeira', zone: 'Garagem', product: 0x0202),
-      unit('S2',
-          name: 'Sirene 2', zone: 'Garagem', product: 0x0201, online: false),
-      unit('OLD'), // never said its product
-      unit('GONE',
-          name: 'Aposentado',
-          product: 0x0201,
-          board: SafrDeviceState.retired),
-      unit('L', role: SafrNodeRole.leaf, product: 0x0301, zone: 'Térreo'),
-    ];
-
-    test('the units of the family, by name; the board and the leaves are not',
-        () {
-      final c = OtaRolloutCandidates.of(nodes, node);
-      expect(c.units.map((n) => n.mac), [button, root, 'S2', siren]);
-      expect(c.unknownProduct.map((n) => n.mac), ['OLD']);
-      final l = OtaRolloutCandidates.of(nodes, leaf);
-      expect(l.units.map((n) => n.mac), ['L']);
-    });
-
-    test('the products and the zones that are there', () {
-      final c = OtaRolloutCandidates.of(nodes, node);
-      expect(c.products.map((p) => p.code), [0x0201, 0x0202, 0x0204]);
-      expect(c.zones, ['Garagem', 'Térreo']);
-    });
-
-    test('the board queues who is online and passes the filter', () {
-      final c = OtaRolloutCandidates.of(nodes, node);
-      expect(c.reachable(const SafrOtaFilter.all()).map((n) => n.mac),
-          [button, root, siren]);
-      expect(c.passing(const SafrOtaFilter.all()), hasLength(4));
-      expect(
-          c.reachable(const SafrOtaFilter.product(0x0201)).map((n) => n.mac),
-          [siren]);
-      expect(c.passing(const SafrOtaFilter.product(0x0201)), hasLength(2));
-      expect(c.reachable(const SafrOtaFilter.zone('Garagem')).map((n) => n.mac),
-          [button]);
-      expect(c.reachable(const SafrOtaFilter.unit('S2')), isEmpty);
-      expect(c.reachable(const SafrOtaFilter.unit(root)).single.mac, root);
-      expect(c.reachable(const SafrOtaFilter.zone('Cobertura')), isEmpty);
     });
   });
 

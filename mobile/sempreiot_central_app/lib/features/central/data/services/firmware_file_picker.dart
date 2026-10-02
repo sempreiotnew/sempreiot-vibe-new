@@ -23,6 +23,10 @@ class FirmwarePickException implements Exception {
 abstract class FirmwareFilePicker {
   /// Null = the operator gave up.
   Future<PickedFirmware?> pick();
+
+  /// Several files at once (the three images of a version); empty = the
+  /// operator gave up.
+  Future<List<PickedFirmware>> pickMany();
 }
 
 /// The system file chooser. Any file can be chosen: what decides whether it
@@ -50,6 +54,27 @@ class SystemFirmwareFilePicker implements FirmwareFilePicker {
       throw const FirmwarePickException('Não foi possível ler o arquivo.');
     }
     return PickedFirmware(name: file.name, bytes: bytes);
+  }
+
+  @override
+  Future<List<PickedFirmware>> pickMany() async {
+    final FilePickerResult? result;
+    try {
+      result = await FilePicker.pickFiles(
+        dialogTitle: 'Escolher firmware',
+        type: FileType.any,
+        allowMultiple: true,
+        withData: true,
+      );
+    } catch (_) {
+      throw const FirmwarePickException(
+          'Não foi possível abrir o seletor de arquivos.');
+    }
+    if (result == null) return const [];
+    return [
+      for (final f in result.files)
+        if (f.bytes != null) PickedFirmware(name: f.name, bytes: f.bytes!),
+    ];
   }
 }
 

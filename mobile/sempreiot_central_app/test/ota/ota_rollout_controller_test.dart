@@ -130,7 +130,6 @@ void main() {
       expect(fam()!.holdsImage, isTrue);
       // What the board says wins over what the session remembers.
       expect(otaHeldOnBoard(state(), const {node: '0.1.9'}), {node: '0.2.0'});
-      expect(otaNothingSentYet(state(), node), isTrue);
       expect(
           log(),
           contains('Na placa: firmware de rede elétrica 0.2.0 (nada enviado '
@@ -167,8 +166,7 @@ void main() {
       });
     });
 
-    test('nothing stored: the board says so, and that is an answer',
-        () async {
+    test('nothing stored: the board says so, and that is an answer', () async {
       await boot(with_: threeUnits()..stored.clear());
       expect(state().boardAnswered, isTrue);
       expect(state().families, isEmpty);
@@ -195,7 +193,6 @@ void main() {
       expect(state().families, isEmpty);
       expect(state().asking, isFalse);
       expect(otaHeldOnBoard(state(), const {node: '0.2.0'}), {node: '0.2.0'});
-      expect(otaNothingSentYet(state(), node), isTrue);
       expect(log().single, contains('não respondeu'));
 
       // It is asked to start all the same; it never answers that either.
@@ -255,7 +252,6 @@ void main() {
       expect(f.startedAtExact, isTrue);
       expect(f.endedAt, isNotNull);
       expect(state().running, isNull);
-      expect(otaNothingSentYet(state(), node), isFalse);
       expect(otaHeldOnBoard(state(), const {}), {node: '0.2.0'});
 
       // Every OTA_RESULT was acknowledged by the tablet, to the unit.
@@ -286,8 +282,7 @@ void main() {
           lines,
           contains('Placa: atualização iniciada — firmware de rede elétrica '
               '0.2.0, 3 dispositivos, um de cada vez'));
-      expect(lines,
-          contains('Sirene hall [$siren] → estado: baixando 50 %'));
+      expect(lines, contains('Sirene hall [$siren] → estado: baixando 50 %'));
       expect(lines, contains('Sirene hall [$siren] → estado: reiniciando'));
       expect(lines, contains('Sirene hall [$siren] → estado: autoteste'));
       expect(
@@ -301,16 +296,15 @@ void main() {
       // The root's turn comes after the two others are settled.
       final rootOffered = lines.indexWhere(
           (l) => l.startsWith('Repetidor [$root]') && l.contains('oferta'));
-      final buttonDone = lines.indexWhere((l) =>
-          l.startsWith('Botoeira [$button] → resultado: atualizado'));
+      final buttonDone = lines.indexWhere(
+          (l) => l.startsWith('Botoeira [$button] → resultado: atualizado'));
       expect(rootOffered, greaterThan(buttonDone));
     });
 
     test('while a unit is being updated it is in the active set', () async {
       await boot();
       expect(await ro().start(node, const SafrOtaFilter.unit(siren)), isNull);
-      await _until(
-          () => fam()?.unit(siren)?.state.active == true,
+      await _until(() => fam()?.unit(siren)?.state.active == true,
           what: 'the siren to be offered the image');
 
       final since = state().activeSince(siren);
@@ -340,7 +334,8 @@ void main() {
       expect(fam()!.state, SafrOtaRolloutState.done);
     });
 
-    test('what reaches the LED mirror: the unit\'s frames up, and the '
+    test(
+        'what reaches the LED mirror: the unit\'s frames up, and the '
         'tablet\'s ACK of its OTA_RESULT down', () async {
       await boot();
       final ticks = <SafrTrafficTick>[];
@@ -369,8 +364,7 @@ void main() {
       // (an OTA_STATUS is never acknowledged).
       final down = [
         for (final t in ticks)
-          if (t.mac == siren && t.direction == SafrTrafficDirection.downlink)
-            t
+          if (t.mac == siren && t.direction == SafrTrafficDirection.downlink) t
       ];
       expect(down, hasLength(1));
       expect(down.single.ack, isTrue);
@@ -446,7 +440,8 @@ void main() {
           startsWith('Atualização concluída: 2 atualizados, 1 ignorado, de 3'));
     });
 
-    test('a unit that fails twice: offered once more after the others, '
+    test(
+        'a unit that fails twice: offered once more after the others, '
         'then failed, and the rollout ends partial', () async {
       final m = threeUnits();
       m.unit(siren).plays.setAll(0, [(FakePlay.fail, SafrOtaReason.httpErr)]);
@@ -491,8 +486,10 @@ void main() {
 
     test('a new image that fails its self-test', () async {
       final m = threeUnits();
-      m.unit(siren).plays.setAll(
-          0, [(FakePlay.failSelfTest, SafrOtaReason.selftestFail)]);
+      m
+          .unit(siren)
+          .plays
+          .setAll(0, [(FakePlay.failSelfTest, SafrOtaReason.selftestFail)]);
       await boot(with_: m);
       expect(await ro().start(node, const SafrOtaFilter.unit(siren)), isNull);
       await ended();
@@ -565,7 +562,8 @@ void main() {
 
       // The operator resets the alarm; the board still remembers it.
       await db.clearAlarmLatch();
-      expect(await ro().resume(node), contains('alarme nos últimos 10 minutos'));
+      expect(
+          await ro().resume(node), contains('alarme nos últimos 10 minutos'));
       expect(fam()!.state, SafrOtaRolloutState.paused);
 
       mesh.alarmRecent = false;
@@ -577,15 +575,17 @@ void main() {
       expect(mesh.offered, [siren, button, root]);
 
       final lines = log();
-      expect(lines.any((l) => l.startsWith('Placa: atualização pausada')),
-          isTrue);
+      expect(
+          lines.any((l) => l.startsWith('Placa: atualização pausada')), isTrue);
       expect(
           lines.any((l) =>
               l == 'Placa: atualização pausada — há alarme na instalação' ||
               l == 'A pausa foi por alarme: há alarme ativo na instalação'),
           isTrue);
-      expect(lines, contains('Retomar recusado pela placa: motivo 2: o '
-          'dispositivo estava em alarme ou com falha e recusou a atualização'));
+      expect(
+          lines,
+          contains('Retomar recusado pela placa: motivo 2: o '
+              'dispositivo estava em alarme ou com falha e recusou a atualização'));
       expect(lines, contains('Placa: atualização retomada'));
     });
 
@@ -614,8 +614,8 @@ void main() {
         SafrOtaAction.resume,
       ]);
       expect(log(), contains('Pedido à placa: pausar a atualização'));
-      expect(log(),
-          contains('Placa: atualização pausada — a pedido do operador'));
+      expect(
+          log(), contains('Placa: atualização pausada — a pedido do operador'));
       expect(log(), contains('Pedido à placa: retomar a atualização'));
     });
 
@@ -692,7 +692,10 @@ void main() {
           with_: threeUnits()
             ..stored[0x03] = '0.3.1'
             ..units.add(FakeUnit('5A:46:52:00:00:31',
-                name: 'Detector sala', zone: 'Térreo', product: 0x0301, parent: root)));
+                name: 'Detector sala',
+                zone: 'Térreo',
+                product: 0x0301,
+                parent: root)));
       final refused =
           await ro().start(SafrProductFamily.leaf, const SafrOtaFilter.all());
       expect(refused, isNull);
@@ -855,8 +858,8 @@ void main() {
       await _until(() => mesh.gets > gets,
           what: 'GET_ROLLOUT after a set that stopped');
       expect(fam()!.units, hasLength(5), reason: 'the rows there were');
-      expect(log().any((l) => l.startsWith('Tabela da placa incompleta')),
-          isTrue);
+      expect(
+          log().any((l) => l.startsWith('Tabela da placa incompleta')), isTrue);
       await ended();
       expect(fam()!.doneCount, 5);
     });
@@ -877,8 +880,8 @@ void main() {
       await _until(() => mesh.gets > gets,
           what: 'GET_ROLLOUT after the silence',
           within: const Duration(seconds: 3));
-      expect(log().any((l) => l.startsWith('Sem notícias da placa há')),
-          isTrue);
+      expect(
+          log().any((l) => l.startsWith('Sem notícias da placa há')), isTrue);
       mesh.mute = false;
       await ended();
       expect(fam()!.state, SafrOtaRolloutState.done);
@@ -962,12 +965,11 @@ void main() {
     });
 
     test('a result settles the row until the board says otherwise', () async {
-      await say(OtaRolloutPageEvent(
-          page(SafrOtaUnitState.downloading, percent: 50)));
+      await say(
+          OtaRolloutPageEvent(page(SafrOtaUnitState.downloading, percent: 50)));
       await say(const OtaUnitResultEvent(
         mac: mac,
-        result:
-            SafrOtaResultPayload(ok: false, reasonRaw: 8, version: '0.1.0'),
+        result: SafrOtaResultPayload(ok: false, reasonRaw: 8, version: '0.1.0'),
       ));
       expect(row(mac).state, SafrOtaUnitState.failed);
       expect(row(mac).reason, SafrOtaReason.httpErr);
@@ -980,8 +982,8 @@ void main() {
       expect(row(mac).state, SafrOtaUnitState.waiting);
       expect(row(mac).attempts, 1);
 
-      await say(OtaRolloutPageEvent(
-          page(SafrOtaUnitState.offered, attempts: 1)));
+      await say(
+          OtaRolloutPageEvent(page(SafrOtaUnitState.offered, attempts: 1)));
       final second = row(mac).activeSince;
       expect(second, isNotNull);
 
@@ -1007,8 +1009,7 @@ void main() {
       await say(OtaRolloutPageEvent(page(SafrOtaUnitState.offered)));
       await say(const OtaUnitResultEvent(
         mac: mac,
-        result:
-            SafrOtaResultPayload(ok: false, reasonRaw: 1, version: '0.2.0'),
+        result: SafrOtaResultPayload(ok: false, reasonRaw: 1, version: '0.2.0'),
       ));
       expect(row(mac).state, SafrOtaUnitState.skipped);
     });

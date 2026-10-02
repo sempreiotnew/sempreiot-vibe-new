@@ -6,7 +6,6 @@ import 'ota_rollout_state.dart';
 // maps and the log say the same thing. Pure functions; nothing here decides
 // anything about the rollout.
 
-/// Why the battery units' image cannot be sent yet (protocol §13.5).
 /// Under a battery image's form (protocol §13.5): what to expect of a leaf.
 const otaLeafNote =
     'Um detector a bateria recebe a oferta quando acorda (a cada minuto), '
@@ -51,18 +50,6 @@ String otaFilterText(SafrOtaFilter filter, {String? unitName}) =>
           : 'dispositivo $unitName (${filter.mac})',
     };
 
-/// The header of a rollout, in capitals as on the card.
-String otaRolloutHeadline(OtaFamilyRollout f) => switch (f.state) {
-      SafrOtaRolloutState.idle => 'SEM ATUALIZAÇÃO',
-      SafrOtaRolloutState.staged => 'GUARDADO NA PLACA',
-      SafrOtaRolloutState.rolling => 'ENVIANDO',
-      SafrOtaRolloutState.paused => f.pauseCause == OtaPauseCause.alarm
-          ? 'PAUSADO POR ALARME'
-          : 'PAUSADO',
-      SafrOtaRolloutState.done => 'CONCLUÍDO',
-      SafrOtaRolloutState.partial => 'PARCIAL',
-    };
-
 /// Why it is paused and what makes it go on.
 String otaPauseCauseText(OtaPauseCause cause) => switch (cause) {
       OtaPauseCause.operator => 'a pedido do operador',
@@ -70,22 +57,8 @@ String otaPauseCauseText(OtaPauseCause cause) => switch (cause) {
       OtaPauseCause.unknown => 'a placa não disse o motivo',
     };
 
-/// Under the header of a paused rollout.
-String otaPauseHint(OtaPauseCause? cause) => switch (cause) {
-      OtaPauseCause.alarm =>
-        'Um alarme pausou a atualização. O dispositivo que estava baixando '
-            'termina; nenhum outro começa. Rearme a central e toque em '
-            'Retomar.',
-      OtaPauseCause.operator =>
-        'Pausado por você. O dispositivo que estava baixando termina; '
-            'nenhum outro começa até você tocar em Retomar.',
-      _ => 'A placa pausou a atualização (ela pausa sozinha quando reinicia '
-          'ou quando passa um alarme). Toque em Retomar para continuar.',
-    };
-
 /// A unit's state in words, with the percent while it downloads.
-String otaUnitStateText(SafrOtaUnitState state, int percent) =>
-    switch (state) {
+String otaUnitStateText(SafrOtaUnitState state, int percent) => switch (state) {
       SafrOtaUnitState.waiting => 'Aguardando',
       SafrOtaUnitState.offered => 'Oferta enviada',
       SafrOtaUnitState.downloading => 'Baixando $percent %',
@@ -130,25 +103,6 @@ String otaUnitRowLog(OtaRolloutUnit u) {
   return parts.join(', ');
 }
 
-/// "0.1.0 → 0.2.0": what the unit runs now and the version it is getting;
-/// once it runs the target, what it ran before and what it runs. [known]:
-/// the version the registry has for it, when the rollout has none.
-String otaVersionChangeText(
-  OtaRolloutUnit u,
-  String target, {
-  String? known,
-}) {
-  final now = u.version.isNotEmpty ? u.version : (known ?? '');
-  final before = u.versionBefore;
-  if (u.state == SafrOtaUnitState.done) {
-    final runs = now.isEmpty ? target : now;
-    return before == null || before.isEmpty || before == runs
-        ? runs
-        : '$before → $runs';
-  }
-  return '${now.isEmpty ? '—' : now} → $target';
-}
-
 /// "motivo 9: o novo firmware não passou no autoteste…".
 String otaReasonLogText(int raw) {
   final label = otaUnitReasonText(SafrOtaReason.fromWire(raw), raw: raw);
@@ -161,8 +115,7 @@ String otaReasonLogText(int raw) {
 /// Why a unit was not updated, in plain words. Empty for "no reason".
 String otaUnitReasonText(SafrOtaReason reason, {int? raw}) => switch (reason) {
       SafrOtaReason.none => '',
-      SafrOtaReason.notNewer =>
-        'Já estava nesta versão ou em uma mais nova.',
+      SafrOtaReason.notNewer => 'Já estava nesta versão ou em uma mais nova.',
       SafrOtaReason.busyAlarm =>
         'O dispositivo estava em alarme ou com falha e recusou a '
             'atualização.',
@@ -170,10 +123,8 @@ String otaUnitReasonText(SafrOtaReason reason, {int? raw}) => switch (reason) {
       SafrOtaReason.sigFail =>
         'O dispositivo recusou a imagem: ela não tem a assinatura da '
             'SempreIoT.',
-      SafrOtaReason.shaFail =>
-        'A imagem chegou corrompida ao dispositivo.',
-      SafrOtaReason.wrongFamily =>
-        'A imagem é de outro tipo de dispositivo.',
+      SafrOtaReason.shaFail => 'A imagem chegou corrompida ao dispositivo.',
+      SafrOtaReason.wrongFamily => 'A imagem é de outro tipo de dispositivo.',
       SafrOtaReason.noSpace => 'Não há espaço no dispositivo para a imagem.',
       SafrOtaReason.httpErr =>
         'O dispositivo não conseguiu baixar a imagem da placa.',
@@ -219,7 +170,9 @@ String otaControlRefusal(SafrOtaAction action, SafrOtaReason reason) {
           'novo depois.';
     default:
       final why = otaUnitReasonText(reason);
-      return why.isEmpty ? 'A placa recusou o pedido.' : 'A placa recusou: $why';
+      return why.isEmpty
+          ? 'A placa recusou o pedido.'
+          : 'A placa recusou: $why';
   }
 }
 
