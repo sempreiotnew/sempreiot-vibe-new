@@ -13,7 +13,9 @@
 #   board-<next>-selftest-fail.bin      board image that fails its self-test   → O4 (rolls back)
 #   node-<version>.bin                  good node image                        → O5, O7 (stored, then rolled out)
 #   node-<next>-selftest-fail.bin       node image that fails its self-test    → a node rolls back
-#   leaf-<version>.bin                  good leaf image                        → stored on the board
+#   leaf-<version>.bin                  good leaf image                        → O12 (offer in the ACK, pull, self-test)
+#   leaf-<next>-selftest-fail.bin       leaf image that fails its self-test    → a leaf rolls back on its next wake
+#   leaf-<next>-lowbat.bin              leaf image whose (mock) battery is 40 % → O13: install it, then the NEXT offer is refused
 #   board-<version>-UNSIGNED.bin        the same board image without signature → O1 (refused)
 #   board-<version>-WRONGKEY.bin        signed with a throw-away key           → O1 (refused)
 #
@@ -65,6 +67,10 @@ build board build-ota-fail "$NEXT" "$FRAG"
 build node  build-ota-good "$VERSION"
 build node  build-ota-fail "$NEXT" "$FRAG"
 build leaf  build-ota-good "$VERSION"
+build leaf  build-ota-fail "$NEXT" "$FRAG"
+LOWBAT="$OUT/lowbat.sdkconfig"
+printf 'CONFIG_SIOT_SENSOR_MOCK_BATTERY_PCT=40\n' > "$LOWBAT"
+build leaf  build-ota-lowbat "$NEXT" "$LOWBAT"
 
 cp "$FW_DIR/apps/board/build-ota-good/sempreiot-board.bin"          "$OUT/board-$VERSION.bin"
 cp "$FW_DIR/apps/board/build-ota-good/sempreiot-board-unsigned.bin" "$OUT/board-$VERSION-UNSIGNED.bin"
@@ -72,12 +78,14 @@ cp "$FW_DIR/apps/board/build-ota-fail/sempreiot-board.bin"          "$OUT/board-
 cp "$FW_DIR/apps/node/build-ota-good/sempreiot-node.bin"            "$OUT/node-$VERSION.bin"
 cp "$FW_DIR/apps/node/build-ota-fail/sempreiot-node.bin"            "$OUT/node-$NEXT-selftest-fail.bin"
 cp "$FW_DIR/apps/leaf/build-ota-good/sempreiot-leaf.bin"            "$OUT/leaf-$VERSION.bin"
+cp "$FW_DIR/apps/leaf/build-ota-fail/sempreiot-leaf.bin"            "$OUT/leaf-$NEXT-selftest-fail.bin"
+cp "$FW_DIR/apps/leaf/build-ota-lowbat/sempreiot-leaf.bin"          "$OUT/leaf-$NEXT-lowbat.bin"
 
 WRONG="$OUT/throwaway_key.pem"
 "${ESPSECURE[@]}" generate_signing_key --version 2 --scheme rsa3072 "$WRONG" > /dev/null
 "${ESPSECURE[@]}" sign_data --version 2 --keyfile "$WRONG" \
     --output "$OUT/board-$VERSION-WRONGKEY.bin" "$OUT/board-$VERSION-UNSIGNED.bin" > /dev/null
-rm -f "$WRONG" "$FRAG"
+rm -f "$WRONG" "$FRAG" "$LOWBAT"
 
 echo
 echo "images in $OUT:"

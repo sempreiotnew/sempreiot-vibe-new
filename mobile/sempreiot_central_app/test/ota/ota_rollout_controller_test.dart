@@ -687,12 +687,16 @@ void main() {
       expect(mesh.offered, isEmpty);
     });
 
-    test('the battery units: a later step, nothing is sent', () async {
-      await boot(with_: threeUnits()..stored[0x03] = '0.3.1');
+    test('the battery units: a rollout like any other (§13.5)', () async {
+      await boot(
+          with_: threeUnits()
+            ..stored[0x03] = '0.3.1'
+            ..units.add(FakeUnit('5A:46:52:00:00:31',
+                name: 'Detector sala', zone: 'Térreo', product: 0x0301, parent: root)));
       final refused =
           await ro().start(SafrProductFamily.leaf, const SafrOtaFilter.all());
-      expect(refused, contains('etapa futura'));
-      expect(board.commands(SafrCommand.otaControl), 0);
+      expect(refused, isNull);
+      expect(board.commands(SafrCommand.otaControl), 1);
     });
 
     test('while another one runs', () async {

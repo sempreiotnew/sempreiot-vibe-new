@@ -24,6 +24,10 @@ static const char *TAG = "siot_ota_ro";
 
 #define DEADLINE_S        300    /* UPDATING instead of missing for this long (§13.4) */
 #define OFFER_ACK_MS      5000   /* an offer nobody ACKed is sent again */
+/* A leaf answers on its next wake (§13.5): one wake interval plus its budget
+ * to hear the offer, and pull wake + sleep + self-test wake to finish. */
+#define LEAF_DEADLINE_S   600
+#define LEAF_OFFER_ACK_MS 90000
 #define OFFER_TRIES       3
 #define FIRST_STATUS_MS   30000  /* ACK OK and then nothing: a unit that knows no OTA */
 #define PAGE_EVERY_MS     5000
@@ -72,6 +76,9 @@ static bool unit_settled(const unit_t *u)
 {
     return u->state == SIOT_OTA_U_DONE || u->state == SIOT_OTA_U_FAILED || u->state == SIOT_OTA_U_SKIPPED;
 }
+
+static uint16_t deadline_s(uint8_t family) { return family == SAFR_FAMILY_LEAF ? LEAF_DEADLINE_S : DEADLINE_S; }
+static int64_t  offer_ack_ms(uint8_t family) { return family == SAFR_FAMILY_LEAF ? LEAF_OFFER_ACK_MS : OFFER_ACK_MS; }
 
 static void set_state(unit_t *u, uint8_t state, uint8_t reason)
 {
@@ -155,7 +162,7 @@ static void restore(void)
         memset(&s_ro.img, 0, sizeof(s_ro.img));
         s_ro.family = s_ro.img.family = h.family;
         s_ro.img.size = h.size;
-        s_ro.img.deadline_s = DEADLINE_S;
+        s_ro.img.deadline_s = deadline_s(h.family);
         memcpy(s_ro.img.sha256, h.sha256, sizeof(h.sha256));
         strlcpy(s_ro.img.version, h.target, sizeof(s_ro.img.version));
         s_ro.aborted = h.aborted;
@@ -420,9 +427,9 @@ static bool passes(const siot_devtab_entry_t *e, const siot_ota_control_t *c)
 static uint8_t start(const siot_ota_control_t *c)
 {
     if (s_ro.state == SIOT_OTA_RO_ROLLING || s_ro.state == SIOT_OTA_RO_PAUSED) return SIOT_OTA_R_BUSY;
-    if (c->family != SAFR_FAMILY_NODE) return SIOT_OTA_R_BAD_ARGS; /* leafs: §13.5, not yet */
+    if (c->family != SAFR_FAMILY_NODE && c->family != SAFR_FAMILY_LEAF) return SIOT_OTA_R_BAD_ARGS;
     if (siot_coordinator_alarm_recent()) return SIOT_OTA_R_BUSY_ALARM;
-    siot_ota_image_t img = {.family = c->family, .deadline_s = DEADLINE_S};
+    siot_ota_image_t img = {.family = c->family, .deadline_s = deadline_s(c->family)};
     if (!siot_ota_board_stored(c->family, img.version, &img.size, img.sha256)) return SIOT_OTA_R_BAD_ARGS;
     if (!alloc_units()) return SIOT_OTA_R_NO_SPACE;
 
@@ -533,9 +540,9 @@ void ota_rollout_tick(int64_t t)
     }
     if (s_ro.cur >= 0) {
         unit_t *u = &s_ro.u[s_ro.cur];
-        if (t - u->offered_ms > (int64_t)DEADLINE_S * 1000) {
+        if (t - u->offered_ms > (int64_t)deadline_s(s_ro.family) * 1000) {
             attempt_failed(u, SIOT_OTA_R_TIMED_OUT);
-        } else if (u->acked_ms == 0 && t - u->last_offer_ms > OFFER_ACK_MS) {
+        } else if (u->acked_ms == 0 && t - u->last_offer_ms > offer_ack_ms(s_ro.family)) {
             if (u->offer_tries >= OFFER_TRIES) attempt_failed(u, SIOT_OTA_R_TIMED_OUT);
             else offer(u);
         } else if (u->acked_ms != 0 && !u->status_seen && t - u->acked_ms > FIRST_STATUS_MS) {

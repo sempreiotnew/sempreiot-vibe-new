@@ -371,23 +371,16 @@ void main() {
         expect(tester.takeException(), isNull);
       });
 
-      testWidgets('the battery image: stored, and the button says why not — '
+      testWidgets('the battery image: stored, sendable, with what to expect — '
           '${s.key}', (tester) async {
         await pump(tester, s.value,
             staged(held: const {node: '0.2.0', leaf: '0.3.1'}));
         await reveal(
             tester, find.text('Na placa: firmware de bateria 0.3.1'));
-        await reveal(
-            tester,
-            find.text('Os detectores a bateria serão atualizados em uma '
-                'etapa futura. A imagem fica guardada na placa até lá.'));
-        final button = tester.widget<FilledButton>(find.ancestor(
-          of: inCard(find.text('Enviar aos dispositivos'), leafCard),
-          matching: find.byType(FilledButton),
-        ));
-        expect(button.onPressed, isNull);
-        // No filter to choose: nothing can be sent.
-        expect(inCard(find.text('Todos'), leafCard), findsNothing);
+        await reveal(tester, inCard(find.text('Enviar aos dispositivos'), leafCard));
+        await reveal(tester, find.textContaining('recebe a oferta quando acorda'));
+        // The same filter as a mains rollout.
+        expect(inCard(find.text('Todos'), leafCard), findsOneWidget);
         await walk(tester);
         expect(tester.takeException(), isNull);
       });

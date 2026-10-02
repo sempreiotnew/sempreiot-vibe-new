@@ -390,13 +390,9 @@ OtaPushReport? otaPushReport(OtaPushState s) {
         sent: sent,
         receiver: 'Só a placa. Ela guardou o ${otaFirmwareName(family)} '
             '$version.',
-        changed: family == SafrProductFamily.leaf
-            ? 'Nenhum dispositivo foi atualizado. Os detectores a bateria '
-                'continuam com o firmware que já tinham: eles serão '
-                'atualizados em uma etapa futura.'
-            : 'Nenhum dispositivo foi atualizado. Os dispositivos '
-                'continuam com o firmware que já tinham até você usar '
-                '"Enviar aos dispositivos" na tela Atualização de firmware.',
+        changed: 'Nenhum dispositivo foi atualizado. Os dispositivos '
+            'continuam com o firmware que já tinham até você usar '
+            '"Enviar aos dispositivos" na tela Atualização de firmware.',
         line: 'Guardado na placa: $short · nenhum dispositivo foi '
             'atualizado',
       );

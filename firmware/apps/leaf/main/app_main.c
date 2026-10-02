@@ -17,9 +17,14 @@
 #include "siot_identity.h"
 #include "siot_leafcore.h"
 #include "siot_safr.h"
+#include "sdkconfig.h"
 #include "siot_ui_button.h"
 #include "siot_ui_led.h"
 #include "siot_version.h"
+#if CONFIG_SIOT_FEATURE_OTA
+#include "siot_ota_leaf.h"
+#include "siot_sensor.h"
+#endif
 
 static const char *TAG = "leaf";
 #define IS_BOARD false
@@ -77,6 +82,28 @@ void app_main(void)
         memcpy(safr.safr_psk, code->safr_psk, sizeof(safr.safr_psk));
         memcpy(safr.src_mac, id->mac, sizeof(safr.src_mac));
         ESP_ERROR_CHECK(siot_safr_init(&safr));
+#if CONFIG_SIOT_FEATURE_OTA
+        /* Firmware update (protocol §13.5): the feature above the runtime, wired here. */
+        const siot_ota_leaf_ops_t ota_ops = {
+            .send_acked = siot_leafcore_send_acked,
+            .send = siot_leafcore_send,
+            .battery_pct = siot_sensor_battery_pct,
+            .net_ssid = code->net_ssid,
+            .net_psk = code->net_psk,
+        };
+        if (siot_ota_leaf_init(&ota_ops) == ESP_OK) {
+            const siot_leafcore_ota_t hooks = {
+                .selftest_pending = siot_ota_leaf_selftest_pending,
+                .selftest_verdict = siot_ota_leaf_selftest_verdict,
+                .report_due = siot_ota_leaf_report_due,
+                .report_if_due = siot_ota_leaf_report_if_due,
+                .on_offer = siot_ota_leaf_on_offer,
+            };
+            siot_leafcore_set_ota(&hooks);
+        } else {
+            ESP_LOGE(TAG, "firmware update unavailable");
+        }
+#endif
     }
     siot_leafcore_run(has_code);                                    /* 10: never returns */
 }

@@ -11,6 +11,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "siot_ota_proto.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -48,9 +50,18 @@ typedef struct {
     bool     has_ext;   /* 9-byte form present */
     uint32_t epoch;     /* 0 = the parent has no clock */
     uint8_t  channel;   /* 0 = unknown */
+    /* §13.5: the firmware offer the parent holds, appended to a HEARTBEAT ACK
+     * as OFFER_MSG_ID u16 ‖ OTA_OFFER ARGS. */
+    bool     has_offer;
+    uint16_t offer_msg_id;
+    siot_ota_image_t offer;
 } siot_leaf_ack_t;
 
-/* Accepts the 4-byte and the 9-byte form (anything else → false). */
+/* The longest leaf ACK: 9 + 2 + the OTA_OFFER args. */
+#define SIOT_LEAF_ACK_MAX_LEN  (SIOT_LEAF_ACK_EXT_LEN + 2 + SIOT_OTA_OFFER_MAX_LEN)
+
+/* Accepts the 4-byte form, the 9-byte form and the 9-byte form with a
+ * well-formed offer appended (anything else → false). */
 bool siot_leaf_ack_parse(const uint8_t *payload, size_t len, siot_leaf_ack_t *out);
 
 /* Builds the 9-byte leaf ACK (parent → leaf). `pending_count` 0 = no PENDING
@@ -58,6 +69,13 @@ bool siot_leaf_ack_parse(const uint8_t *payload, size_t len, siot_leaf_ack_t *ou
 size_t siot_leaf_ack_build(uint8_t out[SIOT_LEAF_ACK_EXT_LEN], uint16_t acked_msg_id,
                            uint8_t code, uint8_t pending_count, bool no_path,
                            uint32_t epoch, uint8_t channel);
+
+/* The same with the offer appended (§13.5). `out` holds SIOT_LEAF_ACK_MAX_LEN.
+ * Returns the length. */
+size_t siot_leaf_ack_build_offer(uint8_t out[SIOT_LEAF_ACK_MAX_LEN], uint16_t acked_msg_id,
+                                 uint8_t code, uint8_t pending_count, bool no_path,
+                                 uint32_t epoch, uint8_t channel,
+                                 uint16_t offer_msg_id, const siot_ota_image_t *offer);
 
 /* ---- §12.3 candidates and selection ------------------------------------- */
 typedef struct {

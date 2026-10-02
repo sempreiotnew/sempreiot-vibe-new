@@ -29,6 +29,7 @@ esp_err_t siot_leafmgr_init(void) { return ESP_ERR_NOT_SUPPORTED; }
 #include "siot_leaf_proto.h"
 #include "siot_link.h"
 #include "siot_netcore.h"
+#include "siot_ota_proto.h"
 #include "siot_safr.h"
 #include "siot_survey.h"
 #include "siot_util.h"
@@ -53,6 +54,12 @@ typedef struct {
     uint8_t  battery;
     siot_leaf_rx_state_t rx;
     siot_leaf_mailbox_t  mailbox;
+    /* §13.5: the firmware offer held for this leaf — the latest OTA_OFFER the
+     * board sent it, ridden on its next HEARTBEAT ACK, never a mailbox frame. */
+    bool             offer_held;
+    uint16_t         offer_msg_id;
+    int64_t          offer_until_ms; /* DEADLINE_S after it arrived */
+    siot_ota_image_t offer;
 } leaf_t;
 
 typedef struct {
@@ -143,15 +150,22 @@ static void forward_up(const uint8_t *raw, size_t len)
 
 /* ---- 2. uplink from a leaf ------------------------------------------------------ */
 
-static void send_leaf_ack(leaf_t *l, uint16_t acked_msg_id, uint8_t code)
+/* `with_offer`: a HEARTBEAT ACK carries the held firmware offer (§13.5); other
+ * ACKs stay at 9 bytes so an alarm exchange is never longer for it. */
+static void send_leaf_ack(leaf_t *l, uint16_t acked_msg_id, uint8_t code, bool with_offer)
 {
-    uint8_t p[SIOT_LEAF_ACK_EXT_LEN];
+    uint8_t p[SIOT_LEAF_ACK_MAX_LEN];
     const uint8_t pending = siot_leaf_mailbox_count(&l->mailbox);
     const bool no_path = !siot_netcore_board_reachable();
-    siot_leaf_ack_build(p, acked_msg_id, code, pending, no_path, siot_netcore_epoch(), siot_config_code()->channel);
-    siot_safr_send(l->mac, SAFR_MSG_ACK, siot_safr_next_msg_id(), 0, p, sizeof(p)); /* → tx_hook → ESP-NOW */
-    ESP_LOGI(TAG, "leaf ACK msg_id %u%s%s pending %u", acked_msg_id, no_path ? " NO_PATH" : "",
-             siot_netcore_epoch() ? "" : " (no clock)", pending);
+    const bool offer = with_offer && l->offer_held && !no_path;
+    const size_t n = offer
+        ? siot_leaf_ack_build_offer(p, acked_msg_id, code, pending, no_path, siot_netcore_epoch(),
+                                    siot_config_code()->channel, l->offer_msg_id, &l->offer)
+        : siot_leaf_ack_build(p, acked_msg_id, code, pending, no_path, siot_netcore_epoch(),
+                              siot_config_code()->channel);
+    siot_safr_send(l->mac, SAFR_MSG_ACK, siot_safr_next_msg_id(), 0, p, n); /* → tx_hook → ESP-NOW */
+    ESP_LOGI(TAG, "leaf ACK msg_id %u%s%s pending %u%s", acked_msg_id, no_path ? " NO_PATH" : "",
+             siot_netcore_epoch() ? "" : " (no clock)", pending, offer ? " + firmware offer" : "");
 }
 
 /* §12.5 drain: right after the ACK, the queued frames, oldest first, while the leaf answers at the MAC. */
@@ -196,12 +210,12 @@ static void handle_leaf_frame(const rx_item_t *it)
     switch (f.msg_type) {
     case SAFR_MSG_HEARTBEAT:
         if (f.payload_len >= 20) l->battery = f.payload[9];
-        send_leaf_ack(l, f.msg_id, SAFR_ACK_OK);
+        send_leaf_ack(l, f.msg_id, SAFR_ACK_OK, true);
         if (!dup) forward_up(it->data, it->len);
         drain_mailbox(l);
         break;
     case SAFR_MSG_EVENT:
-        send_leaf_ack(l, f.msg_id, SAFR_ACK_OK); /* custody (§12.6): from here on delivery is ours */
+        send_leaf_ack(l, f.msg_id, SAFR_ACK_OK, false); /* custody (§12.6): from here on delivery is ours */
         if (!dup) {
             forward_up(it->data, it->len);
             const bool alarm = f.payload_len >= 1 && f.payload[0] == SAFR_EVT_ALARM;
@@ -212,12 +226,20 @@ static void handle_leaf_frame(const rx_item_t *it)
         }
         drain_mailbox(l);
         break;
-    case SAFR_MSG_ACK: /* the leaf acknowledged a mailbox frame: clear it, let the tablet see it */
-        if (f.payload_len >= 4) siot_leaf_mailbox_ack(&l->mailbox, siot_get_u16(&f.payload[0]));
+    case SAFR_MSG_ACK: /* the leaf acknowledged a mailbox frame, or answered the held offer: up it goes */
+        if (f.payload_len >= 4) {
+            const uint16_t acked = siot_get_u16(&f.payload[0]);
+            siot_leaf_mailbox_ack(&l->mailbox, acked);
+            if (l->offer_held && acked == l->offer_msg_id) {
+                l->offer_held = false;
+                ESP_LOGW(TAG, "leaf %s answered the firmware offer %u: %s", siot_mac_to_str(f.src_mac, m), acked,
+                         (f.payload[2] & SAFR_ACK_CODE_MASK) == SAFR_ACK_OK ? "taken" : "refused");
+            }
+        }
         if (!dup) forward_up(it->data, it->len);
         break;
-    default: /* NAME_ANNOUNCE, TOPOLOGY, anything else: up it goes */
-        if (f.flags & SAFR_F_ACK_REQ) send_leaf_ack(l, f.msg_id, SAFR_ACK_OK);
+    default: /* NAME_ANNOUNCE, TOPOLOGY, OTA_STATUS / OTA_RESULT, anything else: up it goes */
+        if (f.flags & SAFR_F_ACK_REQ) send_leaf_ack(l, f.msg_id, SAFR_ACK_OK, false); /* hop ACK closes an OTA_RESULT (§13.5) */
         if (!dup) forward_up(it->data, it->len);
         break;
     }
@@ -275,6 +297,22 @@ static void downlink_hook(const siot_safr_frame_t *f, const uint8_t *raw, size_t
     } else {
         const uint8_t cmd = f->payload_len >= 1 ? f->payload[0] : SIOT_LEAF_NOT_A_COMMAND;
         if (cmd == SAFR_CMD_LINK_CHECK) { unlock(); return; } /* board-level supervision, not for leafs */
+        if (cmd == SAFR_CMD_OTA_OFFER) { /* §13.5: held, ridden on the next HEARTBEAT ACK — never queued */
+            leaf_t *l = siot_mac_is_bcast(f->dst_mac) ? NULL : find_leaf(f->dst_mac);
+            const size_t alen = f->payload_len >= 2 ? f->payload[1] : 0;
+            siot_ota_image_t img;
+            if (l && f->payload_len >= 2 + alen && siot_ota_offer_decode(&f->payload[2], alen, &img)) {
+                l->offer = img;
+                l->offer_msg_id = f->msg_id;
+                l->offer_until_ms = now_ms() + (int64_t)(img.deadline_s ? img.deadline_s : 600) * 1000;
+                l->offer_held = true;
+                char m[SIOT_MAC_STR_LEN];
+                ESP_LOGW(TAG, "firmware offer %s (msg_id %u) held for leaf %s: rides its next heartbeat ACK",
+                         img.version, f->msg_id, siot_mac_to_str(l->mac, m));
+            }
+            unlock();
+            return;
+        }
         if (siot_mac_is_bcast(f->dst_mac)) {
             for (int i = 0; i < MAX_LEAVES; i++) if (s_leaves[i].used) deliver_or_queue(&s_leaves[i], raw, raw_len, cmd, f->msg_id);
         } else {
@@ -305,6 +343,10 @@ static void tick(void)
         if (!l->used) continue;
         const uint8_t expired = siot_leaf_mailbox_expire(&l->mailbox, t);
         if (expired) ESP_LOGW(TAG, "mailbox: %u frame(s) expired unseen", expired);
+        if (l->offer_held && t > l->offer_until_ms) {
+            l->offer_held = false;
+            ESP_LOGW(TAG, "firmware offer %u expired before the leaf answered it", l->offer_msg_id);
+        }
         if (t - l->last_seen_ms > LEAF_TTL_MS) {
             char m[SIOT_MAC_STR_LEN];
             ESP_LOGW(TAG, "leaf %s silent for %d s: dropped from this parent", siot_mac_to_str(l->mac, m), LEAF_TTL_MS / 1000);

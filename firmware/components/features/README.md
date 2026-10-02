@@ -27,4 +27,6 @@ the file server and the rollout; hooks: `siot_coordinator_set_ota_sink`, `_set_o
 `siot_link_serial_expect_raw`) and `siot_ota_node` (the unit's side of §13.4; hook:
 `siot_netcore_set_command_hook`). Both behind `CONFIG_SIOT_FEATURE_OTA`, **default y** — the one feature
 that is on by default, because every product image must be updatable.
-Planned: `siot_sensing`, `siot_alarm_engine`, `siot_ota_leaf` (§13.5), `siot_siren`.
+`siot_ota_pull` (2026-09-30): the pull of an image from the board and the pending record — what was installed and what this boot means (self-test / rolled back / an OK never acknowledged) — shared by `siot_ota_node` and `siot_ota_leaf`. `siot_ota_leaf` (2026-09-30, protocol §13.5): the battery unit's side — answers the offer that rode its parent's heartbeat ACK, pulls as a Wi-Fi station on the parent's SoftAP, sleeps, self-tests on the next wake; plugged into `siot_leafcore` through `siot_leafcore_set_ota`, the way `siot_ota_node` plugs into the netcore's command hook.
+
+Planned: `siot_sensing`, `siot_alarm_engine`, `siot_siren`.

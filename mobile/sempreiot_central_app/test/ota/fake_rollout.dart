@@ -432,7 +432,7 @@ class FakeRollout {
 
   SafrOtaReason? _start(SafrOtaControlArgs c) {
     if (_live) return SafrOtaReason.busy;
-    if (c.family != 0x02) return SafrOtaReason.badArgs; // leafs: not yet
+    if (c.family != 0x02 && c.family != 0x03) return SafrOtaReason.badArgs;
     if (alarmRecent) return SafrOtaReason.busyAlarm;
     final version = stored[c.family];
     if (version == null) return SafrOtaReason.badArgs;

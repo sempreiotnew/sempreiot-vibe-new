@@ -146,14 +146,8 @@ void main() {
         expect(r.receiver, startsWith('Só a placa.'));
         expect(r.changed, startsWith('Nenhum dispositivo foi atualizado.'));
         expect(r.changed, contains('continuam com o firmware que já tinham'));
-        // What comes next: the rollout for the mains units, a later step
-        // for the battery units.
-        expect(
-          r.changed,
-          project == 'sempreiot-node'
-              ? contains('"Enviar aos dispositivos"')
-              : contains('etapa futura'),
-        );
+        // What comes next: the rollout, for mains and battery units alike (§13.5).
+        expect(r.changed, contains('"Enviar aos dispositivos"'));
         expect(r.line, contains('nenhum dispositivo foi atualizado'));
         expect(r.lineTail, isNull, reason: 'it ended: one sentence');
         expect(r.versionChange, isNull);

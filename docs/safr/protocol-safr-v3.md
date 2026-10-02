@@ -998,15 +998,17 @@ The §7.5 ACK with 5 bytes **appended**:
 90 s, §9.3). The parent still takes custody of the leaf's events (§12.6); the
 leaf keeps the parent, probes on the next wake (§12.3) and treats a button press
 as a survey (§12.8). `EPOCH = 0` = the parent has no clock yet; the leaf keeps
-its RTC. Fields appended later (e.g. the OTA offer) are versioned by **length**.
+its RTC. Fields appended later are versioned by **length**: the firmware
+offer (§13.5) is `OFFER_MSG_ID u16 ‖ OTA_OFFER ARGS` after these 9 bytes, on
+a HEARTBEAT ACK only.
 
 ### 12.5 Mailbox — downlink to a sleeping leaf
 
 - **What is queued:** any downlink frame whose `DST_MAC` is a leaf the parent
   has heard within `3 × HB_INTERVAL` (180 s): `COMMAND` (`SET_DEVICE`,
   `DECOMMISSION`, `RESET`, `SILENCE`, `IDENTIFY`, `TEST`, `RELAY_SET`), the
-  central's `ACK` for a leaf frame still awaiting it, later the OTA offer.
-  `TIME_SYNC` is never queued (§12.4). Broadcast downlink is delivered to every
+  central's `ACK` for a leaf frame still awaiting it. `TIME_SYNC` is never
+  queued (§12.4), nor is `OTA_OFFER` — it rides the HEARTBEAT ACK (§13.5). Broadcast downlink is delivered to every
   leaf the parent knows.
 - **Depth:** 4 per leaf. A newer `COMMAND` with the same `CMD` **replaces** the
   older one; a full mailbox drops the oldest and counts it.
@@ -1404,13 +1406,61 @@ cannot read its own version accepts.
   seconds a battery unit stayed awake for this update, `0` on a mains unit.
   The board journals it; the tablet keeps it (§13.6).
 
-### 13.5 Battery units *(brief step 4 — layout reserved, not final)*
+### 13.5 Battery units *(v3.5, final 2026-09-30 — brief step 4)*
 
-A leaf is offered the image in the **leaf ACK** (§12.4), which is versioned by
-its length: bytes after the 9 known ones are
-`SIZE u32 ‖ SHA256[32] ‖ FLAGS u8 ‖ VER_LEN u8 ‖ VERSION`. Never a mailbox
-frame. A leaf pulls on that wake if its battery is ≥ 60 %, it is not in
-alarm and the version is newer; it answers `OTA_RESULT` through its parent.
+A leaf sleeps; nothing is pushed to it. The board runs a leaf rollout exactly
+like a node one (§13.6, family `0x03`): `OTA_OFFER` (`COMMAND 0x1B`,
+`F_ACK_REQ`) to the leaf's MAC, one leaf at a time, the same `OTA_STATUS` /
+`OTA_RESULT` back. What differs is how the offer reaches the leaf and when the
+leaf acts.
+
+- **The parent holds the offer.** The node that hosts the leaf (§12.11) does
+  not queue an `OTA_OFFER` in the mailbox (§12.5): it keeps the **latest** one
+  per leaf and appends it to the leaf's next **HEARTBEAT ACK** (§12.4), whose
+  fields are versioned by length. After the 9 known bytes:
+  `OFFER_MSG_ID u16 ‖ ARGS` — `ARGS` are the `OTA_OFFER` arguments unchanged
+  (`FAMILY ‖ SIZE ‖ SHA256 ‖ DEADLINE_S ‖ FLAGS ‖ VER_LEN ‖ VERSION`, 41 + `VER_LEN`
+  bytes). The parent drops the held offer once the leaf answered it, when a
+  newer one replaces it, after `DEADLINE_S`, or with the leaf record.
+- **The leaf answers on that wake** with a plain `ACK` (§7.5 form, `DST` =
+  broadcast; the parent forwards every leaf ACK up): `ACKED_MSG_ID` =
+  `OFFER_MSG_ID`, `OK` = taken, `ERROR` + `DETAIL` = the `REASON`: `NOT_NEWER`,
+  `LOW_BATTERY` (battery < **60 %**), `BUSY_ALARM` (a sensor or alarm wake),
+  `WRONG_FAMILY`, `BUSY` (backing off, below). The board treats it as a node's
+  offer ACK.
+- **Taken:** still on that wake, the leaf sends `OTA_STATUS downloading 0`,
+  joins Wi-Fi as a **station on its parent's SoftAP** (`<NET_SSID>-xxxxxx`
+  with the parent's MAC bytes 3–5, the installation PSK; the board's own AP as
+  the fallback), pulls `http://192.168.4.1:8070/fw/leaf.bin`, verifies size,
+  `SHA256`, `project_name`, version and signature, writes the inactive slot,
+  remembers the install (NVS: version, slot, seconds awake) and `OTA_STATUS
+  rebooting`, then **sleeps** normally. The 500 ms budget (§12.2) does not
+  apply to this wake; it is capped at **120 s**. The next timer wake boots the
+  new image — another image, whose RTC variables need not sit where this
+  one's do: the leaf mirrors its RTC state (parent, channel, bind, counters)
+  to NVS before that boot and before a rollback, and the next image takes it
+  back once, so it wakes bound and skips the post-provisioning verdict. With
+  no mirror it probes for a parent on that wake anyway.
+- **Self-test = the next wake.** A deep-sleep wake goes through the bootloader,
+  which gives an unverified image exactly one boot (rollback, OTA blueprint
+  §4.4). On that wake the new image runs the normal heartbeat cycle; the
+  parent's ACK is the proof it can still talk, so it marks itself valid and
+  sends `OTA_RESULT {OK = 1, AWAKE_S}` — `AWAKE_S` = the seconds the pull wake
+  lasted. No ACK after the heartbeat's retries (up to **3** on this wake):
+  `esp_ota_mark_app_invalid_rollback_and_reboot()`, and the old image, back on
+  the same wake, reports `OTA_RESULT {OK = 0}` with the reason of §13.4
+  (`SELFTEST_FAIL` / `NOT_VALIDATED` + `DETAIL` / `NOT_BOOTED`). A leaf's
+  `OTA_RESULT` carries `F_ACK_REQ` and the **parent's hop ACK closes it**
+  (custody, like an EVENT §12.6): the leaf never waits for the board.
+- **Back-off:** a pull that failed (`HTTP_ERR`, `SHA_FAIL`, …) is answered as
+  usual; the leaf then refuses the same `SHA256` with `BUSY` on its next
+  wake, then for **6 h**, and after **5** failed attempts for good (RTC state,
+  cleared by a power cycle or another image).
+- **Timing on the board** (§13.6 with leaf numbers): an offer is answered
+  within one wake interval, so the board waits **90 s** for the offer ACK
+  (not 5 s) and gives a leaf **600 s** (`DEADLINE_S`) from the offer — pull
+  wake, sleep, self-test wake and result. Re-offers carry a new `MSG_ID`; the
+  parent keeps only the latest, the leaf answers that one.
 
 ### 13.6 Rollout (serial link, board ↔ tablet)
 

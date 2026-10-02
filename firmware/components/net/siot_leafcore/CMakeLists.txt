@@ -4,7 +4,7 @@
 # Pure pieces live in core/siot_leaf_proto (host-tested); this file is the IDF glue.
 idf_component_register(SRCS "src/siot_leafcore.c"
                        INCLUDE_DIRS "include"
-                       REQUIRES siot_config
+                       REQUIRES siot_config siot_ota_proto
                        PRIV_REQUIRES esp_wifi esp_netif esp_event esp_timer esp_hw_support esp_driver_gpio
                                      nvs_flash esp_system
                                      siot_safr siot_leaf_proto siot_util siot_evbus siot_identity

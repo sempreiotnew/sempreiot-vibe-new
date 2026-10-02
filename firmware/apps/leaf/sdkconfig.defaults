@@ -22,6 +22,11 @@ CONFIG_ESP_TIME_FUNCS_USE_RTC_TIMER=y
 CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
 CONFIG_ESP_TIMER_TASK_STACK_SIZE=4096
 
+# The leaf lives in the main task (siot_leafcore_run never returns), and the
+# firmware pull runs there: esp_ota_end's RSA-3072 signature check overflowed
+# the 3584 default. 8192 = the node's and board's OTA task.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
 # Console on UART0 only. The native USB-Serial-JTAG drops on every deep sleep,
 # and as a *secondary* console it can stall the log when the devkit's USB is
 # plugged in with nothing reading it. A battery unit never logs over USB.

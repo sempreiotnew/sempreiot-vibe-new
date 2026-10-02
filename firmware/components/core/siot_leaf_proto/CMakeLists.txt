@@ -3,4 +3,4 @@
 # No IDF drivers: builds on the linux target and is covered by test/host.
 idf_component_register(SRCS "src/siot_leaf_proto.c"
                        INCLUDE_DIRS "include"
-                       REQUIRES siot_safr siot_util)
+                       REQUIRES siot_safr siot_util siot_ota_proto)

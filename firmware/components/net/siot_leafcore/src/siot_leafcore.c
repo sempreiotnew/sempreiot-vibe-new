@@ -51,6 +51,7 @@ static const char *TAG = "siot_leaf";
 #define HOLD_CHECK_MS      5500      /* button still held after a wake: let the 5 s factory-reset hold run */
 #define NVS_NS             "siot_leaf"
 #define NVS_KEY_OUTBOX     "outbox"
+#define NVS_KEY_RTC_MIRROR "rtc"     /* the whole RTC state, kept across a firmware change (§13.5) */
 
 /* ---- 1. state ------------------------------------------------------------ */
 
@@ -117,6 +118,7 @@ static int64_t         s_stay_awake_until_ms;
 /* wake cause in LIGHT / NONE mode (DEEP asks esp_sleep) */
 static esp_sleep_wakeup_cause_t s_sim_cause = ESP_SLEEP_WAKEUP_UNDEFINED;
 static volatile bool s_tap_flag;
+static siot_leafcore_ota_t s_ota; /* §13.5 hooks, all optional */
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 
@@ -155,6 +157,42 @@ static void outbox_load(void)
         ESP_LOGI(TAG, "outbox restored from NVS: %u event(s)", tmp.count);
     }
     nvs_close(h);
+}
+
+/* §13.5: the wake after a pull boots ANOTHER image, whose RTC variables may
+ * not sit where this one's do — the parent, channel and bind would read as
+ * garbage and the leaf would come up as if freshly provisioned (and run the
+ * installer's verdict instead of its self-test). So the state is mirrored to
+ * NVS just before that boot (and before a rollback), and taken back once. */
+static void rtc_mirror_save(void)
+{
+    s_rtc.msg_id = siot_safr_last_msg_id();
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    if (nvs_set_blob(h, NVS_KEY_RTC_MIRROR, &s_rtc, sizeof(s_rtc)) == ESP_OK) nvs_commit(h);
+    nvs_close(h);
+    ESP_LOGI(TAG, "RTC state mirrored to NVS for the next image");
+}
+
+static bool rtc_mirror_take(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return false;
+    size_t len = sizeof(s_rtc);
+    leaf_rtc_t tmp;
+    const bool ok = nvs_get_blob(h, NVS_KEY_RTC_MIRROR, &tmp, &len) == ESP_OK && len == sizeof(tmp) &&
+                    tmp.magic == RTC_MAGIC && tmp.system_id == s_code->system_id;
+    if (nvs_get_blob(h, NVS_KEY_RTC_MIRROR, NULL, &len) == ESP_OK) { /* once: it belongs to that one boot */
+        nvs_erase_key(h, NVS_KEY_RTC_MIRROR);
+        nvs_commit(h);
+    }
+    nvs_close(h);
+    if (ok) {
+        s_rtc = tmp;
+        ESP_LOGW(TAG, "RTC state taken back from NVS (another image wrote it): bound=%u ch=%u",
+                 s_rtc.bind == BIND_BOUND, s_rtc.channel);
+    }
+    return ok;
 }
 
 static void rtc_reset(void)
@@ -600,6 +638,23 @@ static bool send_acked(uint8_t msg_type, const uint8_t *payload, size_t len, uin
     return s_ack_hop;
 }
 
+void siot_leafcore_set_ota(const siot_leafcore_ota_t *hooks)
+{
+    if (hooks) s_ota = *hooks;
+    else memset(&s_ota, 0, sizeof(s_ota));
+}
+
+bool siot_leafcore_send_acked(uint8_t msg_type, const uint8_t *payload, size_t len, uint32_t wait_ms)
+{
+    return s_transport_up && send_acked(msg_type, payload, len, wait_ms, 0);
+}
+
+void siot_leafcore_send(uint8_t msg_type, const uint8_t *payload, size_t len)
+{
+    if (!s_transport_up) return;
+    siot_safr_send(SAFR_BCAST_MAC, msg_type, siot_safr_next_msg_id(), 0, payload, len);
+}
+
 static void build_heartbeat(uint8_t p[20])
 {
     siot_sensor_reading_t r;
@@ -853,6 +908,7 @@ static void on_tap(siot_evt_id_t id, const void *data, void *ctx)
 
 static void one_wake(esp_sleep_wakeup_cause_t cause)
 {
+    const int64_t wake_started_ms = now_ms();
     s_rtc.wake_count++;
     s_rtc.wakes_since_probe++;
     ESP_LOGW(TAG, "wake #%lu cause=%s bind=%s misses=%u outbox=%u ch=%u", (unsigned long)s_rtc.wake_count,
@@ -865,9 +921,18 @@ static void one_wake(esp_sleep_wakeup_cause_t cause)
     }
     siot_safr_set_level(leaf_level());
 
-    if (s_rtc.verdict_pending) { verdict_after_provisioning(); return; }
+    /* §13.5: a new image's first wake, or a result the board still has to
+     * hear — this wake needs a parent whatever the state says. */
+    const bool selftest = s_ota.selftest_pending && s_ota.selftest_pending();
+    const bool ota_wants_parent = selftest || (s_ota.report_due && s_ota.report_due());
+
+    if (s_rtc.verdict_pending) {
+        if (!ota_wants_parent) { verdict_after_provisioning(); return; }
+        s_rtc.verdict_pending = false; /* a unit that just changed firmware is not freshly provisioned */
+    }
     if (cause == ESP_SLEEP_WAKEUP_EXT1) { button_wake(); return; }
 
+    bool heard = false;
     if (s_rtc.bind == BIND_BOUND) {
         if (s_rtc.wakes_since_probe >= SIOT_LEAF_REPROBE_WAKES || s_rtc.no_path) {
             /* §12.3: daily, or the wake after a NO_PATH ACK. discover() only
@@ -876,15 +941,40 @@ static void one_wake(esp_sleep_wakeup_cause_t cause)
             ESP_LOGI(TAG, "%s re-probe", s_rtc.no_path ? "NO_PATH" : "periodic");
             if (!discover()) s_rtc.bind = BIND_BOUND;
         }
-        if (!heartbeat_cycle() && siot_leaf_probe_after_misses(s_rtc.misses)) {
+        heard = heartbeat_cycle();
+        /* a new image gets this one wake to prove it can talk — worth two more
+         * heartbeats before it gives itself up */
+        for (int i = 0; selftest && !heard && i < 2; i++) {
+            vTaskDelay(pdMS_TO_TICKS(300));
+            heard = heartbeat_cycle();
+        }
+        if (!heard && siot_leaf_probe_after_misses(s_rtc.misses)) {
             ESP_LOGW(TAG, "%u misses → looking for another parent", s_rtc.misses);
-            discover();
+            if (discover() && selftest) heard = heartbeat_cycle();
         }
     } else {
-        if (siot_leaf_probe_due_unbound(s_rtc.wakes_since_probe, s_rtc.heard_any)) {
-            if (discover()) heartbeat_cycle();
+        if (ota_wants_parent || siot_leaf_probe_due_unbound(s_rtc.wakes_since_probe, s_rtc.heard_any)) {
+            if (discover()) heard = heartbeat_cycle();
         }
         if (s_rtc.bind != BIND_BOUND) ESP_LOGW(TAG, "COMM_FAULT: chirp (no sounder on the devkit)");
+    }
+
+    if (selftest && s_ota.selftest_verdict) {
+        if (!heard) rtc_mirror_save(); /* the rollback restarts into the other image: hand it our state */
+        s_ota.selftest_verdict(heard);  /* a rollback does not return */
+    }
+    if (heard) {
+        if (s_ota.report_if_due) s_ota.report_if_due();
+        if (s_ack_last.has_offer && s_ota.on_offer) {
+            const bool installed = s_ota.on_offer(s_ack_last.offer_msg_id, &s_ack_last.offer,
+                                                  cause != ESP_SLEEP_WAKEUP_TIMER && cause != ESP_SLEEP_WAKEUP_UNDEFINED,
+                                                  s_rtc.parent_mac, wake_started_ms);
+            s_ack_last.has_offer = false;
+            if (installed) {
+                rtc_mirror_save(); /* the next wake boots the new image: hand it our state */
+                return;            /* sleep now */
+            }
+        }
     }
     /* IDENTIFY from the mailbox keeps us awake for its duration. */
     while (now_ms() < s_stay_awake_until_ms) pump(100);
@@ -905,8 +995,12 @@ void siot_leafcore_run(bool has_code)
 
     s_code = siot_config_code();
     if (s_rtc.magic != RTC_MAGIC || s_rtc.system_id != s_code->system_id) {
-        rtc_reset();
-        ESP_LOGW(TAG, "fresh state (power-on, or first boot with this code)");
+        if (!rtc_mirror_take()) {
+            rtc_reset();
+            ESP_LOGW(TAG, "fresh state (power-on, or first boot with this code)");
+        }
+    } else {
+        rtc_mirror_take(); /* the same layout after all: just drop the mirror */
     }
     if (s_rtc.channel == 0) s_rtc.channel = s_code->channel;
     /* A wake is a boot and siot_safr restarts at MSG_ID 0: continue from the

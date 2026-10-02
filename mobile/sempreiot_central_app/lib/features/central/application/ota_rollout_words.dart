@@ -7,9 +7,14 @@ import 'ota_rollout_state.dart';
 // anything about the rollout.
 
 /// Why the battery units' image cannot be sent yet (protocol §13.5).
-const otaLeafNotYet =
-    'Os detectores a bateria serão atualizados em uma etapa futura. A imagem '
-    'fica guardada na placa até lá.';
+/// Under a battery image's form (protocol §13.5): what to expect of a leaf.
+const otaLeafNote =
+    'Um detector a bateria recebe a oferta quando acorda (a cada minuto), '
+    'baixa o firmware nessa hora se a bateria estiver acima de 60 % e faz o '
+    'autoteste na ativação seguinte. Conte uns 3 minutos por detector.';
+
+/// A leaf that was offered the image: it hears it on its next wake.
+const otaLeafOfferedText = 'Aguarda a próxima ativação';
 
 /// "firmware de rede elétrica".
 String otaFirmwareWord(SafrProductFamily family) => switch (family) {

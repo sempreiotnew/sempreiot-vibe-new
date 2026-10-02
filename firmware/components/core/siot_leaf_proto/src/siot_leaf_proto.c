@@ -10,17 +10,24 @@
 bool siot_leaf_ack_parse(const uint8_t *p, size_t len, siot_leaf_ack_t *out)
 {
     if (!p || !out) return false;
-    if (len != SIOT_LEAF_ACK_LEN && len != SIOT_LEAF_ACK_EXT_LEN) return false;
+    if (len != SIOT_LEAF_ACK_LEN && len < SIOT_LEAF_ACK_EXT_LEN) return false;
     memset(out, 0, sizeof(*out));
     out->acked_msg_id = siot_get_u16(&p[0]);
     out->code    = p[2] & SAFR_ACK_CODE_MASK;
     out->pending = (p[2] & SAFR_ACK_F_PENDING) != 0;
     out->no_path = (p[2] & SAFR_ACK_F_NO_PATH) != 0;
     out->detail  = p[3];
-    if (len == SIOT_LEAF_ACK_EXT_LEN) {
+    if (len >= SIOT_LEAF_ACK_EXT_LEN) {
         out->has_ext = true;
         out->epoch   = siot_get_u32(&p[4]);
         out->channel = p[8];
+    }
+    if (len > SIOT_LEAF_ACK_EXT_LEN) { /* §13.5: OFFER_MSG_ID ‖ OTA_OFFER ARGS, whole or nothing */
+        const size_t off = SIOT_LEAF_ACK_EXT_LEN;
+        if (len < off + 2 + 1) return false;
+        out->offer_msg_id = siot_get_u16(&p[off]);
+        if (!siot_ota_offer_decode(&p[off + 2], len - off - 2, &out->offer)) return false;
+        out->has_offer = true;
     }
     return true;
 }
@@ -38,6 +45,17 @@ size_t siot_leaf_ack_build(uint8_t out[SIOT_LEAF_ACK_EXT_LEN], uint16_t acked_ms
     siot_put_u32(&out[4], epoch);
     out[8] = channel;
     return SIOT_LEAF_ACK_EXT_LEN;
+}
+
+size_t siot_leaf_ack_build_offer(uint8_t out[SIOT_LEAF_ACK_MAX_LEN], uint16_t acked_msg_id,
+                                 uint8_t code, uint8_t pending_count, bool no_path,
+                                 uint32_t epoch, uint8_t channel,
+                                 uint16_t offer_msg_id, const siot_ota_image_t *offer)
+{
+    size_t off = siot_leaf_ack_build(out, acked_msg_id, code, pending_count, no_path, epoch, channel);
+    siot_put_u16(&out[off], offer_msg_id); off += 2;
+    off += siot_ota_offer_encode(&out[off], offer);
+    return off;
 }
 
 /* ---- §12.3 ---------------------------------------------------------------- */

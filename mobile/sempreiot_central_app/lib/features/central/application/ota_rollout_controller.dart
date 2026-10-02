@@ -148,8 +148,7 @@ class OtaRolloutController extends StateNotifier<OtaRolloutState> {
   /// Why a rollout of [family] cannot start now, or null when it can.
   /// Never while an alarm is latched: the units restart one at a time.
   Future<String?> startBlocker(SafrProductFamily family) async {
-    if (family == SafrProductFamily.leaf) return otaLeafNotYet;
-    if (family != SafrProductFamily.node) {
+    if (family != SafrProductFamily.node && family != SafrProductFamily.leaf) {
       return 'Este tipo de firmware não é enviado aos dispositivos.';
     }
     if (!_linkUp) return 'A placa não está respondendo. Verifique o cabo USB.';

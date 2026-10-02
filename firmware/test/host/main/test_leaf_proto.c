@@ -41,6 +41,35 @@ TEST_CASE("leaf ack: build → parse round trip keeps flags, count, epoch, chann
     TEST_ASSERT_TRUE(a.has_ext);
     TEST_ASSERT_EQUAL_UINT32(1759000000u, a.epoch);
     TEST_ASSERT_EQUAL(11, a.channel);
+    TEST_ASSERT_FALSE(a.has_offer);
+}
+
+TEST_CASE("leaf ack: the firmware offer rides after the 9 bytes (§13.5), whole or nothing", "[leaf][ack][ota]")
+{
+    siot_ota_image_t img = {.family = SAFR_FAMILY_LEAF, .size = 856064, .flags = 0, .deadline_s = 600};
+    memset(img.sha256, 0xA5, sizeof(img.sha256));
+    strcpy(img.version, "0.2.0");
+    uint8_t p[SIOT_LEAF_ACK_MAX_LEN];
+    const size_t n = siot_leaf_ack_build_offer(p, 0x0102, SAFR_ACK_OK, 0, false, 1759000000u, 6, 0x0303, &img);
+    TEST_ASSERT_EQUAL(9 + 2 + 1 + 4 + 32 + 2 + 1 + 1 + 5, n);
+    TEST_ASSERT_EQUAL_HEX8(0x03, p[9]);
+    TEST_ASSERT_EQUAL_HEX8(0x03, p[10]);
+    TEST_ASSERT_EQUAL_HEX8(SAFR_FAMILY_LEAF, p[11]);
+
+    siot_leaf_ack_t a;
+    TEST_ASSERT_TRUE(siot_leaf_ack_parse(p, n, &a));
+    TEST_ASSERT_TRUE(a.has_ext);
+    TEST_ASSERT_TRUE(a.has_offer);
+    TEST_ASSERT_EQUAL_HEX16(0x0303, a.offer_msg_id);
+    TEST_ASSERT_EQUAL_UINT32(856064, a.offer.size);
+    TEST_ASSERT_EQUAL(600, a.offer.deadline_s);
+    TEST_ASSERT_EQUAL_STRING("0.2.0", a.offer.version);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(img.sha256, a.offer.sha256, 32);
+    /* the plain 9-byte form still parses; a torn offer does not */
+    TEST_ASSERT_TRUE(siot_leaf_ack_parse(p, 9, &a));
+    TEST_ASSERT_FALSE(a.has_offer);
+    TEST_ASSERT_FALSE(siot_leaf_ack_parse(p, n - 1, &a));
+    TEST_ASSERT_FALSE(siot_leaf_ack_parse(p, 10, &a));
 }
 
 TEST_CASE("leaf ack: ERROR code survives the flag bits; odd lengths rejected", "[leaf][ack]")

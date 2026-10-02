@@ -21,6 +21,8 @@ extern "C" {
 
 #define SIOT_OTA_VER_MAX_LEN SAFR_FW_MAX_LEN
 #define SIOT_OTA_SHA_LEN     32
+/* OTA_OFFER args at their longest: FAMILY ‖ SIZE ‖ SHA256 ‖ DEADLINE_S ‖ FLAGS ‖ VER_LEN ‖ VERSION */
+#define SIOT_OTA_OFFER_MAX_LEN (1 + 4 + SIOT_OTA_SHA_LEN + 2 + 1 + 1 + SIOT_OTA_VER_MAX_LEN)
 #define SIOT_OTA_CHUNK_MAX   4096
 #define SIOT_OTA_ZONE_MAX    16
 

@@ -90,8 +90,9 @@ it forwards it, the board dedupes by `DEV_SEQ`. **Outbox** for events with no pa
 An alarm that clears before any ACK is stored as ALARM + RESTORE so the panel still learns of it.
 
 **Downlink** (spec §12.5): nothing is pushed to a sleeping leaf. The parent's **mailbox** holds ≤ 4
-frames per leaf (`SET_DEVICE`, `DECOMMISSION`, `RESET`, `SILENCE`, `IDENTIFY`, `TEST`, `RELAY_SET`, later
-the OTA offer; never `TIME_SYNC`), flags them in the heartbeat ACK, sends them right after, expires them
+frames per leaf (`SET_DEVICE`, `DECOMMISSION`, `RESET`, `SILENCE`, `IDENTIFY`, `TEST`, `RELAY_SET`;
+never `TIME_SYNC`, never the OTA offer — that rides the ACK itself, §13.5), flags them in the heartbeat
+ACK, sends them right after, expires them
 after 180 s or when the leaf reappears through another parent. The board's device table is the truth: on
 the leaf's first frame through any parent it re-originates every pending command.
 
@@ -113,10 +114,16 @@ NFPA 72 / 300 s EN 54-25 limits.
 **Lifecycle** (lifecycle §5.2): retire, replace and forget are immediate (board-side); rename and
 decommission ride the mailbox, applied on the next wake.
 
-**OTA** (OTA blueprint §3.5): on a wake the parent's reply may carry `fw_available`; if battery ≥ 60 %
-the leaf joins the mesh Wi-Fi as a station, pulls `/fw/node.bin`, verifies, reboots, self-tests, reports
-`OTA_RESULT` and sleeps; ~40–90 s awake once per release; backoff on failure. The offer itself is not yet
-on the wire (it will be appended to the leaf ACK, versioned by length — spec §12.4).
+**OTA** (spec §13.5, coded 2026-09-30 — `siot_ota_leaf` + `siot_ota_pull`): the parent rides the board's
+`OTA_OFFER` on the leaf's heartbeat ACK (`OFFER_MSG_ID ‖ ARGS` after the 9 bytes). On that wake the leaf
+answers with a plain ACK (taken, or refused: not newer, battery < 60 %, a sensor/alarm wake, backing off),
+sends `OTA_STATUS downloading 0`, joins its **parent's SoftAP** as a station (the board's AP as fallback),
+pulls `/fw/leaf.bin`, verifies (size, SHA-256, project name, version, signature), installs, notes the
+seconds awake, mirrors its RTC state to NVS (the next image's RTC layout may differ) and **sleeps** — ~40–90 s
+awake, capped at 120 s. The next wake boots the new image, which takes the state back: the
+parent's ACK (3 heartbeats at most) confirms it and `OTA_RESULT {OK, AWAKE_S}` goes up (the parent's hop
+ACK closes it); no ACK → rollback, and the old image reports `SELFTEST_FAIL` / `NOT_VALIDATED` /
+`NOT_BOOTED` on that same wake. A failed pull is refused next wake, then for 6 h, then for good (RTC).
 
 ## 5. Functionality rows that name the leaf
 

@@ -216,12 +216,13 @@ class _OtaRolloutCardState extends State<OtaRolloutCard> {
             const SizedBox(height: 10),
             const _Note('Pode sair desta tela: a atualização continua e '
                 'aparece na tela Rede.'),
-          ] else if (isLeaf) ...[
-            const SizedBox(height: 14),
-            const _LeafNotYet(),
           ] else ...[
             const SizedBox(height: 16),
             _form(context, again: shown),
+            if (isLeaf) ...[
+              const SizedBox(height: 8),
+              const _Note(otaLeafNote),
+            ],
           ],
         ],
       ),
@@ -424,28 +425,6 @@ class _Held extends StatelessWidget {
             ],
           ),
         ),
-      ],
-    );
-  }
-}
-
-class _LeafNotYet extends StatelessWidget {
-  const _LeafNotYet();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton(
-            onPressed: null,
-            child: Text('Enviar aos dispositivos'),
-          ),
-        ),
-        SizedBox(height: 8),
-        _Note(otaLeafNotYet),
       ],
     );
   }
@@ -841,7 +820,11 @@ class OtaRolloutRow extends StatelessWidget {
         const SizedBox(width: 6),
         Flexible(
           child: Text(
-            last ? 'Aguardando · por último' : otaUnitStateText(u.state, u.percent),
+            last
+                ? 'Aguardando · por último'
+                : (u.state == SafrOtaUnitState.offered && (node?.isLeaf ?? false))
+                    ? otaLeafOfferedText
+                    : otaUnitStateText(u.state, u.percent),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
