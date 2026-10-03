@@ -38,6 +38,7 @@ typedef struct {
     uint8_t  mac[6];
     devtab_rec_t rec;
     int64_t  last_seen_ms; /* <0 = never this boot */
+    uint8_t  layer;        /* mesh LAYER last reported this boot, 0 = not known (RAM only) */
 } slot_t;
 
 static slot_t s_tab[SIOT_DEVTAB_CAP];
@@ -190,6 +191,7 @@ static void fill(const slot_t *s, int64_t now_ms, siot_devtab_entry_t *out)
     out->product = s->rec.product;
     out->hw_rev = s->rec.hw_rev;
     memcpy(out->fw, s->rec.fw, sizeof(out->fw));
+    out->layer = s->layer;
 }
 
 bool siot_devtab_get(const uint8_t mac[6], int64_t now_ms, siot_devtab_entry_t *out)
@@ -250,6 +252,23 @@ bool siot_devtab_touch(const uint8_t mac[6], int64_t now_ms, uint32_t epoch_now,
     if (dirty) persist(s);
     xSemaphoreGive(s_lock);
     return retired;
+}
+
+void siot_devtab_set_layer(const uint8_t mac[6], uint8_t layer)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    slot_t *s = find(mac);
+    if (s) s->layer = layer;
+    xSemaphoreGive(s_lock);
+}
+
+uint8_t siot_devtab_layer(const uint8_t mac[6])
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    const slot_t *s = find(mac);
+    const uint8_t layer = s ? s->layer : 0;
+    xSemaphoreGive(s_lock);
+    return layer;
 }
 
 esp_err_t siot_devtab_set_product(const uint8_t mac[6], uint16_t product, uint8_t hw_rev, const char *fw)

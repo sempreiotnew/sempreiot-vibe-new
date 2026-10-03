@@ -111,12 +111,61 @@ class DeviceEvents extends Table {
   IntColumn get devSeq => integer().nullable()();
 }
 
+/// One firmware update started on "Atualizar dispositivos" (OTA brief
+/// decision 9, §6): who, when, what, how it ended. Kept on the tablet;
+/// [syncedAt] is for the cloud mirror (null = not sent yet).
+class OtaRuns extends Table {
+  /// Random, unique also in the cloud (16 hex digits).
+  TextColumn get runId => text()();
+  DateTimeColumn get startedAt => dateTime()();
+  DateTimeColumn get endedAt => dateTime().nullable()();
+
+  /// Audit actor who started it: 'master' | 'admin' | 'system'.
+  TextColumn get startedBy => text()();
+
+  /// "Atualizar tudo" (board → nodes → detectors).
+  BoolColumn get allPhases => boolean()();
+  TextColumn get target => text()(); // the version every unit goes to
+  TextColumn get families => text()(); // 'board,node,leaf' in phase order
+
+  /// 'done' | 'partial' | 'failed' | 'cancelled' | 'stopped'; null = running.
+  TextColumn get outcome => text().nullable()();
+  TextColumn get message => text().nullable()();
+  DateTimeColumn get syncedAt => dateTime().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {runId};
+}
+
+/// One unit in one update: what it ran, what it runs now, how it went. One
+/// row per unit per run, rewritten while the run goes on (a retry included).
+class OtaRunUnits extends Table {
+  TextColumn get runId => text()();
+  TextColumn get unitKey => text()(); // MAC; '@board' for the board
+  TextColumn get family => text()(); // 'board' | 'node' | 'leaf'
+  TextColumn get versionBefore => text()();
+  TextColumn get versionAfter => text()();
+
+  /// SafrOtaUnitState name: waiting … done | failed | skipped.
+  TextColumn get state => text()();
+  IntColumn get attempts => integer()();
+  IntColumn get reasonRaw => integer()(); // protocol §13.7 REASON
+  TextColumn get note => text().nullable()();
+  DateTimeColumn get updatedAt => dateTime()();
+  DateTimeColumn get syncedAt => dateTime().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {runId, unitKey};
+}
+
 @DriftDatabase(tables: [
   SerialPackets,
   DeviceMetadata,
   AuditEvents,
   MeshDevices,
   DeviceEvents,
+  OtaRuns,
+  OtaRunUnits,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(driftDatabase(name: 'sempreiot'));
@@ -125,7 +174,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 10;
+  int get schemaVersion => 11;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -180,6 +229,11 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(meshDevices, meshDevices.productCode);
             await m.addColumn(meshDevices, meshDevices.hwRev);
             await m.addColumn(meshDevices, meshDevices.fwVersion);
+          }
+          if (from < 11) {
+            // Firmware update history (OTA brief decision 9).
+            await m.createTable(otaRuns);
+            await m.createTable(otaRunUnits);
           }
         },
       );

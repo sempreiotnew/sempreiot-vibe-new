@@ -59,6 +59,7 @@ typedef struct {
     uint16_t product;       /* PRODUCT the unit announced (spec §7.11), 0 = not yet */
     uint8_t  hw_rev;
     char     fw[SIOT_DEVTAB_FW_MAX_LEN + 1]; /* firmware version it announced, "" = not yet */
+    uint8_t  layer;         /* RAM only: mesh LAYER of its last HEARTBEAT / TOPOLOGY, 0 = not this boot */
 } siot_devtab_entry_t;
 
 /* Loads every persisted entry into RAM. Call once after nvs_flash_init(). */
@@ -77,6 +78,14 @@ bool siot_devtab_get(const uint8_t mac[6], int64_t now_ms, siot_devtab_entry_t *
  * entry's flags so the caller can push a pending SET_DEVICE / DECOMMISSION. */
 bool siot_devtab_touch(const uint8_t mac[6], int64_t now_ms, uint32_t epoch_now,
                        uint8_t role, uint8_t *flags_out);
+
+/* The mesh LAYER the unit just reported (HEARTBEAT / TOPOLOGY; 1 = the root).
+ * RAM only, never persisted: after the board restarts every unit is "not
+ * known" (0) until it is heard again. Unknown MAC: ignored. */
+void siot_devtab_set_layer(const uint8_t mac[6], uint8_t layer);
+
+/* Its LAYER as last reported since the board started, 0 = not known. */
+uint8_t siot_devtab_layer(const uint8_t mac[6]);
 
 /* NAME_ANNOUNCE: adopt name/zone unless ANNOTATED; when they equal the
  * pending rename, PENDING_RENAME clears. */

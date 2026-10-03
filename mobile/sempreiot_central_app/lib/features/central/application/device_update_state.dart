@@ -120,6 +120,8 @@ class DeviceUpdateRun {
     this.pausedBy,
     this.endedAt,
     this.boardRestartedAt,
+    this.runId = '',
+    this.startedBy = 'system',
   });
 
   /// "Atualizar tudo".
@@ -150,6 +152,12 @@ class DeviceUpdateRun {
 
   final DateTime startedAt;
   final DateTime? endedAt;
+
+  /// The run in the history (`OtaRuns.runId`).
+  final String runId;
+
+  /// Audit actor who started it: 'master' | 'admin' | 'system'.
+  final String startedBy;
 
   /// When the board restarted into a new image (this run or one shortly
   /// before): a unit counts as back once heard after it.
@@ -222,5 +230,7 @@ class DeviceUpdateRun {
         boardRestartedAt: identical(boardRestartedAt, _keep)
             ? this.boardRestartedAt
             : boardRestartedAt as DateTime?,
+        runId: runId,
+        startedBy: startedBy,
       );
 }

@@ -195,6 +195,26 @@ int siot_ota_version_cmp(const siot_ota_version_t *a, const siot_ota_version_t *
 siot_ota_reason_t siot_ota_accept_version(const char *running, const char *offered, bool force,
                                           bool force_allowed);
 
+/* ---- the rollout's order (§13.6) -------------------------------------------------- */
+
+/* One unit of a rollout, as the board's choice of the next one sees it.
+ * `layer` = its mesh LAYER from its last HEARTBEAT / TOPOLOGY since the board
+ * started (1 = the root), 0 = not known yet. */
+typedef struct {
+    bool    waiting;   /* may be offered now */
+    bool    is_root;   /* the board knows it is the mesh root */
+    uint8_t layer;
+    uint8_t attempts;  /* offers that failed in this rollout */
+} siot_ota_pick_t;
+
+/* The next unit to offer, or -1 when none waits. The mesh root last (it is
+ * the bridge: when it restarts every other unit loses the board); then the
+ * units not tried yet before the ones that failed once; then the DEEPEST
+ * first (a unit that restarts never cuts off one still waiting below it);
+ * then table order. A unit whose layer is not known yet counts as shallow —
+ * right after the board's restart it may be the root (bench 2026-10-02). */
+int siot_ota_pick_next(const siot_ota_pick_t *units, size_t n);
+
 /* CRC-32 (IEEE 802.3, reflected, init and final XOR 0xFFFFFFFF) of a chunk's
  * raw bytes: crc32("123456789") == 0xCBF43926. */
 uint32_t siot_ota_crc32(const uint8_t *data, size_t len);

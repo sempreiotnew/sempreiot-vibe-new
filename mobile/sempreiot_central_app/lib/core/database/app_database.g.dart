@@ -2574,6 +2574,1075 @@ class DeviceEventsCompanion extends UpdateCompanion<DeviceEvent> {
   }
 }
 
+class $OtaRunsTable extends OtaRuns with TableInfo<$OtaRunsTable, OtaRun> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $OtaRunsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _runIdMeta = const VerificationMeta('runId');
+  @override
+  late final GeneratedColumn<String> runId = GeneratedColumn<String>(
+      'run_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _startedAtMeta =
+      const VerificationMeta('startedAt');
+  @override
+  late final GeneratedColumn<DateTime> startedAt = GeneratedColumn<DateTime>(
+      'started_at', aliasedName, false,
+      type: DriftSqlType.dateTime, requiredDuringInsert: true);
+  static const VerificationMeta _endedAtMeta =
+      const VerificationMeta('endedAt');
+  @override
+  late final GeneratedColumn<DateTime> endedAt = GeneratedColumn<DateTime>(
+      'ended_at', aliasedName, true,
+      type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  static const VerificationMeta _startedByMeta =
+      const VerificationMeta('startedBy');
+  @override
+  late final GeneratedColumn<String> startedBy = GeneratedColumn<String>(
+      'started_by', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _allPhasesMeta =
+      const VerificationMeta('allPhases');
+  @override
+  late final GeneratedColumn<bool> allPhases = GeneratedColumn<bool>(
+      'all_phases', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: true,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("all_phases" IN (0, 1))'));
+  static const VerificationMeta _targetMeta = const VerificationMeta('target');
+  @override
+  late final GeneratedColumn<String> target = GeneratedColumn<String>(
+      'target', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _familiesMeta =
+      const VerificationMeta('families');
+  @override
+  late final GeneratedColumn<String> families = GeneratedColumn<String>(
+      'families', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _outcomeMeta =
+      const VerificationMeta('outcome');
+  @override
+  late final GeneratedColumn<String> outcome = GeneratedColumn<String>(
+      'outcome', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _messageMeta =
+      const VerificationMeta('message');
+  @override
+  late final GeneratedColumn<String> message = GeneratedColumn<String>(
+      'message', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _syncedAtMeta =
+      const VerificationMeta('syncedAt');
+  @override
+  late final GeneratedColumn<DateTime> syncedAt = GeneratedColumn<DateTime>(
+      'synced_at', aliasedName, true,
+      type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns => [
+        runId,
+        startedAt,
+        endedAt,
+        startedBy,
+        allPhases,
+        target,
+        families,
+        outcome,
+        message,
+        syncedAt
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'ota_runs';
+  @override
+  VerificationContext validateIntegrity(Insertable<OtaRun> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('run_id')) {
+      context.handle(
+          _runIdMeta, runId.isAcceptableOrUnknown(data['run_id']!, _runIdMeta));
+    } else if (isInserting) {
+      context.missing(_runIdMeta);
+    }
+    if (data.containsKey('started_at')) {
+      context.handle(_startedAtMeta,
+          startedAt.isAcceptableOrUnknown(data['started_at']!, _startedAtMeta));
+    } else if (isInserting) {
+      context.missing(_startedAtMeta);
+    }
+    if (data.containsKey('ended_at')) {
+      context.handle(_endedAtMeta,
+          endedAt.isAcceptableOrUnknown(data['ended_at']!, _endedAtMeta));
+    }
+    if (data.containsKey('started_by')) {
+      context.handle(_startedByMeta,
+          startedBy.isAcceptableOrUnknown(data['started_by']!, _startedByMeta));
+    } else if (isInserting) {
+      context.missing(_startedByMeta);
+    }
+    if (data.containsKey('all_phases')) {
+      context.handle(_allPhasesMeta,
+          allPhases.isAcceptableOrUnknown(data['all_phases']!, _allPhasesMeta));
+    } else if (isInserting) {
+      context.missing(_allPhasesMeta);
+    }
+    if (data.containsKey('target')) {
+      context.handle(_targetMeta,
+          target.isAcceptableOrUnknown(data['target']!, _targetMeta));
+    } else if (isInserting) {
+      context.missing(_targetMeta);
+    }
+    if (data.containsKey('families')) {
+      context.handle(_familiesMeta,
+          families.isAcceptableOrUnknown(data['families']!, _familiesMeta));
+    } else if (isInserting) {
+      context.missing(_familiesMeta);
+    }
+    if (data.containsKey('outcome')) {
+      context.handle(_outcomeMeta,
+          outcome.isAcceptableOrUnknown(data['outcome']!, _outcomeMeta));
+    }
+    if (data.containsKey('message')) {
+      context.handle(_messageMeta,
+          message.isAcceptableOrUnknown(data['message']!, _messageMeta));
+    }
+    if (data.containsKey('synced_at')) {
+      context.handle(_syncedAtMeta,
+          syncedAt.isAcceptableOrUnknown(data['synced_at']!, _syncedAtMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {runId};
+  @override
+  OtaRun map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return OtaRun(
+      runId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}run_id'])!,
+      startedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}started_at'])!,
+      endedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}ended_at']),
+      startedBy: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}started_by'])!,
+      allPhases: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}all_phases'])!,
+      target: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}target'])!,
+      families: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}families'])!,
+      outcome: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}outcome']),
+      message: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}message']),
+      syncedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}synced_at']),
+    );
+  }
+
+  @override
+  $OtaRunsTable createAlias(String alias) {
+    return $OtaRunsTable(attachedDatabase, alias);
+  }
+}
+
+class OtaRun extends DataClass implements Insertable<OtaRun> {
+  /// Random, unique also in the cloud (16 hex digits).
+  final String runId;
+  final DateTime startedAt;
+  final DateTime? endedAt;
+
+  /// Audit actor who started it: 'master' | 'admin' | 'system'.
+  final String startedBy;
+
+  /// "Atualizar tudo" (board → nodes → detectors).
+  final bool allPhases;
+  final String target;
+  final String families;
+
+  /// 'done' | 'partial' | 'failed' | 'cancelled' | 'stopped'; null = running.
+  final String? outcome;
+  final String? message;
+  final DateTime? syncedAt;
+  const OtaRun(
+      {required this.runId,
+      required this.startedAt,
+      this.endedAt,
+      required this.startedBy,
+      required this.allPhases,
+      required this.target,
+      required this.families,
+      this.outcome,
+      this.message,
+      this.syncedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['run_id'] = Variable<String>(runId);
+    map['started_at'] = Variable<DateTime>(startedAt);
+    if (!nullToAbsent || endedAt != null) {
+      map['ended_at'] = Variable<DateTime>(endedAt);
+    }
+    map['started_by'] = Variable<String>(startedBy);
+    map['all_phases'] = Variable<bool>(allPhases);
+    map['target'] = Variable<String>(target);
+    map['families'] = Variable<String>(families);
+    if (!nullToAbsent || outcome != null) {
+      map['outcome'] = Variable<String>(outcome);
+    }
+    if (!nullToAbsent || message != null) {
+      map['message'] = Variable<String>(message);
+    }
+    if (!nullToAbsent || syncedAt != null) {
+      map['synced_at'] = Variable<DateTime>(syncedAt);
+    }
+    return map;
+  }
+
+  OtaRunsCompanion toCompanion(bool nullToAbsent) {
+    return OtaRunsCompanion(
+      runId: Value(runId),
+      startedAt: Value(startedAt),
+      endedAt: endedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(endedAt),
+      startedBy: Value(startedBy),
+      allPhases: Value(allPhases),
+      target: Value(target),
+      families: Value(families),
+      outcome: outcome == null && nullToAbsent
+          ? const Value.absent()
+          : Value(outcome),
+      message: message == null && nullToAbsent
+          ? const Value.absent()
+          : Value(message),
+      syncedAt: syncedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncedAt),
+    );
+  }
+
+  factory OtaRun.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return OtaRun(
+      runId: serializer.fromJson<String>(json['runId']),
+      startedAt: serializer.fromJson<DateTime>(json['startedAt']),
+      endedAt: serializer.fromJson<DateTime?>(json['endedAt']),
+      startedBy: serializer.fromJson<String>(json['startedBy']),
+      allPhases: serializer.fromJson<bool>(json['allPhases']),
+      target: serializer.fromJson<String>(json['target']),
+      families: serializer.fromJson<String>(json['families']),
+      outcome: serializer.fromJson<String?>(json['outcome']),
+      message: serializer.fromJson<String?>(json['message']),
+      syncedAt: serializer.fromJson<DateTime?>(json['syncedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'runId': serializer.toJson<String>(runId),
+      'startedAt': serializer.toJson<DateTime>(startedAt),
+      'endedAt': serializer.toJson<DateTime?>(endedAt),
+      'startedBy': serializer.toJson<String>(startedBy),
+      'allPhases': serializer.toJson<bool>(allPhases),
+      'target': serializer.toJson<String>(target),
+      'families': serializer.toJson<String>(families),
+      'outcome': serializer.toJson<String?>(outcome),
+      'message': serializer.toJson<String?>(message),
+      'syncedAt': serializer.toJson<DateTime?>(syncedAt),
+    };
+  }
+
+  OtaRun copyWith(
+          {String? runId,
+          DateTime? startedAt,
+          Value<DateTime?> endedAt = const Value.absent(),
+          String? startedBy,
+          bool? allPhases,
+          String? target,
+          String? families,
+          Value<String?> outcome = const Value.absent(),
+          Value<String?> message = const Value.absent(),
+          Value<DateTime?> syncedAt = const Value.absent()}) =>
+      OtaRun(
+        runId: runId ?? this.runId,
+        startedAt: startedAt ?? this.startedAt,
+        endedAt: endedAt.present ? endedAt.value : this.endedAt,
+        startedBy: startedBy ?? this.startedBy,
+        allPhases: allPhases ?? this.allPhases,
+        target: target ?? this.target,
+        families: families ?? this.families,
+        outcome: outcome.present ? outcome.value : this.outcome,
+        message: message.present ? message.value : this.message,
+        syncedAt: syncedAt.present ? syncedAt.value : this.syncedAt,
+      );
+  OtaRun copyWithCompanion(OtaRunsCompanion data) {
+    return OtaRun(
+      runId: data.runId.present ? data.runId.value : this.runId,
+      startedAt: data.startedAt.present ? data.startedAt.value : this.startedAt,
+      endedAt: data.endedAt.present ? data.endedAt.value : this.endedAt,
+      startedBy: data.startedBy.present ? data.startedBy.value : this.startedBy,
+      allPhases: data.allPhases.present ? data.allPhases.value : this.allPhases,
+      target: data.target.present ? data.target.value : this.target,
+      families: data.families.present ? data.families.value : this.families,
+      outcome: data.outcome.present ? data.outcome.value : this.outcome,
+      message: data.message.present ? data.message.value : this.message,
+      syncedAt: data.syncedAt.present ? data.syncedAt.value : this.syncedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('OtaRun(')
+          ..write('runId: $runId, ')
+          ..write('startedAt: $startedAt, ')
+          ..write('endedAt: $endedAt, ')
+          ..write('startedBy: $startedBy, ')
+          ..write('allPhases: $allPhases, ')
+          ..write('target: $target, ')
+          ..write('families: $families, ')
+          ..write('outcome: $outcome, ')
+          ..write('message: $message, ')
+          ..write('syncedAt: $syncedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(runId, startedAt, endedAt, startedBy,
+      allPhases, target, families, outcome, message, syncedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is OtaRun &&
+          other.runId == this.runId &&
+          other.startedAt == this.startedAt &&
+          other.endedAt == this.endedAt &&
+          other.startedBy == this.startedBy &&
+          other.allPhases == this.allPhases &&
+          other.target == this.target &&
+          other.families == this.families &&
+          other.outcome == this.outcome &&
+          other.message == this.message &&
+          other.syncedAt == this.syncedAt);
+}
+
+class OtaRunsCompanion extends UpdateCompanion<OtaRun> {
+  final Value<String> runId;
+  final Value<DateTime> startedAt;
+  final Value<DateTime?> endedAt;
+  final Value<String> startedBy;
+  final Value<bool> allPhases;
+  final Value<String> target;
+  final Value<String> families;
+  final Value<String?> outcome;
+  final Value<String?> message;
+  final Value<DateTime?> syncedAt;
+  final Value<int> rowid;
+  const OtaRunsCompanion({
+    this.runId = const Value.absent(),
+    this.startedAt = const Value.absent(),
+    this.endedAt = const Value.absent(),
+    this.startedBy = const Value.absent(),
+    this.allPhases = const Value.absent(),
+    this.target = const Value.absent(),
+    this.families = const Value.absent(),
+    this.outcome = const Value.absent(),
+    this.message = const Value.absent(),
+    this.syncedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  OtaRunsCompanion.insert({
+    required String runId,
+    required DateTime startedAt,
+    this.endedAt = const Value.absent(),
+    required String startedBy,
+    required bool allPhases,
+    required String target,
+    required String families,
+    this.outcome = const Value.absent(),
+    this.message = const Value.absent(),
+    this.syncedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  })  : runId = Value(runId),
+        startedAt = Value(startedAt),
+        startedBy = Value(startedBy),
+        allPhases = Value(allPhases),
+        target = Value(target),
+        families = Value(families);
+  static Insertable<OtaRun> custom({
+    Expression<String>? runId,
+    Expression<DateTime>? startedAt,
+    Expression<DateTime>? endedAt,
+    Expression<String>? startedBy,
+    Expression<bool>? allPhases,
+    Expression<String>? target,
+    Expression<String>? families,
+    Expression<String>? outcome,
+    Expression<String>? message,
+    Expression<DateTime>? syncedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (runId != null) 'run_id': runId,
+      if (startedAt != null) 'started_at': startedAt,
+      if (endedAt != null) 'ended_at': endedAt,
+      if (startedBy != null) 'started_by': startedBy,
+      if (allPhases != null) 'all_phases': allPhases,
+      if (target != null) 'target': target,
+      if (families != null) 'families': families,
+      if (outcome != null) 'outcome': outcome,
+      if (message != null) 'message': message,
+      if (syncedAt != null) 'synced_at': syncedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  OtaRunsCompanion copyWith(
+      {Value<String>? runId,
+      Value<DateTime>? startedAt,
+      Value<DateTime?>? endedAt,
+      Value<String>? startedBy,
+      Value<bool>? allPhases,
+      Value<String>? target,
+      Value<String>? families,
+      Value<String?>? outcome,
+      Value<String?>? message,
+      Value<DateTime?>? syncedAt,
+      Value<int>? rowid}) {
+    return OtaRunsCompanion(
+      runId: runId ?? this.runId,
+      startedAt: startedAt ?? this.startedAt,
+      endedAt: endedAt ?? this.endedAt,
+      startedBy: startedBy ?? this.startedBy,
+      allPhases: allPhases ?? this.allPhases,
+      target: target ?? this.target,
+      families: families ?? this.families,
+      outcome: outcome ?? this.outcome,
+      message: message ?? this.message,
+      syncedAt: syncedAt ?? this.syncedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (runId.present) {
+      map['run_id'] = Variable<String>(runId.value);
+    }
+    if (startedAt.present) {
+      map['started_at'] = Variable<DateTime>(startedAt.value);
+    }
+    if (endedAt.present) {
+      map['ended_at'] = Variable<DateTime>(endedAt.value);
+    }
+    if (startedBy.present) {
+      map['started_by'] = Variable<String>(startedBy.value);
+    }
+    if (allPhases.present) {
+      map['all_phases'] = Variable<bool>(allPhases.value);
+    }
+    if (target.present) {
+      map['target'] = Variable<String>(target.value);
+    }
+    if (families.present) {
+      map['families'] = Variable<String>(families.value);
+    }
+    if (outcome.present) {
+      map['outcome'] = Variable<String>(outcome.value);
+    }
+    if (message.present) {
+      map['message'] = Variable<String>(message.value);
+    }
+    if (syncedAt.present) {
+      map['synced_at'] = Variable<DateTime>(syncedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('OtaRunsCompanion(')
+          ..write('runId: $runId, ')
+          ..write('startedAt: $startedAt, ')
+          ..write('endedAt: $endedAt, ')
+          ..write('startedBy: $startedBy, ')
+          ..write('allPhases: $allPhases, ')
+          ..write('target: $target, ')
+          ..write('families: $families, ')
+          ..write('outcome: $outcome, ')
+          ..write('message: $message, ')
+          ..write('syncedAt: $syncedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $OtaRunUnitsTable extends OtaRunUnits
+    with TableInfo<$OtaRunUnitsTable, OtaRunUnit> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $OtaRunUnitsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _runIdMeta = const VerificationMeta('runId');
+  @override
+  late final GeneratedColumn<String> runId = GeneratedColumn<String>(
+      'run_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _unitKeyMeta =
+      const VerificationMeta('unitKey');
+  @override
+  late final GeneratedColumn<String> unitKey = GeneratedColumn<String>(
+      'unit_key', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _familyMeta = const VerificationMeta('family');
+  @override
+  late final GeneratedColumn<String> family = GeneratedColumn<String>(
+      'family', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _versionBeforeMeta =
+      const VerificationMeta('versionBefore');
+  @override
+  late final GeneratedColumn<String> versionBefore = GeneratedColumn<String>(
+      'version_before', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _versionAfterMeta =
+      const VerificationMeta('versionAfter');
+  @override
+  late final GeneratedColumn<String> versionAfter = GeneratedColumn<String>(
+      'version_after', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _stateMeta = const VerificationMeta('state');
+  @override
+  late final GeneratedColumn<String> state = GeneratedColumn<String>(
+      'state', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _attemptsMeta =
+      const VerificationMeta('attempts');
+  @override
+  late final GeneratedColumn<int> attempts = GeneratedColumn<int>(
+      'attempts', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _reasonRawMeta =
+      const VerificationMeta('reasonRaw');
+  @override
+  late final GeneratedColumn<int> reasonRaw = GeneratedColumn<int>(
+      'reason_raw', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _noteMeta = const VerificationMeta('note');
+  @override
+  late final GeneratedColumn<String> note = GeneratedColumn<String>(
+      'note', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _updatedAtMeta =
+      const VerificationMeta('updatedAt');
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+      'updated_at', aliasedName, false,
+      type: DriftSqlType.dateTime, requiredDuringInsert: true);
+  static const VerificationMeta _syncedAtMeta =
+      const VerificationMeta('syncedAt');
+  @override
+  late final GeneratedColumn<DateTime> syncedAt = GeneratedColumn<DateTime>(
+      'synced_at', aliasedName, true,
+      type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns => [
+        runId,
+        unitKey,
+        family,
+        versionBefore,
+        versionAfter,
+        state,
+        attempts,
+        reasonRaw,
+        note,
+        updatedAt,
+        syncedAt
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'ota_run_units';
+  @override
+  VerificationContext validateIntegrity(Insertable<OtaRunUnit> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('run_id')) {
+      context.handle(
+          _runIdMeta, runId.isAcceptableOrUnknown(data['run_id']!, _runIdMeta));
+    } else if (isInserting) {
+      context.missing(_runIdMeta);
+    }
+    if (data.containsKey('unit_key')) {
+      context.handle(_unitKeyMeta,
+          unitKey.isAcceptableOrUnknown(data['unit_key']!, _unitKeyMeta));
+    } else if (isInserting) {
+      context.missing(_unitKeyMeta);
+    }
+    if (data.containsKey('family')) {
+      context.handle(_familyMeta,
+          family.isAcceptableOrUnknown(data['family']!, _familyMeta));
+    } else if (isInserting) {
+      context.missing(_familyMeta);
+    }
+    if (data.containsKey('version_before')) {
+      context.handle(
+          _versionBeforeMeta,
+          versionBefore.isAcceptableOrUnknown(
+              data['version_before']!, _versionBeforeMeta));
+    } else if (isInserting) {
+      context.missing(_versionBeforeMeta);
+    }
+    if (data.containsKey('version_after')) {
+      context.handle(
+          _versionAfterMeta,
+          versionAfter.isAcceptableOrUnknown(
+              data['version_after']!, _versionAfterMeta));
+    } else if (isInserting) {
+      context.missing(_versionAfterMeta);
+    }
+    if (data.containsKey('state')) {
+      context.handle(
+          _stateMeta, state.isAcceptableOrUnknown(data['state']!, _stateMeta));
+    } else if (isInserting) {
+      context.missing(_stateMeta);
+    }
+    if (data.containsKey('attempts')) {
+      context.handle(_attemptsMeta,
+          attempts.isAcceptableOrUnknown(data['attempts']!, _attemptsMeta));
+    } else if (isInserting) {
+      context.missing(_attemptsMeta);
+    }
+    if (data.containsKey('reason_raw')) {
+      context.handle(_reasonRawMeta,
+          reasonRaw.isAcceptableOrUnknown(data['reason_raw']!, _reasonRawMeta));
+    } else if (isInserting) {
+      context.missing(_reasonRawMeta);
+    }
+    if (data.containsKey('note')) {
+      context.handle(
+          _noteMeta, note.isAcceptableOrUnknown(data['note']!, _noteMeta));
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(_updatedAtMeta,
+          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    if (data.containsKey('synced_at')) {
+      context.handle(_syncedAtMeta,
+          syncedAt.isAcceptableOrUnknown(data['synced_at']!, _syncedAtMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {runId, unitKey};
+  @override
+  OtaRunUnit map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return OtaRunUnit(
+      runId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}run_id'])!,
+      unitKey: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}unit_key'])!,
+      family: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}family'])!,
+      versionBefore: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}version_before'])!,
+      versionAfter: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}version_after'])!,
+      state: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}state'])!,
+      attempts: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}attempts'])!,
+      reasonRaw: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}reason_raw'])!,
+      note: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}note']),
+      updatedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}updated_at'])!,
+      syncedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}synced_at']),
+    );
+  }
+
+  @override
+  $OtaRunUnitsTable createAlias(String alias) {
+    return $OtaRunUnitsTable(attachedDatabase, alias);
+  }
+}
+
+class OtaRunUnit extends DataClass implements Insertable<OtaRunUnit> {
+  final String runId;
+  final String unitKey;
+  final String family;
+  final String versionBefore;
+  final String versionAfter;
+
+  /// SafrOtaUnitState name: waiting … done | failed | skipped.
+  final String state;
+  final int attempts;
+  final int reasonRaw;
+  final String? note;
+  final DateTime updatedAt;
+  final DateTime? syncedAt;
+  const OtaRunUnit(
+      {required this.runId,
+      required this.unitKey,
+      required this.family,
+      required this.versionBefore,
+      required this.versionAfter,
+      required this.state,
+      required this.attempts,
+      required this.reasonRaw,
+      this.note,
+      required this.updatedAt,
+      this.syncedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['run_id'] = Variable<String>(runId);
+    map['unit_key'] = Variable<String>(unitKey);
+    map['family'] = Variable<String>(family);
+    map['version_before'] = Variable<String>(versionBefore);
+    map['version_after'] = Variable<String>(versionAfter);
+    map['state'] = Variable<String>(state);
+    map['attempts'] = Variable<int>(attempts);
+    map['reason_raw'] = Variable<int>(reasonRaw);
+    if (!nullToAbsent || note != null) {
+      map['note'] = Variable<String>(note);
+    }
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    if (!nullToAbsent || syncedAt != null) {
+      map['synced_at'] = Variable<DateTime>(syncedAt);
+    }
+    return map;
+  }
+
+  OtaRunUnitsCompanion toCompanion(bool nullToAbsent) {
+    return OtaRunUnitsCompanion(
+      runId: Value(runId),
+      unitKey: Value(unitKey),
+      family: Value(family),
+      versionBefore: Value(versionBefore),
+      versionAfter: Value(versionAfter),
+      state: Value(state),
+      attempts: Value(attempts),
+      reasonRaw: Value(reasonRaw),
+      note: note == null && nullToAbsent ? const Value.absent() : Value(note),
+      updatedAt: Value(updatedAt),
+      syncedAt: syncedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncedAt),
+    );
+  }
+
+  factory OtaRunUnit.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return OtaRunUnit(
+      runId: serializer.fromJson<String>(json['runId']),
+      unitKey: serializer.fromJson<String>(json['unitKey']),
+      family: serializer.fromJson<String>(json['family']),
+      versionBefore: serializer.fromJson<String>(json['versionBefore']),
+      versionAfter: serializer.fromJson<String>(json['versionAfter']),
+      state: serializer.fromJson<String>(json['state']),
+      attempts: serializer.fromJson<int>(json['attempts']),
+      reasonRaw: serializer.fromJson<int>(json['reasonRaw']),
+      note: serializer.fromJson<String?>(json['note']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+      syncedAt: serializer.fromJson<DateTime?>(json['syncedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'runId': serializer.toJson<String>(runId),
+      'unitKey': serializer.toJson<String>(unitKey),
+      'family': serializer.toJson<String>(family),
+      'versionBefore': serializer.toJson<String>(versionBefore),
+      'versionAfter': serializer.toJson<String>(versionAfter),
+      'state': serializer.toJson<String>(state),
+      'attempts': serializer.toJson<int>(attempts),
+      'reasonRaw': serializer.toJson<int>(reasonRaw),
+      'note': serializer.toJson<String?>(note),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+      'syncedAt': serializer.toJson<DateTime?>(syncedAt),
+    };
+  }
+
+  OtaRunUnit copyWith(
+          {String? runId,
+          String? unitKey,
+          String? family,
+          String? versionBefore,
+          String? versionAfter,
+          String? state,
+          int? attempts,
+          int? reasonRaw,
+          Value<String?> note = const Value.absent(),
+          DateTime? updatedAt,
+          Value<DateTime?> syncedAt = const Value.absent()}) =>
+      OtaRunUnit(
+        runId: runId ?? this.runId,
+        unitKey: unitKey ?? this.unitKey,
+        family: family ?? this.family,
+        versionBefore: versionBefore ?? this.versionBefore,
+        versionAfter: versionAfter ?? this.versionAfter,
+        state: state ?? this.state,
+        attempts: attempts ?? this.attempts,
+        reasonRaw: reasonRaw ?? this.reasonRaw,
+        note: note.present ? note.value : this.note,
+        updatedAt: updatedAt ?? this.updatedAt,
+        syncedAt: syncedAt.present ? syncedAt.value : this.syncedAt,
+      );
+  OtaRunUnit copyWithCompanion(OtaRunUnitsCompanion data) {
+    return OtaRunUnit(
+      runId: data.runId.present ? data.runId.value : this.runId,
+      unitKey: data.unitKey.present ? data.unitKey.value : this.unitKey,
+      family: data.family.present ? data.family.value : this.family,
+      versionBefore: data.versionBefore.present
+          ? data.versionBefore.value
+          : this.versionBefore,
+      versionAfter: data.versionAfter.present
+          ? data.versionAfter.value
+          : this.versionAfter,
+      state: data.state.present ? data.state.value : this.state,
+      attempts: data.attempts.present ? data.attempts.value : this.attempts,
+      reasonRaw: data.reasonRaw.present ? data.reasonRaw.value : this.reasonRaw,
+      note: data.note.present ? data.note.value : this.note,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+      syncedAt: data.syncedAt.present ? data.syncedAt.value : this.syncedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('OtaRunUnit(')
+          ..write('runId: $runId, ')
+          ..write('unitKey: $unitKey, ')
+          ..write('family: $family, ')
+          ..write('versionBefore: $versionBefore, ')
+          ..write('versionAfter: $versionAfter, ')
+          ..write('state: $state, ')
+          ..write('attempts: $attempts, ')
+          ..write('reasonRaw: $reasonRaw, ')
+          ..write('note: $note, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('syncedAt: $syncedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(runId, unitKey, family, versionBefore,
+      versionAfter, state, attempts, reasonRaw, note, updatedAt, syncedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is OtaRunUnit &&
+          other.runId == this.runId &&
+          other.unitKey == this.unitKey &&
+          other.family == this.family &&
+          other.versionBefore == this.versionBefore &&
+          other.versionAfter == this.versionAfter &&
+          other.state == this.state &&
+          other.attempts == this.attempts &&
+          other.reasonRaw == this.reasonRaw &&
+          other.note == this.note &&
+          other.updatedAt == this.updatedAt &&
+          other.syncedAt == this.syncedAt);
+}
+
+class OtaRunUnitsCompanion extends UpdateCompanion<OtaRunUnit> {
+  final Value<String> runId;
+  final Value<String> unitKey;
+  final Value<String> family;
+  final Value<String> versionBefore;
+  final Value<String> versionAfter;
+  final Value<String> state;
+  final Value<int> attempts;
+  final Value<int> reasonRaw;
+  final Value<String?> note;
+  final Value<DateTime> updatedAt;
+  final Value<DateTime?> syncedAt;
+  final Value<int> rowid;
+  const OtaRunUnitsCompanion({
+    this.runId = const Value.absent(),
+    this.unitKey = const Value.absent(),
+    this.family = const Value.absent(),
+    this.versionBefore = const Value.absent(),
+    this.versionAfter = const Value.absent(),
+    this.state = const Value.absent(),
+    this.attempts = const Value.absent(),
+    this.reasonRaw = const Value.absent(),
+    this.note = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.syncedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  OtaRunUnitsCompanion.insert({
+    required String runId,
+    required String unitKey,
+    required String family,
+    required String versionBefore,
+    required String versionAfter,
+    required String state,
+    required int attempts,
+    required int reasonRaw,
+    this.note = const Value.absent(),
+    required DateTime updatedAt,
+    this.syncedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  })  : runId = Value(runId),
+        unitKey = Value(unitKey),
+        family = Value(family),
+        versionBefore = Value(versionBefore),
+        versionAfter = Value(versionAfter),
+        state = Value(state),
+        attempts = Value(attempts),
+        reasonRaw = Value(reasonRaw),
+        updatedAt = Value(updatedAt);
+  static Insertable<OtaRunUnit> custom({
+    Expression<String>? runId,
+    Expression<String>? unitKey,
+    Expression<String>? family,
+    Expression<String>? versionBefore,
+    Expression<String>? versionAfter,
+    Expression<String>? state,
+    Expression<int>? attempts,
+    Expression<int>? reasonRaw,
+    Expression<String>? note,
+    Expression<DateTime>? updatedAt,
+    Expression<DateTime>? syncedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (runId != null) 'run_id': runId,
+      if (unitKey != null) 'unit_key': unitKey,
+      if (family != null) 'family': family,
+      if (versionBefore != null) 'version_before': versionBefore,
+      if (versionAfter != null) 'version_after': versionAfter,
+      if (state != null) 'state': state,
+      if (attempts != null) 'attempts': attempts,
+      if (reasonRaw != null) 'reason_raw': reasonRaw,
+      if (note != null) 'note': note,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (syncedAt != null) 'synced_at': syncedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  OtaRunUnitsCompanion copyWith(
+      {Value<String>? runId,
+      Value<String>? unitKey,
+      Value<String>? family,
+      Value<String>? versionBefore,
+      Value<String>? versionAfter,
+      Value<String>? state,
+      Value<int>? attempts,
+      Value<int>? reasonRaw,
+      Value<String?>? note,
+      Value<DateTime>? updatedAt,
+      Value<DateTime?>? syncedAt,
+      Value<int>? rowid}) {
+    return OtaRunUnitsCompanion(
+      runId: runId ?? this.runId,
+      unitKey: unitKey ?? this.unitKey,
+      family: family ?? this.family,
+      versionBefore: versionBefore ?? this.versionBefore,
+      versionAfter: versionAfter ?? this.versionAfter,
+      state: state ?? this.state,
+      attempts: attempts ?? this.attempts,
+      reasonRaw: reasonRaw ?? this.reasonRaw,
+      note: note ?? this.note,
+      updatedAt: updatedAt ?? this.updatedAt,
+      syncedAt: syncedAt ?? this.syncedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (runId.present) {
+      map['run_id'] = Variable<String>(runId.value);
+    }
+    if (unitKey.present) {
+      map['unit_key'] = Variable<String>(unitKey.value);
+    }
+    if (family.present) {
+      map['family'] = Variable<String>(family.value);
+    }
+    if (versionBefore.present) {
+      map['version_before'] = Variable<String>(versionBefore.value);
+    }
+    if (versionAfter.present) {
+      map['version_after'] = Variable<String>(versionAfter.value);
+    }
+    if (state.present) {
+      map['state'] = Variable<String>(state.value);
+    }
+    if (attempts.present) {
+      map['attempts'] = Variable<int>(attempts.value);
+    }
+    if (reasonRaw.present) {
+      map['reason_raw'] = Variable<int>(reasonRaw.value);
+    }
+    if (note.present) {
+      map['note'] = Variable<String>(note.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (syncedAt.present) {
+      map['synced_at'] = Variable<DateTime>(syncedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('OtaRunUnitsCompanion(')
+          ..write('runId: $runId, ')
+          ..write('unitKey: $unitKey, ')
+          ..write('family: $family, ')
+          ..write('versionBefore: $versionBefore, ')
+          ..write('versionAfter: $versionAfter, ')
+          ..write('state: $state, ')
+          ..write('attempts: $attempts, ')
+          ..write('reasonRaw: $reasonRaw, ')
+          ..write('note: $note, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('syncedAt: $syncedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -2582,12 +3651,21 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $AuditEventsTable auditEvents = $AuditEventsTable(this);
   late final $MeshDevicesTable meshDevices = $MeshDevicesTable(this);
   late final $DeviceEventsTable deviceEvents = $DeviceEventsTable(this);
+  late final $OtaRunsTable otaRuns = $OtaRunsTable(this);
+  late final $OtaRunUnitsTable otaRunUnits = $OtaRunUnitsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
-  List<DatabaseSchemaEntity> get allSchemaEntities =>
-      [serialPackets, deviceMetadata, auditEvents, meshDevices, deviceEvents];
+  List<DatabaseSchemaEntity> get allSchemaEntities => [
+        serialPackets,
+        deviceMetadata,
+        auditEvents,
+        meshDevices,
+        deviceEvents,
+        otaRuns,
+        otaRunUnits
+      ];
 }
 
 typedef $$SerialPacketsTableCreateCompanionBuilder = SerialPacketsCompanion
@@ -3812,6 +4890,505 @@ typedef $$DeviceEventsTableProcessedTableManager = ProcessedTableManager<
     ),
     DeviceEvent,
     PrefetchHooks Function()>;
+typedef $$OtaRunsTableCreateCompanionBuilder = OtaRunsCompanion Function({
+  required String runId,
+  required DateTime startedAt,
+  Value<DateTime?> endedAt,
+  required String startedBy,
+  required bool allPhases,
+  required String target,
+  required String families,
+  Value<String?> outcome,
+  Value<String?> message,
+  Value<DateTime?> syncedAt,
+  Value<int> rowid,
+});
+typedef $$OtaRunsTableUpdateCompanionBuilder = OtaRunsCompanion Function({
+  Value<String> runId,
+  Value<DateTime> startedAt,
+  Value<DateTime?> endedAt,
+  Value<String> startedBy,
+  Value<bool> allPhases,
+  Value<String> target,
+  Value<String> families,
+  Value<String?> outcome,
+  Value<String?> message,
+  Value<DateTime?> syncedAt,
+  Value<int> rowid,
+});
+
+class $$OtaRunsTableFilterComposer
+    extends Composer<_$AppDatabase, $OtaRunsTable> {
+  $$OtaRunsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get runId => $composableBuilder(
+      column: $table.runId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get startedAt => $composableBuilder(
+      column: $table.startedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get endedAt => $composableBuilder(
+      column: $table.endedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get startedBy => $composableBuilder(
+      column: $table.startedBy, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get allPhases => $composableBuilder(
+      column: $table.allPhases, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get target => $composableBuilder(
+      column: $table.target, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get families => $composableBuilder(
+      column: $table.families, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get outcome => $composableBuilder(
+      column: $table.outcome, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get message => $composableBuilder(
+      column: $table.message, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get syncedAt => $composableBuilder(
+      column: $table.syncedAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$OtaRunsTableOrderingComposer
+    extends Composer<_$AppDatabase, $OtaRunsTable> {
+  $$OtaRunsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get runId => $composableBuilder(
+      column: $table.runId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get startedAt => $composableBuilder(
+      column: $table.startedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get endedAt => $composableBuilder(
+      column: $table.endedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get startedBy => $composableBuilder(
+      column: $table.startedBy, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get allPhases => $composableBuilder(
+      column: $table.allPhases, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get target => $composableBuilder(
+      column: $table.target, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get families => $composableBuilder(
+      column: $table.families, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get outcome => $composableBuilder(
+      column: $table.outcome, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get message => $composableBuilder(
+      column: $table.message, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get syncedAt => $composableBuilder(
+      column: $table.syncedAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$OtaRunsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $OtaRunsTable> {
+  $$OtaRunsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get runId =>
+      $composableBuilder(column: $table.runId, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get startedAt =>
+      $composableBuilder(column: $table.startedAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get endedAt =>
+      $composableBuilder(column: $table.endedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get startedBy =>
+      $composableBuilder(column: $table.startedBy, builder: (column) => column);
+
+  GeneratedColumn<bool> get allPhases =>
+      $composableBuilder(column: $table.allPhases, builder: (column) => column);
+
+  GeneratedColumn<String> get target =>
+      $composableBuilder(column: $table.target, builder: (column) => column);
+
+  GeneratedColumn<String> get families =>
+      $composableBuilder(column: $table.families, builder: (column) => column);
+
+  GeneratedColumn<String> get outcome =>
+      $composableBuilder(column: $table.outcome, builder: (column) => column);
+
+  GeneratedColumn<String> get message =>
+      $composableBuilder(column: $table.message, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get syncedAt =>
+      $composableBuilder(column: $table.syncedAt, builder: (column) => column);
+}
+
+class $$OtaRunsTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $OtaRunsTable,
+    OtaRun,
+    $$OtaRunsTableFilterComposer,
+    $$OtaRunsTableOrderingComposer,
+    $$OtaRunsTableAnnotationComposer,
+    $$OtaRunsTableCreateCompanionBuilder,
+    $$OtaRunsTableUpdateCompanionBuilder,
+    (OtaRun, BaseReferences<_$AppDatabase, $OtaRunsTable, OtaRun>),
+    OtaRun,
+    PrefetchHooks Function()> {
+  $$OtaRunsTableTableManager(_$AppDatabase db, $OtaRunsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$OtaRunsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$OtaRunsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$OtaRunsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> runId = const Value.absent(),
+            Value<DateTime> startedAt = const Value.absent(),
+            Value<DateTime?> endedAt = const Value.absent(),
+            Value<String> startedBy = const Value.absent(),
+            Value<bool> allPhases = const Value.absent(),
+            Value<String> target = const Value.absent(),
+            Value<String> families = const Value.absent(),
+            Value<String?> outcome = const Value.absent(),
+            Value<String?> message = const Value.absent(),
+            Value<DateTime?> syncedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              OtaRunsCompanion(
+            runId: runId,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            startedBy: startedBy,
+            allPhases: allPhases,
+            target: target,
+            families: families,
+            outcome: outcome,
+            message: message,
+            syncedAt: syncedAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String runId,
+            required DateTime startedAt,
+            Value<DateTime?> endedAt = const Value.absent(),
+            required String startedBy,
+            required bool allPhases,
+            required String target,
+            required String families,
+            Value<String?> outcome = const Value.absent(),
+            Value<String?> message = const Value.absent(),
+            Value<DateTime?> syncedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              OtaRunsCompanion.insert(
+            runId: runId,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            startedBy: startedBy,
+            allPhases: allPhases,
+            target: target,
+            families: families,
+            outcome: outcome,
+            message: message,
+            syncedAt: syncedAt,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$OtaRunsTableProcessedTableManager = ProcessedTableManager<
+    _$AppDatabase,
+    $OtaRunsTable,
+    OtaRun,
+    $$OtaRunsTableFilterComposer,
+    $$OtaRunsTableOrderingComposer,
+    $$OtaRunsTableAnnotationComposer,
+    $$OtaRunsTableCreateCompanionBuilder,
+    $$OtaRunsTableUpdateCompanionBuilder,
+    (OtaRun, BaseReferences<_$AppDatabase, $OtaRunsTable, OtaRun>),
+    OtaRun,
+    PrefetchHooks Function()>;
+typedef $$OtaRunUnitsTableCreateCompanionBuilder = OtaRunUnitsCompanion
+    Function({
+  required String runId,
+  required String unitKey,
+  required String family,
+  required String versionBefore,
+  required String versionAfter,
+  required String state,
+  required int attempts,
+  required int reasonRaw,
+  Value<String?> note,
+  required DateTime updatedAt,
+  Value<DateTime?> syncedAt,
+  Value<int> rowid,
+});
+typedef $$OtaRunUnitsTableUpdateCompanionBuilder = OtaRunUnitsCompanion
+    Function({
+  Value<String> runId,
+  Value<String> unitKey,
+  Value<String> family,
+  Value<String> versionBefore,
+  Value<String> versionAfter,
+  Value<String> state,
+  Value<int> attempts,
+  Value<int> reasonRaw,
+  Value<String?> note,
+  Value<DateTime> updatedAt,
+  Value<DateTime?> syncedAt,
+  Value<int> rowid,
+});
+
+class $$OtaRunUnitsTableFilterComposer
+    extends Composer<_$AppDatabase, $OtaRunUnitsTable> {
+  $$OtaRunUnitsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get runId => $composableBuilder(
+      column: $table.runId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get unitKey => $composableBuilder(
+      column: $table.unitKey, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get family => $composableBuilder(
+      column: $table.family, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get versionBefore => $composableBuilder(
+      column: $table.versionBefore, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get versionAfter => $composableBuilder(
+      column: $table.versionAfter, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get state => $composableBuilder(
+      column: $table.state, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get attempts => $composableBuilder(
+      column: $table.attempts, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get reasonRaw => $composableBuilder(
+      column: $table.reasonRaw, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get note => $composableBuilder(
+      column: $table.note, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get syncedAt => $composableBuilder(
+      column: $table.syncedAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$OtaRunUnitsTableOrderingComposer
+    extends Composer<_$AppDatabase, $OtaRunUnitsTable> {
+  $$OtaRunUnitsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get runId => $composableBuilder(
+      column: $table.runId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get unitKey => $composableBuilder(
+      column: $table.unitKey, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get family => $composableBuilder(
+      column: $table.family, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get versionBefore => $composableBuilder(
+      column: $table.versionBefore,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get versionAfter => $composableBuilder(
+      column: $table.versionAfter,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get state => $composableBuilder(
+      column: $table.state, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get attempts => $composableBuilder(
+      column: $table.attempts, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get reasonRaw => $composableBuilder(
+      column: $table.reasonRaw, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get note => $composableBuilder(
+      column: $table.note, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get syncedAt => $composableBuilder(
+      column: $table.syncedAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$OtaRunUnitsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $OtaRunUnitsTable> {
+  $$OtaRunUnitsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get runId =>
+      $composableBuilder(column: $table.runId, builder: (column) => column);
+
+  GeneratedColumn<String> get unitKey =>
+      $composableBuilder(column: $table.unitKey, builder: (column) => column);
+
+  GeneratedColumn<String> get family =>
+      $composableBuilder(column: $table.family, builder: (column) => column);
+
+  GeneratedColumn<String> get versionBefore => $composableBuilder(
+      column: $table.versionBefore, builder: (column) => column);
+
+  GeneratedColumn<String> get versionAfter => $composableBuilder(
+      column: $table.versionAfter, builder: (column) => column);
+
+  GeneratedColumn<String> get state =>
+      $composableBuilder(column: $table.state, builder: (column) => column);
+
+  GeneratedColumn<int> get attempts =>
+      $composableBuilder(column: $table.attempts, builder: (column) => column);
+
+  GeneratedColumn<int> get reasonRaw =>
+      $composableBuilder(column: $table.reasonRaw, builder: (column) => column);
+
+  GeneratedColumn<String> get note =>
+      $composableBuilder(column: $table.note, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get syncedAt =>
+      $composableBuilder(column: $table.syncedAt, builder: (column) => column);
+}
+
+class $$OtaRunUnitsTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $OtaRunUnitsTable,
+    OtaRunUnit,
+    $$OtaRunUnitsTableFilterComposer,
+    $$OtaRunUnitsTableOrderingComposer,
+    $$OtaRunUnitsTableAnnotationComposer,
+    $$OtaRunUnitsTableCreateCompanionBuilder,
+    $$OtaRunUnitsTableUpdateCompanionBuilder,
+    (OtaRunUnit, BaseReferences<_$AppDatabase, $OtaRunUnitsTable, OtaRunUnit>),
+    OtaRunUnit,
+    PrefetchHooks Function()> {
+  $$OtaRunUnitsTableTableManager(_$AppDatabase db, $OtaRunUnitsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$OtaRunUnitsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$OtaRunUnitsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$OtaRunUnitsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> runId = const Value.absent(),
+            Value<String> unitKey = const Value.absent(),
+            Value<String> family = const Value.absent(),
+            Value<String> versionBefore = const Value.absent(),
+            Value<String> versionAfter = const Value.absent(),
+            Value<String> state = const Value.absent(),
+            Value<int> attempts = const Value.absent(),
+            Value<int> reasonRaw = const Value.absent(),
+            Value<String?> note = const Value.absent(),
+            Value<DateTime> updatedAt = const Value.absent(),
+            Value<DateTime?> syncedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              OtaRunUnitsCompanion(
+            runId: runId,
+            unitKey: unitKey,
+            family: family,
+            versionBefore: versionBefore,
+            versionAfter: versionAfter,
+            state: state,
+            attempts: attempts,
+            reasonRaw: reasonRaw,
+            note: note,
+            updatedAt: updatedAt,
+            syncedAt: syncedAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String runId,
+            required String unitKey,
+            required String family,
+            required String versionBefore,
+            required String versionAfter,
+            required String state,
+            required int attempts,
+            required int reasonRaw,
+            Value<String?> note = const Value.absent(),
+            required DateTime updatedAt,
+            Value<DateTime?> syncedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              OtaRunUnitsCompanion.insert(
+            runId: runId,
+            unitKey: unitKey,
+            family: family,
+            versionBefore: versionBefore,
+            versionAfter: versionAfter,
+            state: state,
+            attempts: attempts,
+            reasonRaw: reasonRaw,
+            note: note,
+            updatedAt: updatedAt,
+            syncedAt: syncedAt,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$OtaRunUnitsTableProcessedTableManager = ProcessedTableManager<
+    _$AppDatabase,
+    $OtaRunUnitsTable,
+    OtaRunUnit,
+    $$OtaRunUnitsTableFilterComposer,
+    $$OtaRunUnitsTableOrderingComposer,
+    $$OtaRunUnitsTableAnnotationComposer,
+    $$OtaRunUnitsTableCreateCompanionBuilder,
+    $$OtaRunUnitsTableUpdateCompanionBuilder,
+    (OtaRunUnit, BaseReferences<_$AppDatabase, $OtaRunUnitsTable, OtaRunUnit>),
+    OtaRunUnit,
+    PrefetchHooks Function()>;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -3826,4 +5403,8 @@ class $AppDatabaseManager {
       $$MeshDevicesTableTableManager(_db, _db.meshDevices);
   $$DeviceEventsTableTableManager get deviceEvents =>
       $$DeviceEventsTableTableManager(_db, _db.deviceEvents);
+  $$OtaRunsTableTableManager get otaRuns =>
+      $$OtaRunsTableTableManager(_db, _db.otaRuns);
+  $$OtaRunUnitsTableTableManager get otaRunUnits =>
+      $$OtaRunUnitsTableTableManager(_db, _db.otaRunUnits);
 }

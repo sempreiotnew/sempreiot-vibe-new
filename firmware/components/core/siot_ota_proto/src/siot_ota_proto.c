@@ -351,6 +351,34 @@ siot_ota_reason_t siot_ota_accept_version(const char *running, const char *offer
     return siot_ota_version_cmp(&off, &run) > 0 ? SIOT_OTA_R_NONE : SIOT_OTA_R_NOT_NEWER;
 }
 
+/* ---- the rollout's order --------------------------------------------------------------------- */
+
+int siot_ota_pick_next(const siot_ota_pick_t *units, size_t n)
+{
+    int best = -1;
+    int best_key[3] = {0, 0, 0};
+    for (size_t i = 0; i < n; i++) {
+        const siot_ota_pick_t *u = &units[i];
+        if (!u->waiting) continue;
+        const bool root = u->is_root || u->layer == 1;
+        const int depth = u->layer == 0 ? 1 : u->layer; /* not known yet: shallow */
+        /* Smaller is sooner: root last, retried after fresh, deeper first. */
+        const int key[3] = {root ? 1 : 0, u->attempts > 0 ? 1 : 0, -depth};
+        bool sooner = best < 0;
+        for (int k = 0; !sooner && k < 3; k++) {
+            if (key[k] != best_key[k]) {
+                sooner = key[k] < best_key[k];
+                break;
+            }
+        }
+        if (sooner) {
+            best = (int)i;
+            memcpy(best_key, key, sizeof best_key);
+        }
+    }
+    return best;
+}
+
 /* ---- CRC-32 ---------------------------------------------------------------------------------- */
 
 uint32_t siot_ota_crc32(const uint8_t *data, size_t len)

@@ -4,10 +4,12 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/database/app_database.dart';
 import '../domain/ota/firmware_version.dart';
 import '../domain/safr/safr_product.dart';
 import '../domain/safr/safr_v2_payloads.dart';
 import 'alarm_latch_provider.dart';
+import 'device_update_history.dart';
 import 'device_update_state.dart';
 import 'firmware_library_provider.dart';
 import 'ota_push_controller.dart';
@@ -118,6 +120,7 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
     required Iterable<String> keys,
     required FirmwareLibraryEntry image,
     bool reinstall = false,
+    String by = 'system',
   }) async {
     final blocker = _startBlocker();
     if (blocker != null) return blocker;
@@ -131,19 +134,27 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
     _images
       ..clear()
       ..[family] = image;
+    _audit(by, 'ota_update_started', {
+      'family': family.name,
+      'version': image.version,
+      'units': queue,
+      if (reinstall) 'reinstall': true,
+    });
     _begin(
       all: false,
       phases: [family],
       target: image.version,
       queues: {family: queue},
       reinstall: reinstall,
+      by: by,
     );
     return null;
   }
 
   /// "Atualizar tudo" to [version]: the board, then every node, then every
   /// detector the tablet hears. Returns why not, or null when it started.
-  Future<String?> startAll(String version, {bool reinstall = false}) async {
+  Future<String?> startAll(String version,
+      {bool reinstall = false, String by = 'system'}) async {
     final blocker = _startBlocker();
     if (blocker != null) return blocker;
     final library = _ref.read(firmwareLibraryProvider);
@@ -161,6 +172,11 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
     }
     final nodes = _online(SafrProductFamily.node);
     final leafs = _online(SafrProductFamily.leaf);
+    _audit(by, 'ota_update_started', {
+      'all': true,
+      'version': version,
+      if (reinstall) 'reinstall': true,
+    });
     _begin(
       all: true,
       phases: [
@@ -175,6 +191,7 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
         if (leafs.isNotEmpty) SafrProductFamily.leaf: leafs,
       },
       reinstall: reinstall,
+      by: by,
     );
     return null;
   }
@@ -199,6 +216,7 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
     required String target,
     required Map<SafrProductFamily, List<String>> queues,
     bool reinstall = false,
+    String by = 'system',
   }) {
     _listen();
     _generation++;
@@ -234,6 +252,8 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
       stage: DeviceUpdateStage.pushing,
       startedAt: _clock(),
       boardRestartedAt: _boardRestartedAt,
+      runId: _newRunId(),
+      startedBy: by,
     );
     unawaited(_runPhase(_generation));
   }
@@ -253,7 +273,7 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
   }
 
   /// Goes on. Not while an alarm is latched.
-  Future<String?> resume() async {
+  Future<String?> resume({String by = 'system'}) async {
     final run = state;
     if (run == null || !run.running) return null;
     if (_ref.read(activeAlarmProvider)) {
@@ -267,6 +287,7 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
     }
     if (!mounted || state == null) return null;
     state = state!.copyWith(holding: false, pausedBy: null, message: null);
+    _audit(by, 'ota_update_resumed', {});
     _release();
     return null;
   }
@@ -296,9 +317,10 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
   }
 
   /// "Atualizar tudo", a node failed: go on with the detectors, or stop.
-  void decide({required bool goOn}) {
+  void decide({required bool goOn, String by = 'system'}) {
     final run = state;
     if (run == null || run.stage != DeviceUpdateStage.deciding) return;
+    _audit(by, goOn ? 'ota_update_continued' : 'ota_update_stopped', {});
     if (goOn) {
       _next(_generation);
     } else {
@@ -308,7 +330,7 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
   }
 
   /// The units of the current family that failed, once more.
-  String? retryFailed() {
+  String? retryFailed({String by = 'system'}) {
     final run = state;
     if (run == null) return null;
     final canRetry = run.stage == DeviceUpdateStage.deciding ||
@@ -322,6 +344,7 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
     if (_ref.read(activeAlarmProvider)) {
       return 'Há alarme ativo. Rearme a central antes de atualizar.';
     }
+    _audit(by, 'ota_update_retried', {'units': failed});
     final units = Map.of(run.units);
     for (final k in failed) {
       units[k] = units[k]!.copyWith(
@@ -743,7 +766,40 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
     }
   }
 
+  // ── History ──────────────────────────────────────────────────────────────
+
+  /// Every change of the run is written to the history (OtaRuns /
+  /// OtaRunUnits), in order, as it happens.
+  Future<void> _writes = Future<void>.value();
+
+  @override
+  set state(DeviceUpdateRun? value) {
+    final before = super.state;
+    super.state = value;
+    if (value == null || value.runId.isEmpty) return;
+    final history = _ref.read(deviceUpdateHistoryProvider);
+    _writes = _writes
+        .then((_) => history.record(before, value))
+        .catchError((Object e) => debugPrint('[OTA] history not written: $e'));
+  }
+
+  /// Everything handed to the history so far is written.
+  @visibleForTesting
+  Future<void> get written => _writes;
+
+  static final _random = math.Random.secure();
+  static String _newRunId() => List.generate(
+      8, (_) => _random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+
   // ── Helpers ──────────────────────────────────────────────────────────────
+
+  /// Who started what, in the audit trail ("Auditoria").
+  void _audit(String by, String action, Map<String, Object?> detail) {
+    unawaited(_ref
+        .read(appDatabaseProvider)
+        .addAudit(by, action, detail)
+        .catchError((Object e) => debugPrint('[OTA] audit not written: $e')));
+  }
 
   List<String> _pending(SafrProductFamily fam) => [
         for (final u in state!.unitsOf(fam))

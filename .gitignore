@@ -74,3 +74,6 @@ build-*/
 # firmware/ and mobile/sempreiot_central_app/ live in this repository since 2026-09-28
 # (histories imported with git subtree from sempreiotnew/firmware and
 # sempreiotnew/sempreiot_central_app, now archived). Their own .gitignore files still apply.
+
+
+firmware/apps/board/*.log

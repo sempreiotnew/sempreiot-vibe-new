@@ -1,16 +1,22 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/database/app_database.dart' show OtaRun, OtaRunUnit;
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
+import '../../application/credentials_admin_provider.dart'
+    show EditorRole, EditorRoleLabel;
 import '../../application/device_update_controller.dart';
+import '../../application/device_update_history.dart';
 import '../../application/device_update_selection.dart';
 import '../../application/device_update_state.dart';
 import '../../application/device_update_words.dart';
 import '../../application/firmware_library_provider.dart';
 import '../../application/ota_push_report.dart';
+import '../../application/ota_pin_policy.dart';
 import '../../application/ota_push_state.dart';
 import '../../application/ota_rollout_state.dart' show OtaPauseCause;
 import '../../application/ota_rollout_report.dart' show otaRolloutViewProvider;
@@ -19,6 +25,7 @@ import '../../application/topology_provider.dart';
 import '../../domain/safr/safr_product.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
 import 'device_avatar.dart' show deviceDisplayName;
+import 'editor_gate.dart' show requestEditorRole;
 import 'firmware_update_widgets.dart'
     show OtaCounters, OtaLogCard, OtaStepList, otaMergedLog;
 
@@ -493,6 +500,13 @@ class _RunBar extends ConsumerWidget {
       }
     }
 
+    // Anything that starts something on the units asks the PIN first.
+    Future<void> withPin(Future<String?> Function(String by) action) async {
+      final role = await ensureOtaPin(context, ref);
+      if (role == null || !context.mounted) return;
+      await say(action(role.auditName));
+    }
+
     final actions = <Widget>[
       if (run.stage == DeviceUpdateStage.rolling &&
           !run.paused &&
@@ -504,13 +518,14 @@ class _RunBar extends ConsumerWidget {
         ),
       if (run.running && run.paused)
         FilledButton.icon(
-          onPressed: () => say(ctl.resume()),
+          onPressed: () => withPin((by) => ctl.resume(by: by)),
           icon: const Icon(Icons.play_arrow_rounded, size: 18),
           label: const Text('Retomar'),
         ),
       if (run.stage == DeviceUpdateStage.deciding) ...[
         OutlinedButton.icon(
-          onPressed: () => say(Future.value(ctl.retryFailed())),
+          onPressed: () =>
+              withPin((by) => Future.value(ctl.retryFailed(by: by))),
           icon: const Icon(Icons.refresh_rounded, size: 18),
           label: Text('Tentar de novo ($failed)'),
         ),
@@ -520,7 +535,10 @@ class _RunBar extends ConsumerWidget {
           child: const Text('Parar aqui'),
         ),
         FilledButton(
-          onPressed: () => ctl.decide(goOn: true),
+          onPressed: () => withPin((by) async {
+            ctl.decide(goOn: true, by: by);
+            return null;
+          }),
           child: const Text('Continuar'),
         ),
       ],
@@ -535,7 +553,8 @@ class _RunBar extends ConsumerWidget {
         ),
       if (!run.running && run.end == DeviceUpdateEnd.partial && failed > 0)
         FilledButton.icon(
-          onPressed: () => say(Future.value(ctl.retryFailed())),
+          onPressed: () =>
+              withPin((by) => Future.value(ctl.retryFailed(by: by))),
           icon: const Icon(Icons.refresh_rounded, size: 18),
           label: Text('Tentar de novo ($failed)'),
         ),
@@ -922,11 +941,14 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
       if (ok != true || !mounted) return;
     }
     final reinstall = kind == DeviceUpdateVersionKind.same;
+    final role = await ensureOtaPin(context, ref);
+    if (role == null || !mounted) return;
+    final by = role.auditName;
     setState(() => _starting = true);
     final ctl = ref.read(deviceUpdateProvider.notifier);
     final String? refused;
     if (widget.all) {
-      refused = await ctl.startAll(version, reinstall: reinstall);
+      refused = await ctl.startAll(version, reinstall: reinstall, by: by);
     } else {
       final sel = ref.read(deviceUpdateSelectionProvider);
       final image = family == null
@@ -938,7 +960,8 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
               family: family!,
               keys: sel.keys,
               image: image,
-              reinstall: reinstall);
+              reinstall: reinstall,
+              by: by);
     }
     if (!mounted) return;
     setState(() => _starting = false);
@@ -1247,6 +1270,7 @@ class _UnitSheet extends ConsumerWidget {
                       color: context.textPrimary, fontSize: 13, height: 1.45)),
             ],
           ],
+          _UnitHistory(unitKey: unitKey),
         ],
       ),
     );
@@ -1303,8 +1327,138 @@ class _LogSheet extends ConsumerWidget {
           const _Label('REGISTRO'),
           const SizedBox(height: 8),
           OtaLogCard(state: push, log: log),
+          const SizedBox(height: 20),
+          const _HistorySection(),
         ],
       ),
     );
   }
+}
+
+/// The update history of a unit, newest first (OtaRunUnits).
+final _unitHistoryProvider =
+    FutureProvider.autoDispose.family<List<(OtaRun, OtaRunUnit)>, String>(
+  (ref, key) => ref.watch(deviceUpdateHistoryProvider).ofUnit(key),
+);
+
+/// The last updates, newest first, with their units (OtaRuns).
+final _recentRunsProvider =
+    FutureProvider.autoDispose<List<(OtaRun, List<OtaRunUnit>)>>(
+  (ref) => ref.watch(deviceUpdateHistoryProvider).recent(limit: 50),
+);
+
+class _UnitHistory extends ConsumerWidget {
+  const _UnitHistory({required this.unitKey});
+  final String unitKey;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final rows = ref.watch(_unitHistoryProvider(unitKey)).valueOrNull ?? [];
+    if (rows.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _Label('ATUALIZAÇÕES ANTERIORES'),
+          const SizedBox(height: 6),
+          for (final (run, unit) in rows)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(deviceUpdateHistoryLine(run, unit),
+                  style:
+                      TextStyle(color: context.textSecondary, fontSize: 12.5)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// "Registro" → Histórico: every update kept on the tablet, and "Copiar
+/// histórico" (CSV) — what a lab asks for (OTA brief step 6).
+class _HistorySection extends ConsumerWidget {
+  const _HistorySection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final nodes = ref.watch(topologyProvider);
+    final runs = ref.watch(_recentRunsProvider).valueOrNull ?? [];
+    return Column(
+      key: const ValueKey('device-update-history'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const Expanded(child: _Label('HISTÓRICO')),
+            if (runs.isNotEmpty)
+              TextButton.icon(
+                onPressed: () async {
+                  await Clipboard.setData(
+                      ClipboardData(text: deviceUpdateHistoryCsv(runs)));
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text('Histórico copiado (CSV).')));
+                  }
+                },
+                icon: const Icon(Icons.copy_rounded, size: 16),
+                label: const Text('Copiar histórico'),
+              ),
+          ],
+        ),
+        if (runs.isEmpty)
+          Text('Nenhuma atualização registrada neste tablet.',
+              style: TextStyle(color: context.textSecondary, fontSize: 12.5)),
+        for (final (run, units) in runs) ...[
+          const SizedBox(height: 10),
+          Text(_runTitle(run, units),
+              style: TextStyle(
+                  color: context.textPrimary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600)),
+          for (final u in units)
+            if (u.state != SafrOtaUnitState.done.name)
+              Text(
+                '  ${deviceUpdateNameOf(nodes, u.unitKey)} · '
+                '${deviceUpdateHistoryLine(run, u).split(' · ').skip(1).join(' · ')}',
+                style: TextStyle(color: context.textSecondary, fontSize: 12),
+              ),
+        ],
+      ],
+    );
+  }
+
+  static String _runTitle(OtaRun run, List<OtaRunUnit> units) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    final at = run.startedAt.toLocal();
+    final done = units.where((u) => u.state == SafrOtaUnitState.done.name);
+    final outcome = switch (run.outcome) {
+      'done' => 'concluído',
+      'partial' => 'parcial',
+      'failed' => 'falhou',
+      'cancelled' => 'cancelado',
+      'stopped' => 'parado',
+      _ => 'em andamento',
+    };
+    return '${two(at.day)}/${two(at.month)} ${two(at.hour)}:${two(at.minute)} · '
+        '${run.allPhases ? 'Atualizar tudo' : run.families} · '
+        '${vText(run.target)} · ${done.length} de ${units.length} · $outcome · '
+        '${run.startedBy}';
+  }
+}
+
+// ── The PIN ─────────────────────────────────────────────────────────────────
+
+/// The Master or Nível 4 PIN before an action that starts something on the
+/// units; null = the operator backed out. On the bench it is asked once per
+/// app session (`otaPinOncePerSession`, before-production item 8).
+Future<EditorRole?> ensureOtaPin(BuildContext context, WidgetRef ref) async {
+  final granted = ref.read(otaPinGrantProvider);
+  if (otaPinOncePerSession && granted != null) return granted;
+  final role = await requestEditorRole(
+    context,
+    subtitle: 'Atualizar o firmware exige o PIN Master ou de Nível 4.',
+  );
+  if (role != null) ref.read(otaPinGrantProvider.notifier).state = role;
+  return role;
 }

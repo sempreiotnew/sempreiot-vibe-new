@@ -1239,8 +1239,14 @@ updated over the air".
    board (`http://<gateway>/fw/<family>.bin` on the installation network).
 4. **Alarms win.** A unit in alarm or trouble refuses an offer
    (`BUSY_ALARM`); a rollout pauses while any alarm is latched on the site.
-5. **One unit at a time, the root last**; a battery unit is never queued, it
-   is offered the image in its parent's ACK (§13.5).
+5. **One unit at a time, the deepest first, the root last** — a unit that
+   restarts never cuts off one still waiting below it; the root is the bridge
+   to the board. The board decides at every pick from the LAYER each unit
+   reported (HEARTBEAT / TOPOLOGY) since the board started; a unit not heard
+   yet counts as shallow, and LAYER 1 is the root even before the board knows
+   it (2026-10-02: right after the board's restart the root was offered
+   first). A battery unit is never queued, it is offered the image in its
+   parent's ACK (§13.5).
 
 ### 13.2 Version
 

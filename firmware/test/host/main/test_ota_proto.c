@@ -319,3 +319,46 @@ TEST_CASE("ota: OTA_ROLLOUT page, header and entries", "[ota][rollout]")
     TEST_ASSERT_EQUAL(39, siot_ota_rollout_entry_len(&big));
     TEST_ASSERT_TRUE((SAFR_MAX_PAYLOAD - (7 + 1 + SIOT_OTA_VER_MAX_LEN)) / 39 >= 4);
 }
+
+TEST_CASE("ota: the rollout's next unit, deepest first, the root last", "[ota][rollout]")
+{
+    /* root (1) ─ siren (2) ─ button (3); a second node at 2 not heard yet */
+    siot_ota_pick_t u[4] = {
+        {.waiting = true, .is_root = true, .layer = 1},
+        {.waiting = true, .layer = 2},
+        {.waiting = true, .layer = 3},
+        {.waiting = true, .layer = 0},
+    };
+    TEST_ASSERT_EQUAL(2, siot_ota_pick_next(u, 4)); /* the deepest */
+    u[2].waiting = false;
+    TEST_ASSERT_EQUAL(1, siot_ota_pick_next(u, 4)); /* a known layer 2 before an unknown one */
+    u[1].waiting = false;
+    TEST_ASSERT_EQUAL(3, siot_ota_pick_next(u, 4)); /* unknown: still before the root */
+    u[3].waiting = false;
+    TEST_ASSERT_EQUAL(0, siot_ota_pick_next(u, 4)); /* the root, last */
+    u[0].waiting = false;
+    TEST_ASSERT_EQUAL(-1, siot_ota_pick_next(u, 4));
+
+    /* the board does not know the root yet: LAYER 1 is the root all the same */
+    siot_ota_pick_t fresh[3] = {
+        {.waiting = true, .layer = 1},
+        {.waiting = true, .layer = 0},
+        {.waiting = true, .layer = 2},
+    };
+    TEST_ASSERT_EQUAL(2, siot_ota_pick_next(fresh, 3));
+    fresh[2].waiting = false;
+    TEST_ASSERT_EQUAL(1, siot_ota_pick_next(fresh, 3));
+    /* nothing known about anybody: table order, never a unit marked root first */
+    siot_ota_pick_t blind[2] = {{.waiting = true}, {.waiting = true}};
+    TEST_ASSERT_EQUAL(0, siot_ota_pick_next(blind, 2));
+
+    /* a unit that failed once goes after the fresh ones, still before the root */
+    siot_ota_pick_t retry[3] = {
+        {.waiting = true, .layer = 3, .attempts = 1},
+        {.waiting = true, .layer = 2},
+        {.waiting = true, .is_root = true, .layer = 1},
+    };
+    TEST_ASSERT_EQUAL(1, siot_ota_pick_next(retry, 3));
+    retry[1].waiting = false;
+    TEST_ASSERT_EQUAL(0, siot_ota_pick_next(retry, 3));
+}

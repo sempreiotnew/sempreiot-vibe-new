@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sempreiot_central_app/core/database/app_database.dart';
 import 'package:sempreiot_central_app/features/central/application/central_installation_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/device_update_controller.dart';
+import 'package:sempreiot_central_app/features/central/application/device_update_history.dart';
 import 'package:sempreiot_central_app/features/central/application/device_update_state.dart';
 import 'package:sempreiot_central_app/features/central/application/firmware_library_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_controller.dart';
@@ -310,6 +311,51 @@ void main() {
       expect(mesh.offered, [siren]);
       expect(run().units[siren]!.note, isNull);
       expect(run().end, DeviceUpdateEnd.done);
+    });
+
+    test('the history keeps every update, the retry included', () async {
+      await boot(threeUnits(sirenPlays: failTwice),
+          library: ['node-0.2.0.bin']);
+      await update().start(
+          family: node,
+          keys: [siren],
+          image: image(node, '0.2.0'),
+          by: 'admin');
+      await ended();
+      await update().written;
+
+      final history = container.read(deviceUpdateHistoryProvider);
+      var runs = await history.recent();
+      expect(runs, hasLength(1));
+      var (run, units) = runs.single;
+      expect(run.startedBy, 'admin');
+      expect(run.target, '0.2.0');
+      expect(run.outcome, 'partial');
+      expect(units.single.unitKey, siren);
+      expect(units.single.state, 'failed');
+      expect(units.single.reasonRaw, SafrOtaReason.selftestFail.wire);
+
+      update().retryFailed(by: 'admin');
+      await ended();
+      await update().written;
+      runs = await history.recent();
+      (run, units) = runs.single;
+      expect(run.outcome, 'done', reason: 'the same update, now complete');
+      expect(units.single.state, 'done');
+      expect(units.single.versionBefore, '0.1.0');
+      expect(units.single.versionAfter, '0.2.0');
+
+      final mine = await history.ofUnit(siren);
+      expect(deviceUpdateHistoryLine(mine.single.$1, mine.single.$2),
+          endsWith('v0.1.0 → v0.2.0 · Atualizado'));
+      final csv = deviceUpdateHistoryCsv(runs);
+      expect(csv.split('\n').first, startsWith('inicio,fim,por'));
+      expect(csv, contains('"$siren","node","0.1.0","0.2.0","done"'));
+      final audit = await db.recentAudit();
+      expect(
+          audit.map((a) => '${a.actor} ${a.action}'),
+          containsAll(
+              ['admin ota_update_started', 'admin ota_update_retried']));
     });
 
     test('a unit already on the version is not offered it again', () async {

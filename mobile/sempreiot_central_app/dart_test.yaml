@@ -1,0 +1,5 @@
+# The OTA tests play a board and its mesh byte for byte on a fake serial port,
+# in real time, with timeouts of 80–150 ms (test/ota/fake_board.dart). With
+# every core busy they lose that race and fail at random; four files at a time
+# keeps them reliable (2026-10-02).
+concurrency: 4

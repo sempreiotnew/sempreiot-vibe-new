@@ -511,19 +511,26 @@ void ota_rollout_on_get(const siot_safr_frame_t *f)
     xSemaphoreGive(s_lock);
 }
 
-/* The next unit: fresh ones before the ones that failed once, the root last. */
+/* The next unit (siot_ota_pick_next): the root last, fresh ones before the ones
+ * that failed once, the deepest first. The order is decided at every pick, from
+ * what the board heard since it started: right after its restart the mesh may
+ * have another root, or none known yet (bench 2026-10-02). */
+static siot_ota_pick_t s_pick[SIOT_DEVTAB_CAP];
+
 static int pick_next(void)
 {
     uint8_t root[6];
     const bool has_root = siot_coordinator_root(root);
-    int best = -1, best_rank = 99;
     for (int i = 0; i < s_ro.n; i++) {
         const unit_t *u = &s_ro.u[i];
-        if (u->state != SIOT_OTA_U_WAITING) continue;
-        const int rank = (has_root && siot_mac_eq(u->mac, root) ? 2 : 0) + (u->attempts > 0 ? 1 : 0);
-        if (rank < best_rank) { best = i; best_rank = rank; }
+        s_pick[i] = (siot_ota_pick_t){
+            .waiting = u->state == SIOT_OTA_U_WAITING,
+            .is_root = has_root && siot_mac_eq(u->mac, root),
+            .layer = siot_devtab_layer(u->mac),
+            .attempts = u->attempts,
+        };
     }
-    return best;
+    return siot_ota_pick_next(s_pick, (size_t)s_ro.n);
 }
 
 void ota_rollout_tick(int64_t t)

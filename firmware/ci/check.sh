@@ -102,6 +102,9 @@ done
 KEY_NOW="$("$FW_DIR/tools/signing_key.sh" status 2>/dev/null | awk '/^fingerprint/{print $2}')"
 [[ "$KEY_NOW" == "$DEV_KEY_FINGERPRINT" ]] && RELAXED+=("item 5  signed with the DEVELOPMENT key (${DEV_KEY_FINGERPRINT:0:8}…), not the production key")
 grep -q -- '-' "$FW_DIR/VERSION" && RELAXED+=("item 6  firmware/VERSION is a pre-release: $(tr -d '\n' < "$FW_DIR/VERSION")")
+OTA_PIN_POLICY="$FW_DIR/../mobile/sempreiot_central_app/lib/features/central/application/ota_pin_policy.dart"
+grep -q '^const otaPinOncePerSession = true;' "$OTA_PIN_POLICY" 2>/dev/null \
+    && RELAXED+=("item 8  tablet: the update PIN is asked once per app session (otaPinOncePerSession)")
 
 if (( ${#RELAXED[@]} > 0 )); then
     printf '\n==> %s\n' "RELAXED FOR THE BENCH — must be restored before production (docs/ota/before-production.md):"

@@ -7,9 +7,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sempreiot_central_app/core/database/app_database.dart';
 import 'package:sempreiot_central_app/features/central/application/alarm_latch_provider.dart';
+import 'package:sempreiot_central_app/features/central/application/credentials_admin_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/device_update_controller.dart';
 import 'package:sempreiot_central_app/features/central/application/device_update_state.dart';
+import 'package:sempreiot_central_app/features/central/application/firmware_library_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_board_events_provider.dart';
+import 'package:sempreiot_central_app/features/central/application/ota_pin_policy.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_controller.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_report.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_state.dart';
@@ -51,7 +54,25 @@ class _Update extends DeviceUpdateController {
   _Update(super.ref, DeviceUpdateRun? initial) {
     state = initial;
   }
+
+  /// Who started what: (family, version, by).
+  final starts = <(SafrProductFamily, String, String)>[];
+
+  @override
+  Future<String?> start({
+    required SafrProductFamily family,
+    required Iterable<String> keys,
+    required FirmwareLibraryEntry image,
+    bool reinstall = false,
+    String by = 'system',
+  }) async {
+    starts.add((family, image.version, by));
+    return null;
+  }
 }
+
+/// The controller the screen got.
+late _Update _update;
 
 class _Store implements FirmwareLibraryStore {
   _Store(this.files);
@@ -128,7 +149,7 @@ void main() {
   };
 
   Future<void> pump(WidgetTester tester, Size size,
-      {DeviceUpdateRun? run}) async {
+      {DeviceUpdateRun? run, EditorRole? pinGranted}) async {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
     tester.view.physicalSize = size;
@@ -155,7 +176,10 @@ void main() {
           otaRolloutProvider.overrideWith((ref) => _Rollout(ref)),
           otaHeldOnBoardProvider.overrideWithValue(const {}),
           firmwareLibraryStoreProvider.overrideWithValue(store),
-          deviceUpdateProvider.overrideWith((ref) => _Update(ref, run)),
+          deviceUpdateProvider
+              .overrideWith((ref) => _update = _Update(ref, run)),
+          if (pinGranted != null)
+            otaPinGrantProvider.overrideWith((ref) => pinGranted),
         ],
         child: const MaterialApp(home: DeviceUpdateScreen()),
       ),
@@ -291,6 +315,38 @@ void main() {
     expect(find.text('É a versão que eles já rodam'), findsOneWidget);
     expect(find.text('Atualizar para v0.2.0'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  Future<void> openUpdateSheet(WidgetTester tester) async {
+    await settle(tester);
+    await tester.tap(find.byKey(const ValueKey('quick-node')));
+    await tester.pump();
+    await tester.tap(find.text('Atualizar'));
+    await settle(tester);
+  }
+
+  testWidgets('an update starts only after the PIN', (tester) async {
+    await pump(tester, const Size(1280, 800));
+    await openUpdateSheet(tester);
+    await tester.tap(find.byKey(const ValueKey('update-confirm')));
+    await settle(tester);
+
+    expect(find.text('Acesso restrito'), findsWidgets);
+    expect(find.textContaining('PIN Master ou de Nível 4'), findsOneWidget);
+    expect(_update.starts, isEmpty);
+  });
+
+  testWidgets('the PIN given once in this session is not asked again (bench)',
+      (tester) async {
+    expect(otaPinOncePerSession, isTrue,
+        reason: 'before-production item 8: production asks every time');
+    await pump(tester, const Size(1280, 800), pinGranted: EditorRole.admin);
+    await openUpdateSheet(tester);
+    await tester.tap(find.byKey(const ValueKey('update-confirm')));
+    await settle(tester);
+
+    expect(find.text('Acesso restrito'), findsNothing);
+    expect(_update.starts, [(SafrProductFamily.node, '0.2.0', 'admin')]);
   });
 
   testWidgets('the version they run can be chosen: "Reinstalar", asked first',

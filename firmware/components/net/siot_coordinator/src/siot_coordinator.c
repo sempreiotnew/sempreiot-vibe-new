@@ -403,6 +403,12 @@ static void handle_uplink(const siot_safr_frame_t *f, const uint8_t *raw, size_t
         return;
     }
     if (!dup && f->msg_type == SAFR_MSG_NAME_ANNOUNCE) adopt_name_announce(f, role);
+    /* Its place in the mesh, for the rollout's order (deepest first, root last). */
+    if (f->msg_type == SAFR_MSG_HEARTBEAT && f->payload_len >= 20) {
+        siot_devtab_set_layer(f->src_mac, f->payload[19]);
+    } else if (f->msg_type == SAFR_MSG_TOPOLOGY && f->payload_len >= 6) {
+        siot_devtab_set_layer(f->src_mac, f->payload[5]);
+    }
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if ((f->msg_type == SAFR_MSG_HEARTBEAT && f->payload_len >= 20 && f->payload[19] == 1) ||
