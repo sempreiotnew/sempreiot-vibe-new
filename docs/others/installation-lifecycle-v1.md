@@ -167,11 +167,12 @@ its admin window with the board sticker, pull the code.
 tablet within seconds (AC) or on its next wake (leaf). Annotate on the tablet if the installer's name
 needs fixing.
 
-**F. Replace a failed unit.** Provision the new unit (E). On the tablet, open the old unit's card →
-"Substituir por…" → pick the new unit → `REPLACE_DEVICE {old, new}`: the board copies name and zone
-to the new MAC (`ANNOTATED`, `PENDING_RENAME` until the new unit re-announces), retires the old MAC,
-and if the old unit is `online` originates a `DECOMMISSION` to it. The old entry stays `retired` until
-the operator taps "Esquecer".
+**F. Replace a failed unit.** Provision the new unit (E). On the tablet, give the new unit its name
+and zone ("Nome e zona" → `SET_DEVICE`), then "Aposentar" the old one (`RETIRE_DEVICE`; "Apagar da
+placa" → `DECOMMISSION` if it is still powered) and "Esquecer" it. *(2026-10-03: the tablet's
+"Substituir por…" was removed from the Dispositivo screen. `REPLACE_DEVICE {old, new}` stays in the
+protocol and on the board — it copies name and zone to the new MAC, retires the old MAC and
+decommissions it if `online` — but no tablet screen sends it.)*
 
 **G. Retire or remove a unit.** "Aposentar" → `RETIRE_DEVICE`: the board drops the MAC's frames from
 now on and the tablet hides it from supervision. Optional "Apagar da placa" → `DECOMMISSION` (typed

@@ -16,12 +16,15 @@ import '../../application/credentials_admin_provider.dart';
 import '../../application/safr_downlink_provider.dart';
 import '../../domain/safr/safr_identity.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
+import '../../application/topology_provider.dart';
+import '../widgets/device_detail_widgets.dart';
 import '../widgets/editor_gate.dart';
+import 'devices_screen.dart';
 
 /// CENTRAL mode: which installation this tablet belongs to. The code reaches
 /// the tablet from an installer's encrypted share (QR or pasted text,
-/// lifecycle §2) — and, once the board supports GET_CODE, from the board
-/// over USB (lifecycle §4.1). Gated by the Master / Nível 4 PIN (lifecycle §7).
+/// lifecycle §2) — or from the board itself over the board link (GET_CODE,
+/// lifecycle §4.1). Gated by the Master / Nível 4 PIN (lifecycle §7).
 class CentralInstallationScreen extends ConsumerStatefulWidget {
   const CentralInstallationScreen({super.key});
 
@@ -219,7 +222,7 @@ class _CentralInstallationScreenState
     return DeviceQrPayload(id: id, mac: '', pop: pop);
   }
 
-  /// Lifecycle §4.1: pull the code from the board over USB, no camera needed.
+  /// Lifecycle §4.1: pull the code from the board over the board link, no camera needed.
   Future<void> _readCodeFromBoard() async {
     final sticker = await _askBoardSticker(
         'A placa só entrega o código a quem prova ter a etiqueta dela. '
@@ -232,7 +235,7 @@ class _CentralInstallationScreenState
     if (!mounted) return;
     if (code == null) {
       messenger.showSnackBar(const SnackBar(
-        content: Text('A placa não respondeu. Confira o cabo USB, o pop da etiqueta '
+        content: Text('A placa não respondeu. Confira o cabo da placa, o pop da etiqueta '
             'e se a placa já foi configurada (LED magenta).'),
         backgroundColor: AppColors.error,
         duration: Duration(seconds: 8),
@@ -283,7 +286,7 @@ class _CentralInstallationScreenState
     if (name == null || name.trim().isEmpty || !mounted) return;
     final sticker = await _askBoardSticker(
         'A placa deve estar em modo de instalação (LED branco piscando) e '
-        'ligada por USB. Digite (ou escaneie) o id e o pop da etiqueta dela.');
+        'ligada a esta central. Digite (ou escaneie) o id e o pop da etiqueta dela.');
     if (sticker == null || !mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     final installation = InstallationGenerator.generate(displayName: name.trim());
@@ -315,6 +318,22 @@ class _CentralInstallationScreenState
       content: Text('Placa configurada. "${installation.displayName}" criada; ela reinicia agora. '
           'Toque em "Compartilhar" para passar o código aos instaladores.'),
       duration: const Duration(seconds: 8),
+    ));
+  }
+
+  void _openDevices() {
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (ctx) => Scaffold(
+        backgroundColor: ctx.bgColor,
+        appBar: AppBar(
+          backgroundColor: ctx.barColor,
+          foregroundColor: ctx.textPrimary,
+          elevation: 0,
+          title: const Text('Dispositivos da instalação',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        ),
+        body: const SafeArea(child: DevicesScreen()),
+      ),
     ));
   }
 
@@ -412,55 +431,87 @@ class _CentralInstallationScreenState
                         _EmptyCard()
                       else
                         _InstallationCard(installation: installation),
-                      const SizedBox(height: 20),
-                      FilledButton.icon(
-                        onPressed: _readCodeFromBoard,
-                        style: FilledButton.styleFrom(
-                            backgroundColor: AppColors.secondary),
-                        icon: const Icon(Icons.usb_rounded),
-                        label: const Text('Ler código da placa (USB)'),
-                      ),
-                      const SizedBox(height: 10),
-                      OutlinedButton.icon(
-                        onPressed: _createOnBoard,
-                        icon: const Icon(Icons.add_circle_outline_rounded),
-                        label: const Text('Criar instalação nesta central'),
-                      ),
-                      const SizedBox(height: 10),
-                      OutlinedButton.icon(
-                        onPressed: _scan,
-                        icon: const Icon(Icons.qr_code_scanner_rounded),
-                        label: Text(installation == null
-                            ? 'Escanear QR do instalador'
-                            : 'Escanear outro QR'),
-                      ),
-                      const SizedBox(height: 10),
-                      OutlinedButton.icon(
-                        onPressed: _paste,
-                        icon: const Icon(Icons.content_paste_rounded),
-                        label: const Text('Colar código compartilhado'),
-                      ),
                       if (installation != null) ...[
-                        const SizedBox(height: 10),
-                        OutlinedButton.icon(
-                          onPressed: _resendNames,
-                          icon: const Icon(Icons.send_rounded),
-                          label: const Text('Reenviar nomes à placa'),
-                        ),
-                        const SizedBox(height: 10),
-                        OutlinedButton.icon(
-                          onPressed: () => _share(installation),
-                          icon: const Icon(Icons.share_rounded),
-                          label: const Text('Compartilhar com um instalador'),
-                        ),
                         const SizedBox(height: 24),
-                        TextButton.icon(
-                          onPressed: () => _clear(installation),
-                          style: TextButton.styleFrom(
-                              foregroundColor: AppColors.error),
-                          icon: const Icon(Icons.link_off_rounded),
-                          label: const Text('Desvincular'),
+                        const InfoSectionHeader('DISPOSITIVOS'),
+                        const SizedBox(height: 10),
+                        InfoCard(children: [
+                          const _DevicesSummary(),
+                          const InfoRowDivider(),
+                          InfoActionRow(
+                            label: 'Ver dispositivos',
+                            hint: 'Todos os dispositivos desta instalação',
+                            icon: Icons.devices_rounded,
+                            onTap: _openDevices,
+                          ),
+                          const InfoRowDivider(),
+                          InfoActionRow(
+                            label: 'Reenviar nomes à placa',
+                            hint: 'Depois de trocar a placa: nomes e zonas '
+                                'que esta central conhece',
+                            icon: Icons.send_rounded,
+                            onTap: _resendNames,
+                          ),
+                        ]),
+                        const SizedBox(height: 24),
+                        const InfoSectionHeader('COMPARTILHAR'),
+                        const SizedBox(height: 10),
+                        InfoCard(children: [
+                          InfoActionRow(
+                            label: 'Compartilhar com um instalador',
+                            hint: 'QR protegido por uma senha que você define',
+                            icon: Icons.share_rounded,
+                            onTap: () => _share(installation),
+                          ),
+                        ]),
+                      ],
+                      const SizedBox(height: 24),
+                      InfoSectionHeader(installation == null
+                          ? 'VINCULAR UMA INSTALAÇÃO'
+                          : 'TROCAR DE INSTALAÇÃO'),
+                      const SizedBox(height: 10),
+                      InfoCard(children: [
+                        InfoActionRow(
+                          label: 'Escanear QR do instalador',
+                          hint: 'O QR "Compartilhar" do app do instalador',
+                          icon: Icons.qr_code_scanner_rounded,
+                          onTap: _scan,
                         ),
+                        const InfoRowDivider(),
+                        InfoActionRow(
+                          label: 'Colar código compartilhado',
+                          hint: 'O texto "Compartilhar" do app do instalador',
+                          icon: Icons.content_paste_rounded,
+                          onTap: _paste,
+                        ),
+                        const InfoRowDivider(),
+                        InfoActionRow(
+                          label: 'Ler código da placa',
+                          hint: 'Placa já configurada: pede o id e o pop '
+                              'da etiqueta dela',
+                          icon: Icons.developer_board_rounded,
+                          onTap: _readCodeFromBoard,
+                        ),
+                        const InfoRowDivider(),
+                        InfoActionRow(
+                          label: 'Criar instalação nesta central',
+                          hint: 'Placa nova (LED branco piscando): esta '
+                              'central gera o código',
+                          icon: Icons.add_circle_outline_rounded,
+                          onTap: _createOnBoard,
+                        ),
+                      ]),
+                      if (installation != null) ...[
+                        const SizedBox(height: 24),
+                        InfoCard(children: [
+                          InfoActionRow(
+                            label: 'Desvincular',
+                            hint: 'A central volta à identidade de bancada',
+                            icon: Icons.link_off_rounded,
+                            destructive: true,
+                            onTap: () => _clear(installation),
+                          ),
+                        ]),
                       ],
                     ],
                   ),
@@ -468,6 +519,56 @@ class _CentralInstallationScreenState
               ),
             ),
     );
+  }
+}
+
+/// How many units the board knows for this installation, by state.
+class _DevicesSummary extends ConsumerWidget {
+  const _DevicesSummary();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final units = ref.watch(topologyProvider).where((n) => n.layer > 0);
+    final retired = units.where((n) => n.retired).length;
+    final active = units.where((n) => !n.retired);
+    final online = active.where((n) => n.online).length;
+    final silent = active.length - online;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      child: Wrap(
+        spacing: 20,
+        runSpacing: 10,
+        children: [
+          _Count(value: active.length, label: 'ativos', color: context.textPrimary),
+          _Count(value: online, label: 'online', color: AppColors.success),
+          _Count(
+              value: silent,
+              label: 'sem comunicação',
+              color: silent > 0 ? AppColors.warning : context.textSecondary),
+          if (retired > 0)
+            _Count(value: retired, label: 'aposentados', color: context.textSecondary),
+        ],
+      ),
+    );
+  }
+}
+
+class _Count extends StatelessWidget {
+  const _Count({required this.value, required this.label, required this.color});
+  final int value;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text.rich(TextSpan(children: [
+      TextSpan(
+          text: '$value ',
+          style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.w700)),
+      TextSpan(
+          text: label,
+          style: TextStyle(color: context.textSecondary, fontSize: 12.5)),
+    ]));
   }
 }
 

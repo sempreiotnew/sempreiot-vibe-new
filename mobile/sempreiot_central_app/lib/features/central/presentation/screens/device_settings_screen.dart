@@ -18,7 +18,7 @@ import '../widgets/editor_gate.dart';
 
 /// Dispositivo — everything the tablet knows about one device (identity,
 /// place in the mesh, state on the board) and its management: rename,
-/// retire, replace, decommission, forget (installation-lifecycle-v1.md §5,
+/// retire, decommission, forget (installation-lifecycle-v1.md §5,
 /// PIN Master / Nível 4). Live: follows the device registry by MAC.
 class DeviceSettingsScreen extends ConsumerStatefulWidget {
   const DeviceSettingsScreen({super.key, required this.mac});
@@ -276,7 +276,7 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
           const InfoSectionHeader('GERENCIAR — PIN MASTER / NÍVEL 4'),
           const SizedBox(height: 10),
           InfoCard(children: [
-            _ManageRow(
+            InfoActionRow(
               label: 'Nome e zona',
               hint: 'Renomeia na placa e no dispositivo',
               icon: Icons.edit_rounded,
@@ -284,29 +284,22 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
             ),
             const InfoRowDivider(),
             if (!node.retired)
-              _ManageRow(
+              InfoActionRow(
                 label: 'Aposentar',
                 hint: 'A placa passa a ignorar este dispositivo',
                 icon: Icons.person_off_outlined,
                 onTap: () => _retire(node),
               )
             else
-              _ManageRow(
+              InfoActionRow(
                 label: 'Reativar',
                 hint: 'Volta a aceitar este dispositivo',
                 icon: Icons.person_add_alt_1_outlined,
                 onTap: () => _unretire(node),
               ),
-            const InfoRowDivider(),
-            _ManageRow(
-              label: 'Substituir por…',
-              hint: 'Move nome e zona para um dispositivo novo',
-              icon: Icons.swap_horiz_rounded,
-              onTap: () => _replace(node),
-            ),
             if (node.retired) ...[
               const InfoRowDivider(),
-              _ManageRow(
+              InfoActionRow(
                 label: 'Esquecer',
                 hint: 'Remove o registro aposentado da placa',
                 icon: Icons.playlist_remove_rounded,
@@ -314,7 +307,7 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
               ),
             ],
             const InfoRowDivider(),
-            _ManageRow(
+            InfoActionRow(
               label: 'Apagar da placa',
               hint: 'Reset de fábrica remoto (digite o nome para confirmar)',
               icon: Icons.delete_forever_outlined,
@@ -462,49 +455,6 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
       return;
     }
     _show(r.message, r.ok);
-  }
-
-  Future<void> _replace(TopologyNode node) async {
-    final role = await _gate('substituir este dispositivo');
-    if (role == null || !mounted) return;
-    final candidates = ref
-        .read(topologyProvider)
-        .where((n) => n.mac != node.mac && !n.retired && n.layer > 0)
-        .toList();
-    final chosen = await showDialog<TopologyNode>(
-      context: context,
-      builder: (ctx) => SimpleDialog(
-        backgroundColor: ctx.surfaceColor,
-        title: Text('Substituir "${deviceDisplayName(node)}" por…'),
-        children: candidates.isEmpty
-            ? [
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Text(
-                    'Nenhum dispositivo novo visto ainda. Configure a unidade '
-                    'nova pelo telefone e aguarde ela aparecer na rede.',
-                    style: TextStyle(color: ctx.textSecondary, fontSize: 13),
-                  ),
-                ),
-              ]
-            : [
-                for (final c in candidates)
-                  SimpleDialogOption(
-                    onPressed: () => Navigator.pop(ctx, c),
-                    child: Text('${deviceDisplayName(c)} · '
-                        '${c.online ? "online" : "sem comunicação"}'),
-                  ),
-              ],
-      ),
-    );
-    if (chosen == null) return;
-    final r = await ref
-        .read(safrDownlinkProvider)
-        .sendReplaceDevice(node.mac, chosen.mac);
-    await ref.read(appDatabaseProvider).addAudit(role.auditName,
-        'device_replace', {'old': node.mac, 'new': chosen.mac, 'ok': r.ok});
-    if (r.ok) ref.read(safrDownlinkProvider).sendGetDeviceTable();
-    _show(r.ok ? 'Substituído. O antigo foi aposentado.' : r.message, r.ok);
   }
 
   Future<void> _decommission(TopologyNode node) async {
@@ -740,68 +690,6 @@ class _CopyButton extends StatelessWidget {
         icon: Icon(Icons.copy_rounded,
             size: 16, color: context.textSecondary.withValues(alpha: 0.7)),
       );
-}
-
-class _ManageRow extends StatelessWidget {
-  const _ManageRow({
-    required this.label,
-    required this.hint,
-    required this.icon,
-    required this.onTap,
-    this.destructive = false,
-  });
-
-  final String label;
-  final String hint;
-  final IconData icon;
-  final VoidCallback onTap;
-  final bool destructive;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = destructive ? AppColors.error : context.textPrimary;
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
-        child: Row(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: (destructive ? AppColors.error : context.borderColor)
-                    .withValues(alpha: destructive ? 0.12 : 0.3),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon,
-                  size: 18,
-                  color: destructive ? AppColors.error : AppColors.secondary),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label,
-                      style: TextStyle(
-                          color: color,
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 2),
-                  Text(hint,
-                      style: TextStyle(
-                          color: context.textSecondary, fontSize: 11.5)),
-                ],
-              ),
-            ),
-            Icon(Icons.chevron_right_rounded,
-                size: 20, color: context.textSecondary),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _Notice extends StatelessWidget {

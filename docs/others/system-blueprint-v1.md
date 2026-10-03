@@ -129,7 +129,7 @@ Installer presses the test button on each detector → `MANUAL_TEST` ALERT → t
 ## 8. Maintenance
 
 - **Every lifecycle flow** (add later, second installer, replace, retire, rename, lost phone, dead board, dead tablet, re-key, survey mode) is specified step by step in `installation-lifecycle-v1.md` §5–§6. Summary:
-- **Add a unit later:** §3 step A2/B3 with any phone that holds the code. **Replace a unit:** add the new one, "Substituir" on the old card → board copies name/zone to the new MAC, retires the old one and wipes it if it is still online (`REPLACE_DEVICE`, `DECOMMISSION`).
+- **Add a unit later:** §3 step A2/B3 with any phone that holds the code. **Replace a unit:** add the new one, give it the old one's name and zone, then retire (and, if still powered, wipe) the old one (`SET_DEVICE`, `RETIRE_DEVICE`, `DECOMMISSION`). The board's one-step `REPLACE_DEVICE` exists in the protocol but the tablet no longer offers it (2026-10-03).
 - **Replace the board:** provision the new board like any unit (A3) from any phone's copy of the code, or arm it from the tablet (B1); plug USB; everything rejoins and the board rebuilds its device table from what it hears. The tablet can resend its names.
 - **Factory reset a unit:** 5 s hold → code wiped → **white blink** (setup mode) → the tablet shows it missing until retired/forgotten.
 - **Change channel:** tablet → board → `SET_CHANNEL {channel, switch_at}` down the mesh; detectors learn it from their next ACK; board switches last.

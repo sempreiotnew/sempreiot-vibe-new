@@ -9,6 +9,8 @@ import '../../domain/safr/safr_v2_frame.dart' as v2;
 import '../../domain/safr/safr_v2_payloads.dart' as v2p;
 import '../../domain/safr_frame.dart';
 import '../../application/central_installation_provider.dart';
+import '../../application/ota_rollout_words.dart';
+import '../widgets/safr_frame_text.dart';
 
 class SafrDetailScreen extends StatefulWidget {
   const SafrDetailScreen({super.key, required this.packet});
@@ -973,22 +975,8 @@ class _WireDetailScaffold extends ConsumerWidget {
         _ => (AppColors.error, 'PARSE ERR'),
       };
     }
-    return switch (frame.payload) {
-      v2p.SafrEventPayload p => switch (p.eventType) {
-          v2p.SafrEventType.alarm => (AppColors.error, 'ALARM'),
-          v2p.SafrEventType.alert => (AppColors.warning, 'ALERT'),
-          v2p.SafrEventType.trouble => (AppColors.trouble, 'TROUBLE'),
-          _ => (AppColors.success, 'OK'),
-        },
-      v2p.SafrHeartbeatPayload _ => (AppColors.secondary, 'HEARTBEAT'),
-      v2p.SafrTopologyPayload _ => (AppColors.secondary, 'TOPOLOGY'),
-      v2p.SafrAckPayload _ => (AppColors.success, 'ACK'),
-      v2p.SafrCommandPayload _ => (AppColors.secondary, 'COMMAND'),
-      v2p.SafrTimeSyncPayload _ => (AppColors.secondary, 'TIME SYNC'),
-      v2p.SafrEventLogReqPayload _ => (AppColors.secondary, 'LOG REQ'),
-      v2p.SafrEventLogDataPayload _ => (AppColors.secondary, 'LOG DATA'),
-      _ => (AppColors.warning, 'DESCONHECIDO'),
-    };
+    final look = safrFrameLook(frame);
+    return (look.color, look.name.replaceAll('_', ' '));
   }
 
   List<_Fact> _headerFacts(v2.SafrWireFrame f) => [
@@ -1001,7 +989,8 @@ class _WireDetailScaffold extends ConsumerWidget {
         ),
         (
           'Tipo',
-          '${f.msgType.name} (0x${f.msgTypeRaw.toRadixString(16).padLeft(2, '0')})',
+          '${safrMsgTypeName(f.msgType, f.msgTypeRaw)} '
+              '(0x${f.msgTypeRaw.toRadixString(16).padLeft(2, '0')})',
           _msgTypeExplain(f.msgType),
         ),
         (
@@ -1065,22 +1054,51 @@ class _WireDetailScaffold extends ConsumerWidget {
         v2.SafrMsgType.event =>
           'Mudança de estado no dispositivo (alarme, falha, normalização).',
         v2.SafrMsgType.heartbeat =>
-          'Prova de vida para supervisão — silêncio prolongado gera TROUBLE '
-              '"dispositivo ausente" em ≤200 s (NFPA 72).',
-        v2.SafrMsgType.topology => 'Mapa da rede mesh (pai/filhos/sinal).',
-        v2.SafrMsgType.ack => 'Confirmação de recebimento de quadro crítico.',
-        v2.SafrMsgType.command =>
-          'Comando da central (silenciar, teste, rearme, verificação de '
-              'enlace).',
+          'Prova de vida para supervisão (15 s na tomada, 60 s a bateria) — '
+              'silêncio de 3 intervalos vira "sem comunicação" (NFPA 72 '
+              '≤ 200 s).',
+        v2.SafrMsgType.topology =>
+          'Mapa da rede: pai, filhos e sinal. De um detector: os pais que '
+              'ele ouviu.',
+        v2.SafrMsgType.ack =>
+          'Confirmação: o quadro citado foi processado (ou recusado, com o '
+              'motivo).',
+        v2.SafrMsgType.command => 'Comando (§7.6).',
         v2.SafrMsgType.timeSync =>
           'Distribui o relógio real para os dispositivos.',
         v2.SafrMsgType.eventLogReq =>
-          'Pedido de reenvio do diário de eventos do root (EN 54-25: nenhum '
-              'alarme se perde).',
+          'Pedido de reenvio do diário de eventos (EN 54-25: nenhum alarme '
+              'se perde).',
         v2.SafrMsgType.eventLogData =>
-          'Evento reenviado do diário do root — ocorreu enquanto a central '
-              'estava desconectada.',
-        _ => null,
+          'Evento reenviado do diário — ocorreu enquanto a central estava '
+              'desconectada.',
+        v2.SafrMsgType.installation =>
+          'Identidade da instalação, resposta da placa a GET_INSTALLATION. '
+              'Nunca leva as chaves.',
+        v2.SafrMsgType.nameAnnounce =>
+          'O dispositivo anuncia nome, zona, papel, produto e versão do '
+              'firmware.',
+        v2.SafrMsgType.deviceTable =>
+          'Tabela de dispositivos da placa, uma página por quadro (§7.12).',
+        v2.SafrMsgType.code =>
+          'Código da instalação lido da placa pelo canal de setup (§7.13).',
+        v2.SafrMsgType.parentProbe =>
+          'Procura de pai ou teste de alcance por ESP-NOW (§7.14).',
+        v2.SafrMsgType.parentOffer =>
+          'Resposta a uma procura de pai / teste de alcance (§7.15).',
+        v2.SafrMsgType.otaPushBegin ||
+        v2.SafrMsgType.otaPushChunk ||
+        v2.SafrMsgType.otaPushEnd =>
+          'Envio de firmware da central para a placa (§13.3).',
+        v2.SafrMsgType.otaPushResult =>
+          'A placa diz em que ponto está o envio de firmware (§13.3).',
+        v2.SafrMsgType.otaStatus =>
+          'Progresso de uma unidade na atualização (§13.4).',
+        v2.SafrMsgType.otaResult =>
+          'Resultado final da atualização de uma unidade (§13.4).',
+        v2.SafrMsgType.otaRollout =>
+          'Tabela da atualização mantida pela placa (§13.6).',
+        v2.SafrMsgType.unknown => null,
       };
 
   /// Humanized endpoint: the central's addresses read as words, devices keep
@@ -1244,10 +1262,24 @@ class _WireDetailScaffold extends ConsumerWidget {
           ),
           (
             'Status',
-            p.status.name,
-            'ok = processado · error = recebido mas rejeitado · '
-                'unknownDst = destino inexistente.',
+            switch (p.status) {
+              v2p.SafrAckStatus.ok => 'OK',
+              v2p.SafrAckStatus.error => 'ERROR',
+              v2p.SafrAckStatus.unknownDst => 'UNKNOWN_DST',
+              v2p.SafrAckStatus.unknown => '0x${p.status.wire.toRadixString(16)}',
+            },
+            'OK = processado · ERROR = recebido mas recusado · '
+                'UNKNOWN_DST = destino inexistente.',
           ),
+          if (p.status == v2p.SafrAckStatus.error && p.detailRaw != 0)
+            (
+              'Detalhe',
+              '${p.detailRaw}',
+              'Se confirmava um comando de instalação: '
+                  '${p.detail.label.isEmpty ? '—' : p.detail.label}. '
+                  'Se confirmava um quadro de atualização: '
+                  '${otaReasonLogText(p.detailRaw)}.',
+            ),
         ];
       case v2p.SafrCommandPayload p:
         final cmd =
@@ -1255,7 +1287,7 @@ class _WireDetailScaffold extends ConsumerWidget {
         return [
           (
             'Comando',
-            cmd?.name ?? '0x${p.cmdRaw.toRadixString(16)}',
+            safrCommandName(p.cmdRaw),
             switch (cmd) {
               v2p.SafrCommand.linkCheck =>
                 'Verificação do enlace de descida a cada 30 s — o root só '
@@ -1273,7 +1305,37 @@ class _WireDetailScaffold extends ConsumerWidget {
                 'REARME do operador: única ação que limpa alarmes retidos '
                     '(UL 864/NFPA 72). A central só limpa após o ACK do '
                     'root.',
-              _ => null,
+              v2p.SafrCommand.getInstallation =>
+                'Pede à placa a identidade da instalação (resposta: INST).',
+              v2p.SafrCommand.setInstallation =>
+                'Grava o código numa placa nova (canal de setup).',
+              v2p.SafrCommand.setDevice =>
+                'Nome e zona de um dispositivo; a placa repassa a ele.',
+              v2p.SafrCommand.retireDevice =>
+                'A placa passa a ignorar este dispositivo.',
+              v2p.SafrCommand.unretireDevice =>
+                'A placa volta a aceitar este dispositivo.',
+              v2p.SafrCommand.replaceDevice =>
+                'Copia nome e zona de um dispositivo para outro e aposenta '
+                    'o antigo.',
+              v2p.SafrCommand.decommission =>
+                'Reset de fábrica remoto de um dispositivo.',
+              v2p.SafrCommand.forgetDevice =>
+                'Remove da placa um registro aposentado.',
+              v2p.SafrCommand.getDeviceTable =>
+                'Pede a tabela de dispositivos (resposta: TABLE).',
+              v2p.SafrCommand.getCode =>
+                'Pede o código da instalação pelo canal de setup (resposta: '
+                    'CODE).',
+              v2p.SafrCommand.otaBaud =>
+                'Velocidade do cabo durante o envio de firmware.',
+              v2p.SafrCommand.otaOffer =>
+                'A placa oferece um firmware novo a uma unidade.',
+              v2p.SafrCommand.getRollout =>
+                'Pede a tabela da atualização (resposta: ROLL).',
+              v2p.SafrCommand.otaControl =>
+                'Inicia, pausa, retoma ou cancela uma atualização.',
+              null => 'Código que este app não conhece.',
             },
           ),
           ('Args', p.args.isEmpty ? '—' : p.args.join(', '), null),
@@ -1327,8 +1389,65 @@ class _WireDetailScaffold extends ConsumerWidget {
             ),
           if (p.event != null) ..._eventFacts(p.event!),
         ];
-      default:
+      case v2p.SafrInstallationPayload p:
+        return [
+          ('Nome', p.name, null),
+          ('SYSTEM_ID', '0x${p.systemId.toRadixString(16).toUpperCase().padLeft(4, '0')}', null),
+          ('Canal', '${p.channel}', null),
+          ('Rede', p.netSsid, null),
+          ('Dispositivos', '${p.enrolled.length}', 'Visão antiga; a tabela completa vem em DEVICE_TABLE.'),
+          for (final e in p.enrolled)
+            ('  ${e.mac}', [e.name, if (e.zone.isNotEmpty) e.zone].join(' · '), null),
+        ];
+      case v2p.SafrNameAnnouncePayload p:
+        return [
+          ('Nome', p.name, null),
+          ('Zona', p.zone.isEmpty ? '—' : p.zone, null),
+          ('Papel', p.role.name, null),
+          if (p.productCode != null)
+            ('Produto', '0x${p.productCode!.toRadixString(16).padLeft(4, '0').toUpperCase()}', null),
+          if (p.hwRev != null) ('Revisão HW', '${p.hwRev}', null),
+          if (p.fwVersion != null) ('Firmware', p.fwVersion!, null),
+        ];
+      case v2p.SafrDeviceTablePayload p:
+        return [
+          ('Página', '${p.page} de ${p.pageCount}', null),
+          ('Total na placa', '${p.total}', null),
+          for (final e in p.entries)
+            (
+              '  ${e.mac}',
+              [
+                e.state.name,
+                if (e.name.isNotEmpty) e.name,
+                if (e.zone.isNotEmpty) e.zone,
+              ].join(' · '),
+              null,
+            ),
+        ];
+      case v2p.SafrCodePayload p:
+        return [
+          ('Nome', p.code.name, null),
+          ('SYSTEM_ID', '0x${p.code.systemId.toRadixString(16).toUpperCase().padLeft(4, '0')}', null),
+          ('Canal', '${p.code.channel}', null),
+          ('Chaves', 'não exibidas', 'A rede e a chave SAFR viajam cifradas e não aparecem no registro.'),
+        ];
+      case v2p.SafrParentProbePayload p:
+        return [
+          ('Propósito', p.isSurvey ? 'teste de alcance' : 'procura de pai', null),
+        ];
+      case v2p.SafrParentOfferPayload p:
+        return [
+          ('Propósito', p.purpose == 1 ? 'teste de alcance' : 'procura de pai', null),
+          ('Sinal ouvido', '${p.rssiSeen} dBm', null),
+          ('Camada', p.layer == null ? 'sem rede' : '${p.layer}', null),
+        ];
+      case v2p.SafrUnknownPayload p:
+        return [('Payload', '${p.bytes.length} bytes não decodificados', null)];
+      case null:
         return const [('Payload', 'não decodificado', null)];
+      default:
+        // The firmware-update frames (§13): the one-line summary says it all.
+        return [('Conteúdo', safrFrameSummary(f), null)];
     }
   }
 }

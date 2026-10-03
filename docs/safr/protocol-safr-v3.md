@@ -325,6 +325,13 @@ Sentinels for "not available": `0xFF` (uint8), `0xFFFF` (uint16), `0x7FFF` (int1
 | 0x0C | CODE *(v3.2)* | uplink (board → central, setup channel only) | variable, ≤ 90 bytes |
 | 0x0D | PARENT_PROBE *(v3.2)* | ESP-NOW broadcast (leaf or surveying unit → neighbours) | 1 byte |
 | 0x0E | PARENT_OFFER *(v3.2)* | ESP-NOW unicast (neighbour → prober) | 3 bytes |
+| 0x0F | OTA_PUSH_BEGIN *(v3.5)* | downlink (central → board, serial only) | §13.3 |
+| 0x10 | OTA_PUSH_CHUNK *(v3.5)* | downlink (central → board, serial only) | 10 bytes + raw data outside the frame, §13.3 |
+| 0x11 | OTA_PUSH_END *(v3.5)* | downlink (central → board, serial only) | 0 bytes, §13.3 |
+| 0x12 | OTA_PUSH_RESULT *(v3.5)* | uplink (board → central, serial only) | §13.3 |
+| 0x13 | OTA_STATUS *(v3.5)* | uplink | 2 bytes, §13.4 |
+| 0x14 | OTA_RESULT *(v3.5)* | uplink | §13.4 |
+| 0x15 | OTA_ROLLOUT *(v3.5)* | uplink (board → central, serial only) | paged, §13.6 |
 
 ### 7.1 EVENT — `MSG_TYPE 0x01` (uplink) — payload 17 bytes
 

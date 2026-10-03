@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
 
 // ── Section header ────────────────────────────────────────────────────────────
@@ -156,6 +157,73 @@ class InfoReadRow extends StatelessWidget {
               color: context.textSecondary.withValues(alpha: 0.25),
             ),
         ],
+      ),
+    );
+  }
+}
+
+// ── Action row ────────────────────────────────────────────────────────────────
+
+/// A tappable row inside an [InfoCard]: icon tile, label, one-line hint,
+/// chevron. [destructive] paints it red.
+class InfoActionRow extends StatelessWidget {
+  const InfoActionRow({
+    super.key,
+    required this.label,
+    required this.hint,
+    required this.icon,
+    required this.onTap,
+    this.destructive = false,
+  });
+
+  final String label;
+  final String hint;
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool destructive;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = destructive ? AppColors.error : context.textPrimary;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: (destructive ? AppColors.error : context.borderColor)
+                    .withValues(alpha: destructive ? 0.12 : 0.3),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon,
+                  size: 18,
+                  color: destructive ? AppColors.error : AppColors.secondary),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label,
+                      style: TextStyle(
+                          color: color,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  Text(hint,
+                      style: TextStyle(
+                          color: context.textSecondary, fontSize: 11.5)),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded,
+                size: 20, color: context.textSecondary),
+          ],
+        ),
       ),
     );
   }

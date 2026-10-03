@@ -333,11 +333,11 @@ class _SelectBar extends ConsumerWidget {
     final chips = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        quick(SafrProductFamily.board, 'Placa', Icons.developer_board_rounded),
+        quick(SafrProductFamily.board, 'Central', Icons.developer_board_rounded),
         const SizedBox(width: 8),
-        quick(SafrProductFamily.node, 'Todos os nós', Icons.cell_tower_rounded),
+        quick(SafrProductFamily.node, 'Nodes', Icons.cell_tower_rounded),
         const SizedBox(width: 8),
-        quick(SafrProductFamily.leaf, 'Todos os detectores',
+        quick(SafrProductFamily.leaf, 'Leafs',
             Icons.sensors_rounded),
       ],
     );
@@ -531,7 +531,11 @@ class _RunBar extends ConsumerWidget {
         ),
         OutlinedButton(
           onPressed: () => ctl.decide(goOn: false),
-          style: OutlinedButton.styleFrom(foregroundColor: AppColors.error),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.error,
+            side: BorderSide(
+                color: AppColors.error.withValues(alpha: 0.6), width: 1.2),
+          ),
           child: const Text('Parar aqui'),
         ),
         FilledButton(
@@ -548,7 +552,11 @@ class _RunBar extends ConsumerWidget {
               push.phase == OtaPushPhase.boardRestarting))
         OutlinedButton(
           onPressed: () => _confirmAbort(context, ctl),
-          style: OutlinedButton.styleFrom(foregroundColor: AppColors.error),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.error,
+            side: BorderSide(
+                color: AppColors.error.withValues(alpha: 0.6), width: 1.2),
+          ),
           child: const Text('Cancelar'),
         ),
       if (!run.running && run.end == DeviceUpdateEnd.partial && failed > 0)
