@@ -131,9 +131,9 @@ build default (`CONFIG_SIOT_DEV_MODEL`); re-stamping a sticker keeps its id and 
 
 | # | Functionality | What it does | Status | Spec | Code |
 |---|---|---|---|---|---|
-| 4.1 | Heartbeats and topology | Every powered device reports liveness every 15 s and its position in the mesh (parent, children, signal) every 60 s. A leaf reports liveness every 60 s on wake and sends one TOPOLOGY per bind listing its **parent candidates** with signal, which is what the walk-test report uses to flag "fewer than 2 parents" or a weak link (spec §12.7). | POC · Specified (leafs) | spec §7.3/§7.4/§9.2/§12.7 | `node_safr.c`, `root_duties.c` |
+| 4.1 | Heartbeats and topology | Every powered device reports liveness, layer, parent and signal every 15 s (HEARTBEAT); TOPOLOGY only when its layer changes (2026-10-03: the 60 s TOPOLOGY was dropped as redundant). A leaf reports liveness every 60 s on wake and sends one TOPOLOGY per bind listing its **parent candidates** with signal, which is what the walk-test report uses to flag "fewer than 2 parents" or a weak link (spec §12.7). | POC · Specified (leafs) | spec §7.3/§7.4/§9.2/§12.7 | `node_safr.c`, `root_duties.c` |
 | 4.2 | Device-missing trouble | A device silent for 3 × its interval (45 s powered, 180 s battery) is flagged missing with a trouble; any valid frame restores it. Inside the 200 s (NFPA 72) / 300 s (EN 54-25) limits. **Root fast path (2026-09-27):** the board drops a dead root's TCP session in ~5 s, marks it missing and pushes DEVICE_TABLE; the tablet takes that as authoritative, so a dead root leaves the map in seconds, not 45. Nodes re-announce their role only once the new path is proven, and the board heartbeats the tree the moment a root connects, so the new tree is on the tablet ~2 s after the new root connects. | Implemented (tablet + board fast path) | spec §9.2, §7.12 | app `supervisionProvider`, `siot_coordinator.c` `on_link`, `siot_netcore.c` announce-pending |
-| 4.3 | Downlink supervision | The tablet proves the link *towards* the board works: `LINK_CHECK` every 30 s, trouble after 3 unconfirmed. | Implemented (app) / POC (board ACKs) | spec §9.3 | app, `root_duties.c` |
+| 4.3 | Downlink supervision | The tablet proves the link *towards* the board works: `LINK_CHECK` every 30 s, trouble after 3 unconfirmed. The board answers it and does not relay it into the mesh (2026-10-03). | Implemented (app + board; bench pending) | spec §9.3 | app, `siot_coordinator.c` `handle_downlink` |
 | 4.4 | Link-quality trouble | Sustained CRC/auth failures (≥ 5 in 60 s) raise a trouble even if some frames get through. | Implemented (app) | spec §9.4 | app |
 | 4.5 | Board self-reporting | The board reports itself as the layer-0 device so the tablet shows "mesh connected". Since 2026-09-27 its HEARTBEAT is also broadcast down the mesh every 15 s: the signal a joined node uses to know the board is there (LED online within 15 s of joining, tablet or not; before, it waited for the tablet's LINK_CHECK or a TEST tap). | Implemented (board + node) | spec §7.3, §9.3 | `siot_coordinator.c` `tx_sink`, `siot_netcore.c` `on_board_heartbeat` |
 
@@ -292,7 +292,7 @@ consume GPIO 35–37, which no SempreIoT PCB uses. `firmware/build.sh` / `tools/
 |---|---|---|
 | Root heap at site scale | Bench-only *load mode*: each of two real nodes emits heartbeats + topology for 125 synthetic MACs at real cadence through the real mesh, board and tablet, one hour, with an OTA download in flight | root minimum free heap stays above ~100 KB |
 | Failover at scale | Same load; kill the root; time reformation | < 60 s target, 120 s max (row 2.3) |
-| Fleet memory margin | Add **minimum free heap + largest free block** to every `TOPOLOGY` frame (60 s) so every site reports its own margin to the tablet | continuous data, no bench needed |
+| Fleet memory margin | Add **minimum free heap + largest free block** to the `HEARTBEAT` (TOPOLOGY is no longer periodic) so every site reports its own margin to the tablet | continuous data, no bench needed |
 
 If the heap test fails, the AC device purchase order changes to N8R8; nothing else does.
 

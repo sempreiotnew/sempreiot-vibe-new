@@ -597,7 +597,17 @@ static void handle_downlink(const siot_safr_frame_t *f, const uint8_t *raw, size
         return;
     }
     switch (f->msg_type) {
-    case SAFR_MSG_COMMAND:   /* LINK_CHECK and every legacy device command */
+    case SAFR_MSG_COMMAND:   /* every legacy device command */
+        if (f->payload_len >= 1 && f->payload[0] == SAFR_CMD_LINK_CHECK) {
+            /* Spec §9.3: supervision of the tablet → board direction — the
+             * board is the "root" that answers it. Not relayed: every node
+             * would ACK it every 30 s (a burst of N ACKs up the one serial
+             * link), and nodes have their proof of the board from its own
+             * HEARTBEAT going down every 15 s (§7.3). */
+            send_ack(f->msg_id, SAFR_ACK_OK, SAFR_ACK_D_NONE, f->src_mac);
+            return;
+        }
+        /* fall through */
     case SAFR_MSG_TIME_SYNC:
         send_ack(f->msg_id, SAFR_ACK_OK, SAFR_ACK_D_NONE, f->src_mac); /* board ACKs every time */
         if (!dup) relay(SIOT_LINK_MESH, raw, raw_len);                 /* nodes ACK on their own */

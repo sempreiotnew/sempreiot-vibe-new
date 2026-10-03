@@ -76,7 +76,7 @@ Internet, the tablet's camera, the customer's router, or being near the board wh
 1. Board boots, reads the code from NVS, raises access point `NET_SSID` / `NET_PSK` on `CHANNEL`, static IP `192.168.4.1`, DHCP on. Starts the SAFR engine and the USB bridge. Sends `LINK_CHECK`s to the tablet as today.
 2. Every AC device boots, reads the code, starts Mesh-Lite with router config = `NET_SSID`/`NET_PSK`, mesh ID = `MESH_LITE_ID`, node type = *root or child*, max level 4, fixed channel.
 3. AC devices that see `NET_SSID` connect to the board and compare RSSI; the best stays as **root** (level 1); the others disconnect from the board and join the root (level 2), then deeper as needed. Mesh-Lite does all of this.
-4. Each AC device sends HEARTBEAT every 15 s and TOPOLOGY every 60 s, as SAFR frames, upward to the board (`esp_mesh_lite_send_raw_msg_to_root`, and root → board over its Wi-Fi link).
+4. Each AC device sends HEARTBEAT every 15 s (and TOPOLOGY only when its layer changes), as SAFR frames, upward to the board (`esp_mesh_lite_send_raw_msg_to_root`, and root → board over its Wi-Fi link).
 5. Each battery detector wakes on its RTC timer. If it has no bound parent (or the bound parent stopped answering), it broadcasts `PARENT_PROBE` by ESP-NOW; every AC device in reach answers `PARENT_OFFER {mac, level, load}` (authenticated). The detector binds to the best, stores the MAC in RTC memory, sends HEARTBEAT to it, receives the parent's ACK, sleeps.
 6. The board marks each unit *online* on its first authenticated frame (a unit's first HEARTBEAT after provisioning carries its name and zone — new `NAME_ANNOUNCE` payload); the tablet shows it green with its name. Board sends TIME_SYNC down the tree on link-up and hourly; RTCs keep time in between.
 

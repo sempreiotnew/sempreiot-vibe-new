@@ -248,6 +248,24 @@ void main() {
     expect(await db.select(db.deviceEvents).get(), isEmpty);
   });
 
+  test('leaf HEARTBEAT with F_ACK_REQ is not ACKed by the tablet (spec §7.5)',
+      () async {
+    // The parent's ACK is the leaf's; the tablet's would be dropped by the
+    // parent after crossing the whole mesh.
+    await ingest.handleFrame(
+      nodeEncoder().encode(
+        msgType: SafrMsgType.heartbeat,
+        payload: _heartbeatPayload(layer: 2),
+        ackRequired: true,
+      ),
+      deviceId: 'test',
+    );
+    expect(validCount, 1);
+    expect(await db.select(db.meshDevices).get(), hasLength(1),
+        reason: 'still supervises the leaf');
+    expect(acked, isEmpty);
+  });
+
   test('auth failure: diagnostic row, device registry untouched', () async {
     final frame = Uint8List.fromList(nodeEncoder().encode(
       msgType: SafrMsgType.event,

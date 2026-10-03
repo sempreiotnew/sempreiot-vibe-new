@@ -870,8 +870,9 @@ class _LegendSheet extends StatelessWidget {
                   'comunicação" (NFPA 72 ≤ 200 s).'),
           item(
               'TOPO',
-              'Topologia — quem é filho de quem (a cada 60 s). De um '
-                  'detector: os pais que ele ouviu, a cada vínculo.'),
+              'Topologia — enviada quando o dispositivo muda de nível na '
+                  'rede. De um detector: os pais que ele ouviu, a cada '
+                  'vínculo.'),
           item(
               'NAME',
               'O dispositivo diz nome, zona, produto e versão do firmware.'),

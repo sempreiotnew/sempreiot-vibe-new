@@ -461,7 +461,11 @@ HEARTBEAT is never relayed downward: uplink frames go root → central only.
 
 ### 7.4 TOPOLOGY — `MSG_TYPE 0x03` (uplink) — payload 14 + 7·CHILD_COUNT bytes
 
-Sent by every non-leaf node (root included) every 60 s and on any child change.
+Sent by every powered node (root included) **when its Mesh-Lite level changes** — with the
+role-change HEARTBEAT (§9.2), which includes its first join after boot. *(2026-10-03: the
+60 s periodic TOPOLOGY was dropped — layer, parent and RSSI already ride every 15 s
+HEARTBEAT, and no receiver reads a node's children list; ≈ 20 % fewer node frames.)*
+The board still sends its own to the tablet every 60 s (serial only, never on the mesh).
 *(v3.4)* A **leaf** sends one TOPOLOGY **after every bind**, never periodically: its
 "children" are the **parent candidates** it heard (§12.7). `NODE_ROLE = 2`.
 
@@ -495,7 +499,7 @@ the payload — `EPOCH u32` and `CHANNEL u8` (§12.4). Receivers accept both the
 
 `DST_MAC` = original sender; `SRC_MAC` = the confirmer. The **root** ACKs central
 downlink on behalf of the mesh; the **central** ACKs any uplink frame carrying
-`F_ACK_REQ`. ACK frames themselves never set `F_ACK_REQ`. The **board** ACKs
+`F_ACK_REQ` — **except a HEARTBEAT** *(2026-10-03)*: only a leaf's asks for an ACK, and that ACK is its parent's (§12.4); the central's would cross the whole mesh to be dropped by the parent, the leaf already asleep. ACK frames themselves never set `F_ACK_REQ`. The **board** ACKs
 every downlink COMMAND itself before relaying it, and **forwards the central's
 ACKs down** into the mesh so a node sees the tablet's confirmation of its
 `F_ACK_REQ` uplinks (Phase 1 brief §14 item 4).
@@ -512,7 +516,7 @@ Sets `F_ACK_REQ`. `DST_MAC` selects the target device (broadcast allowed).
 
 | CMD | Name | ARGS | What it is for |
 |-----|------|------|----------------|
-| 0x00 | **LINK_CHECK** | — | Downlink path supervision (§9.3): a no-op the root simply ACKs. Proves central→root TX works. ⛑ UL 864 integrity monitoring / EN 54-25 bidirectional link verification. |
+| 0x00 | **LINK_CHECK** | — | Downlink path supervision (§9.3): a no-op the **board** ACKs and **does not relay** into the mesh *(2026-10-03; before, every node ACKed the broadcast too — N ACKs up the serial link every 30 s)*. Proves central→board TX works. Nodes take the board's own HEARTBEAT (§7.3, every 15 s down) as their proof of the board. ⛑ UL 864 integrity monitoring / EN 54-25 bidirectional link verification. |
 | 0x01 | SILENCE (relay/sounder off) | — | Silences sounders. **Does not clear the alarm latch** — silencing and resetting are distinct operator actions. ⛑ UL 864. |
 | 0x02 | TEST (self-test request) | — | Requests a device self-test; produces a MANUAL_TEST ALERT, distinguishable from a real alarm. |
 | 0x03 | RELAY_SET | 1 byte: 0/1 (GPIO12) | Output control. |
@@ -802,13 +806,13 @@ what still applies to a non-root node.
 **Role change announce (v3.3).** A node whose Mesh-Lite level changed sends
 HEARTBEAT + TOPOLOGY as soon as the new path is proven — root: its board session
 is up; child: a downlink frame arrived after the change — retrying until both
-frames left, then restarts its 15 s / 60 s timers. The board sends its own
+frames left, then restarts its 15 s heartbeat timer. The board sends its own
 HEARTBEAT (up and down) the moment a root connects, which is that proof for the
 whole re-formed tree.
 
 | Sender | HEARTBEAT | TOPOLOGY |
 |--------|-----------|----------|
-| root / relay (powered) | every 15 s | every 60 s |
+| root / relay (powered) | every 15 s | on a level change only (§7.4) |
 | leaf (sleeping) | every 60 s (on wake), ACKed by its parent (§12) | once per bind (§12.7) |
 
 **Rule:** if the central hears nothing (no frame of any type) from a known
@@ -821,7 +825,7 @@ margin for one lost heartbeat. Any valid frame restores the device.
 
 Heartbeats prove the uplink; nothing in v2 proved the *downlink* more than
 hourly. v3 rule: while the link is up, the central sends **CMD LINK_CHECK every
-30 s** (F_ACK_REQ). Three consecutive unconfirmed LINK_CHECKs (~36 s worst
+30 s** (F_ACK_REQ); the board answers it and keeps it off the mesh. Three consecutive unconfirmed LINK_CHECKs (~36 s worst
 case with fast retries) → the central raises a link TROUBLE ("falha no enlace
 de descida") — well inside 200 s.
 

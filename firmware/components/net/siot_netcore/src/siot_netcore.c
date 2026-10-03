@@ -22,7 +22,6 @@
 static const char *TAG = "siot_netcore";
 
 #define HB_INTERVAL_MS    15000 /* spec §9.2 */
-#define TOPO_INTERVAL_MS  60000
 #define ALARM_RETX_MS     60000 /* spec §7.2 */
 #define RETRY_BACKOFF_MS   2000 /* spec §9.1 */
 #define RETRY_MAX             3
@@ -55,8 +54,8 @@ static int64_t  s_pending_next_ms;
 static bool s_name_announced;
 static esp_timer_handle_t s_decommission_timer;
 
-/* Role announcement after a Mesh-Lite level change (brief §9: "TOPOLOGY 60 s
- * + on change"). It used to fire once, at the instant of the change — before
+/* Role announcement after a Mesh-Lite level change (spec §7.4: TOPOLOGY on
+ * change only, since 2026-10-03). It used to fire once, at the instant of the change — before
  * the new root had its TCP session, before a child's new root could forward —
  * and was silently lost, so the tablet saw nothing until the next 15 s tick
  * and the old tree stayed on screen. Now it stays pending until the path is
@@ -508,8 +507,9 @@ static void on_button(siot_evt_id_t id, const void *data, void *ctx)
 /* ---- state machine (brief §3) ------------------------------------------- */
 
 /* Returns true when the Mesh-Lite level (and thus our role) just changed, so
- * the caller announces the new role at once instead of waiting for the 60 s
- * TOPOLOGY tick (brief §9: "TOPOLOGY 60 s + on child change"). */
+ * the caller announces the new role at once: TOPOLOGY is sent only then
+ * (spec §7.4, 2026-10-03 — the 15 s HEARTBEAT carries layer, parent and
+ * RSSI, which is all anyone reads; the 60 s timer was dropped). */
 static bool update_state(void)
 {
     const uint8_t level = siot_link_mesh_level();
@@ -549,7 +549,6 @@ static void netcore_task(void *arg)
 {
     (void)arg;
     int64_t next_hb_ms = 0;
-    int64_t next_topo_ms = 2000; /* stagger the first TOPOLOGY */
 
     for (;;) {
         const int64_t t = now_ms();
@@ -560,7 +559,8 @@ static void netcore_task(void *arg)
          * carries ROLE) as soon as the frames can reach the board — root: the
          * TCP session is up; child: something came down the tree after the
          * change, so the root above us is forwarding. Retried every tick until
-         * both frames actually left; then the periodic timers restart. */
+         * both frames actually left; then the heartbeat timer restarts.
+         * This is the only TOPOLOGY a node sends (spec §7.4). */
         if (s_announce_pending) {
             const uint8_t level = siot_link_mesh_level();
             const bool path_proven = level == 1 ? siot_link_mesh_board_up()
@@ -572,7 +572,6 @@ static void netcore_task(void *arg)
                 if (hb_ok && s_last_tx_ok) {
                     s_announce_pending = false;
                     next_hb_ms = t + HB_INTERVAL_MS;
-                    next_topo_ms = t + TOPO_INTERVAL_MS;
                     ESP_LOGI(TAG, "role announced (level %u)", level);
                 }
             }
@@ -586,7 +585,6 @@ static void netcore_task(void *arg)
                                            siot_config_code()->name, siot_config_code()->zone);
         }
         if (t >= next_hb_ms) { emit_heartbeat(t); next_hb_ms = t + HB_INTERVAL_MS; }
-        if (t >= next_topo_ms) { emit_topology(t); next_topo_ms = t + TOPO_INTERVAL_MS; }
 
         /* Fast phase (spec §9.1): 3 × 2 s, same MSG_ID, fresh MSG_CTR. */
         if (s_pending_used && t >= s_pending_next_ms) {

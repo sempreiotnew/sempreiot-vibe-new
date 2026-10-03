@@ -105,7 +105,7 @@ Status words are the reference's: `Implemented` · `POC` · `Planned` · `Open`.
 |---|---|---|---|
 | 4.1 | Heartbeats / topology | Emits its own `HEARTBEAT` every 15 s and `TOPOLOGY` every 60 s with `LAYER 0`, `NODE_ROLE root`, `PARENT_MAC` = the tablet, children = AC devices heard | POC |
 | 4.2 | Device-missing trouble | Marks an entry `missing` after 3 × its interval (45 s AC, 180 s for a leaf at its fixed 60 s, unknown role → 45 s). **Root fast path (v3.3):** TCP keepalive reaps a dead root in ~5 s; the board marks it missing and pushes the full `DEVICE_TABLE` unsolicited; the tablet takes it as authoritative | Implemented (table + fast path); synthetic TROUBLE from the board is Phase 1 step 4 |
-| 4.3 | Downlink supervision | ACKs the tablet's `LINK_CHECK` every 30 s | POC |
+| 4.3 | Downlink supervision | ACKs the tablet's `LINK_CHECK` every 30 s and keeps it off the mesh (2026-10-03: before, every node ACKed it too) | Implemented (bench pending) |
 | 4.5 | Self-reporting both ways | Its `HEARTBEAT` goes to the tablet **and** is broadcast down the mesh every 15 s; it is the frame a joined node uses to know the board is there (LED online within 15 s of joining, tablet or not); sent the moment a root connects | Implemented (2026-09-27) |
 
 ### 4.5 Alarm handling and operator actions

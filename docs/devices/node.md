@@ -98,7 +98,7 @@ mesh.
 
 | Ref | Function | Node's part | Status |
 |---|---|---|---|
-| 4.1 | Heartbeats / topology | `HEARTBEAT` every 15 s (uptime, `PWR_FLAGS`, battery, temp, RSSI to parent, parent MAC, layer); `TOPOLOGY` every 60 s and on any child change (role, layer, parent, children with RSSI). Add min free heap + largest free block to `TOPOLOGY` for fleet memory margin | POC · heap fields Planned |
+| 4.1 | Heartbeats / topology | `HEARTBEAT` every 15 s (uptime, `PWR_FLAGS`, battery, temp, RSSI to parent, parent MAC, layer); `TOPOLOGY` (role, layer, parent, children with RSSI) only when its layer changes — the 60 s timer was dropped 2026-10-03 (the HEARTBEAT carries layer, parent and RSSI). Fleet memory margin (min free heap + largest free block) would ride the HEARTBEAT | Implemented · heap fields Planned |
 | 4.2 | Missing | A node cannot know it is missing — only the board can. Silent 45 s → the board marks it missing | Implemented (board) |
 | 4.5 | **Board supervision, node side (v3.3)** | The board is reachable while any downlink frame arrived within 90 s (six missed board HEARTBEATs). Mesh up but board silent → stays in "finding the network" (white breathe) and TEST runs the survey instead of a walk test | Implemented (2026-09-27) |
 
@@ -158,10 +158,10 @@ three blues 2 s apart and no cyan = no ACK (tablet not connected or link down).
 
 | Direction | Message | Node behaviour |
 |---|---|---|
-| Up (own) | `HEARTBEAT` 0x02 / 15 s, `TOPOLOGY` 0x03 / 60 s + child change | Never `F_ACK_REQ`; `TOPOLOGY` `NODE_ROLE` 0 root / 1 node |
+| Up (own) | `HEARTBEAT` 0x02 / 15 s, `TOPOLOGY` 0x03 on a level change | Never `F_ACK_REQ`; `TOPOLOGY` `NODE_ROLE` 0 root / 1 node |
 | Up (own) | `NAME_ANNOUNCE` 0x0A | Once after joining with a path to the board; again after `SET_DEVICE`; trailing role byte |
 | Up (own) | `EVENT` 0x01 | `MANUAL_TEST` ALERT (tap), ALARM (double tap on the bench; sensors later), `COMM_FAULT` / `RESTORE` on state changes; ALARM / TROUBLE with `F_ACK_REQ` + fast retry + 60 s re-announce |
-| Up (own) | `ACK` 0x04 | For every `COMMAND` addressed to it (`IDENTIFY`, `TEST`, `RESET`, `SILENCE`, `SET_DEVICE`, `DECOMMISSION`…); `LINK_CHECK` is ACKed by the root on behalf of the mesh |
+| Up (own) | `ACK` 0x04 | For every `COMMAND` addressed to it (`IDENTIFY`, `TEST`, `RESET`, `SILENCE`, `SET_DEVICE`, `DECOMMISSION`…); `LINK_CHECK` never reaches a node: the board answers it and does not relay it (2026-10-03) |
 | Up (relay, root and relays) | Everything from the subtree | Copied without decrypting; root → board over TCP |
 | Down (relay) | `COMMAND`, `TIME_SYNC`, board `HEARTBEAT`, tablet `ACK` | Re-broadcast one hop, dedupe by MSG_ID; act only if `DST_MAC` = own or broadcast |
 | ESP-NOW | `PARENT_PROBE` 0x0D (prober) / `PARENT_OFFER` 0x0E (answerer) | Survey today (`purpose = 1`); leaf parent discovery (`purpose = 0`, only when ONLINE, spec §12.3). Through `esp_mesh_lite_espnow_*` with data-type byte `0xD2` because Mesh-Lite owns `esp_now_init` |
@@ -180,7 +180,7 @@ three blues 2 s apart and no cyan = no ACK (tablet not connected or link down).
 
 | Quantity | Value | Source |
 |---|---|---|
-| HEARTBEAT / TOPOLOGY / NAME_ANNOUNCE | 15 s / 60 s / once after join | spec §9.2, brief §9 |
+| HEARTBEAT / TOPOLOGY / NAME_ANNOUNCE | 15 s / on a level change / once after join | spec §9.2, brief §9 |
 | Missing at the board | 45 s (3 missed heartbeats); limits 200 s NFPA 72 / 300 s EN 54-25 | spec §9.2 |
 | Board silence, node side | 90 s = 6 missed board HEARTBEATs | spec §9.3 v3.3 |
 | Fast retry | 3 × at 2 s, then `COMM_FAULT` | spec §7.2 |

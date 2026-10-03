@@ -255,7 +255,13 @@ class SafrIngestService {
     }
 
     // Spec §9.1: process once, ACK every time (even duplicates/replays).
-    if (frame.ackRequired) {
+    // Except a HEARTBEAT (spec §7.5): only a battery leaf's asks for an ACK,
+    // and its parent's ACK is the one that counts — by the time the
+    // tablet's could arrive the leaf sleeps, and the parent drops it
+    // (siot_leafmgr.c forwards only ACKs that close an EVENT in custody).
+    // Answering would cost a frame each way on the cable and one copy
+    // through every node of the mesh, per leaf, per minute.
+    if (frame.ackRequired && frame.msgType != SafrMsgType.heartbeat) {
       await onAckRequired?.call(frame);
       if (accepted != null) {
         await (db.update(db.deviceEvents)..where((t) => t.id.equals(accepted)))
@@ -392,7 +398,7 @@ class SafrIngestService {
         battery = p.batteryPct ?? battery;
         lastHb = now;
         // Role tracks layer from the 15 s heartbeat so a root change shows
-        // fast; TOPOLOGY (every 60 s) also carries role and refines it. Board
+        // fast; TOPOLOGY (sent on a level change) also carries role and refines it. Board
         // (layer 0) and the mesh root (layer 1) are "root"; layer 2+ are
         // relays/children. A battery leaf (spec §12) heartbeats from layer
         // parent+1 and sends TOPOLOGY only when it binds: once known as a

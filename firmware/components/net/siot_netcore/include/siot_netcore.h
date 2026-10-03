@@ -1,6 +1,7 @@
 /* siot_netcore — what an AC node does on the network (brief §5.3, §9):
  *
- *   emitter    HEARTBEAT 15 s, TOPOLOGY 60 s, NAME_ANNOUNCE once after join
+ *   emitter    HEARTBEAT 15 s, TOPOLOGY on a level change only (§7.4),
+ *              NAME_ANNOUNCE once after join
  *   button     tap → EVENT ALERT MANUAL_TEST (F_ACK_REQ, brief §14 item 3 default)
  *              double tap → EVENT ALARM SMOKE_ALARM, latched, LED red
  *   fast retry 3 × 2 s, same MSG_ID, fresh MSG_CTR; exhausted → DEGRADED +
