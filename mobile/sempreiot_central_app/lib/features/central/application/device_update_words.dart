@@ -22,6 +22,13 @@ String deviceUpdatePhaseName(SafrProductFamily f) => switch (f) {
       SafrProductFamily.unknown => '',
     };
 
+/// "placa v0.3.0 · nós v0.2.1 · detectores v0.1.4": the targets of an
+/// "Atualizar tudo", one per family, in phase order.
+String deviceUpdateTargetsText(Map<SafrProductFamily, String> targets) => [
+      for (final e in targets.entries)
+        '${deviceUpdatePhaseName(e.key).toLowerCase()} ${vText(e.value)}',
+    ].join(' · ');
+
 /// "a placa", "1 nó", "4 nós", "2 detectores".
 String deviceUpdateCount(SafrProductFamily f, int n) => switch (f) {
       SafrProductFamily.board => 'a placa',
@@ -86,7 +93,7 @@ DeviceUpdateBarText deviceUpdateBarText(
   ({int back, int total})? meshBack,
 }) {
   final fam = run.family;
-  final target = vText(run.target);
+  final target = vText(run.targetOf(fam));
   final phase = run.all ? 'Fase ${run.phase + 1}: ' : '';
   final units = run.unitsOf(fam);
   final done = units.where((u) => u.state == SafrOtaUnitState.done).length;

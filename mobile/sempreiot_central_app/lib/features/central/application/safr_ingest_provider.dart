@@ -452,6 +452,13 @@ class SafrIngestService {
       hwRev = _knownHwRev(p.hwRev) ?? hwRev;
       fwVersion = _knownFw(p.fwVersion) ?? fwVersion;
     }
+    // Spec §13.4: an OTA_RESULT's VERSION is what the unit runs NOW — the
+    // new image, or the old one after a rollback. A leaf says its name only
+    // once per installation, so without this the tablet kept showing the
+    // version it had before the update.
+    if (payload case SafrOtaResultPayload p) {
+      fwVersion = _knownFw(p.version) ?? fwVersion;
+    }
     // Hearing directly from a device (any frame) means it's live — supersedes
     // the 'enrolled' marker INSTALLATION may have set before this ever arrived.
     if (registryState == 'enrolled') registryState = null;

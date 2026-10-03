@@ -109,6 +109,7 @@ class DeviceUpdateRun {
     required this.all,
     required this.phases,
     required this.target,
+    this.targets = const {},
     required this.queues,
     required this.units,
     required this.stage,
@@ -131,8 +132,17 @@ class DeviceUpdateRun {
   final List<SafrProductFamily> phases;
   final int phase;
 
-  /// The version every unit of the run goes to.
+  /// The version(s) of the run in one line: the one version of a
+  /// single-family run; for "Atualizar tudo", one per family
+  /// ("placa v0.3.0 · nós v0.2.1 · …").
   final String target;
+
+  /// The version each family goes to ("Atualizar tudo" takes the newest
+  /// image the tablet has of each). Empty = [target] for every family.
+  final Map<SafrProductFamily, String> targets;
+
+  /// The version the units of [family] go to.
+  String targetOf(SafrProductFamily family) => targets[family] ?? target;
 
   /// Per family, the units in the order they are updated (the root last).
   final Map<SafrProductFamily, List<String>> queues;
@@ -215,6 +225,7 @@ class DeviceUpdateRun {
         phases: phases,
         phase: phase ?? this.phase,
         target: target,
+        targets: targets,
         queues: queues ?? this.queues,
         units: units ?? this.units,
         stage: stage ?? this.stage,

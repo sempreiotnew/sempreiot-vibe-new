@@ -76,6 +76,12 @@ class _DeviceUpdateScreenState extends ConsumerState<DeviceUpdateScreen> {
         elevation: 0,
         actions: [
           IconButton(
+            key: const ValueKey('firmware-library'),
+            tooltip: 'Firmwares no tablet',
+            icon: const Icon(Icons.inventory_2_outlined),
+            onPressed: () => showFirmwareLibrarySheet(context),
+          ),
+          IconButton(
             tooltip: 'Registro',
             icon: const Icon(Icons.receipt_long_rounded),
             onPressed: () => showDeviceUpdateLog(context),

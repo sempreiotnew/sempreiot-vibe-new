@@ -1451,19 +1451,23 @@ leaf acts.
   the fallback), pulls `http://192.168.4.1:8070/fw/leaf.bin`, verifies size,
   `SHA256`, `project_name`, version and signature, writes the inactive slot,
   remembers the install (NVS: version, slot, seconds awake) and `OTA_STATUS
-  rebooting`, then **sleeps** normally. The 500 ms budget (§12.2) does not
-  apply to this wake; it is capped at **120 s**. The next timer wake boots the
+  rebooting`, then **sleeps 1 s** *(2026-10-03; before, the rest of its
+  60 s)*. The 500 ms budget (§12.2) does not
+  apply to this wake; it is capped at **120 s**. That timer wake boots the
   new image — another image, whose RTC variables need not sit where this
   one's do: the leaf mirrors its RTC state (parent, channel, bind, counters)
   to NVS before that boot and before a rollback, and the next image takes it
   back once, so it wakes bound and skips the post-provisioning verdict. With
   no mirror it probes for a parent on that wake anyway.
-- **Self-test = the next wake.** A deep-sleep wake goes through the bootloader,
+- **Self-test = the next wake, 1 s after the install.** A deep-sleep wake goes through the bootloader,
   which gives an unverified image exactly one boot (rollback, OTA blueprint
   §4.4). On that wake the new image runs the normal heartbeat cycle; the
   parent's ACK is the proof it can still talk, so it marks itself valid and
   sends `OTA_RESULT {OK = 1, AWAKE_S}` — `AWAKE_S` = the seconds the pull wake
-  lasted. No ACK after the heartbeat's retries (up to **3** on this wake):
+  lasted, then a `NAME_ANNOUNCE` with the version it runs now *(2026-10-03:
+  a leaf announces once per installation, so the first wake of any other
+  image — new, or the old one after a rollback — announces again)*. No ACK
+  after the heartbeat's retries (up to **3** on this wake):
   `esp_ota_mark_app_invalid_rollback_and_reboot()`, and the old image, back on
   the same wake, reports `OTA_RESULT {OK = 0}` with the reason of §13.4
   (`SELFTEST_FAIL` / `NOT_VALIDATED` + `DETAIL` / `NOT_BOOTED`). A leaf's

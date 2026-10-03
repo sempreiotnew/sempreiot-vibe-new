@@ -49,6 +49,7 @@ static const char *TAG = "siot_leaf";
 #define SURVEY_SPACING_MS  1200
 #define SURVEY_WINDOW_MS   4500
 #define HOLD_CHECK_MS      5500      /* button still held after a wake: let the 5 s factory-reset hold run */
+#define INSTALL_WAKE_MS    1000      /* §13.5: an image just installed runs (and self-tests) 1 s later */
 #define NVS_NS             "siot_leaf"
 #define NVS_KEY_OUTBOX     "outbox"
 #define NVS_KEY_RTC_MIRROR "rtc"     /* the whole RTC state, kept across a firmware change (§13.5) */
@@ -189,6 +190,11 @@ static bool rtc_mirror_take(void)
     nvs_close(h);
     if (ok) {
         s_rtc = tmp;
+        /* The mirror is written only before a boot into ANOTHER image (the
+         * new one, or the old one after a rollback): say again what this
+         * unit runs, on this wake — the tablet and the board's table learn
+         * the version from NAME_ANNOUNCE (§7.11). */
+        s_rtc.announced = false;
         ESP_LOGW(TAG, "RTC state taken back from NVS (another image wrote it): bound=%u ch=%u",
                  s_rtc.bind == BIND_BOUND, s_rtc.channel);
     }
@@ -684,6 +690,9 @@ static void drain_outbox(void)
     if (changed) outbox_save();
 }
 
+/* An image was installed on this wake: the next one starts in INSTALL_WAKE_MS. */
+static bool s_installed;
+
 /* One timer wake while bound. Returns true when the parent answered. */
 static bool heartbeat_cycle(void)
 {
@@ -965,6 +974,7 @@ static void one_wake(esp_sleep_wakeup_cause_t cause)
     }
     if (heard) {
         if (s_ota.report_if_due) s_ota.report_if_due();
+        if (!s_rtc.announced && emit_name_announce()) s_rtc.announced = true; /* first wake of another image */
         if (s_ack_last.has_offer && s_ota.on_offer) {
             const bool installed = s_ota.on_offer(s_ack_last.offer_msg_id, &s_ack_last.offer,
                                                   cause != ESP_SLEEP_WAKEUP_TIMER && cause != ESP_SLEEP_WAKEUP_UNDEFINED,
@@ -972,6 +982,7 @@ static void one_wake(esp_sleep_wakeup_cause_t cause)
             s_ack_last.has_offer = false;
             if (installed) {
                 rtc_mirror_save(); /* the next wake boots the new image: hand it our state */
+                s_installed = true; /* …and comes in 1 s, not at the next heartbeat (§13.5) */
                 return;            /* sleep now */
             }
         }
@@ -994,6 +1005,13 @@ void siot_leafcore_run(bool has_code)
     }
 
     s_code = siot_config_code();
+    /* siot_ui_led starts in SETUP (white blink) and only a state event moves
+     * it; a leaf never posted one, so the end of a survey (which re-applies
+     * the base pattern) flashed the setup white — read as a cyan
+     * "confirmation" with the board off. A provisioned leaf rests dark:
+     * ONLINE at level 0 is SIOT_LED_OFF; only the §12.8 flows light it. */
+    const siot_evt_state_t running = {.prev = SIOT_STATE_SETUP, .next = SIOT_STATE_ONLINE};
+    siot_evbus_post(SIOT_EVT_STATE_CHANGED, &running, sizeof(running));
     if (s_rtc.magic != RTC_MAGIC || s_rtc.system_id != s_code->system_id) {
         if (!rtc_mirror_take()) {
             rtc_reset();
@@ -1020,7 +1038,10 @@ void siot_leafcore_run(bool has_code)
     for (;;) {
         one_wake(cause);
         const int64_t awake = now_ms();
-        const uint32_t left = awake >= (int64_t)HB_INTERVAL_MS ? 1000u : (uint32_t)(HB_INTERVAL_MS - awake);
+        const uint32_t left = s_installed                         ? INSTALL_WAKE_MS
+                            : awake >= (int64_t)HB_INTERVAL_MS ? 1000u
+                                                                : (uint32_t)(HB_INTERVAL_MS - awake);
+        s_installed = false;
         leaf_sleep(left, true);
         cause = s_sim_cause; /* LIGHT / NONE only; DEEP never gets here */
     }

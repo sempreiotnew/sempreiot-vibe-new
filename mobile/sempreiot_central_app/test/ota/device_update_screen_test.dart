@@ -373,20 +373,54 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('"Atualizar tudo": a version with its three images, in phases',
-      (tester) async {
-    await pump(tester, const Size(1280, 800));
-    await settle(tester);
-    await tester.tap(find.byKey(const ValueKey('update-all')));
-    await settle(tester);
+  for (final sz in sizes.entries) {
+    testWidgets(
+        '"Atualizar tudo": the newest image of each family, in phases '
+        '(${sz.key})', (tester) async {
+      await pump(tester, sz.value);
+      await settle(tester);
+      await tester.tap(find.byKey(const ValueKey('update-all')));
+      await settle(tester);
 
-    expect(find.text('Atualizar tudo'), findsWidgets);
-    expect(find.text('EM FASES, UMA DEPOIS DA OUTRA'), findsOneWidget);
-    expect(find.text('Nós (3)'), findsOneWidget);
-    expect(find.text('Detectores (1)'), findsOneWidget);
-    expect(find.text('Atualizar tudo para v0.2.0'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
+      expect(find.text('A VERSÃO MAIS NOVA DE CADA, NO TABLET'), findsOneWidget);
+      expect(find.text('Placa'), findsWidgets);
+      expect(find.text('Nós (3)'), findsOneWidget);
+      expect(find.text('Detectores (1)'), findsOneWidget);
+      // node-0.1.0 and node-0.2.0 are on the tablet: the newer goes.
+      expect(find.text('→ v0.2.0'), findsNWidgets(3));
+      expect(find.text('3 de 3 atualizam'), findsOneWidget);
+      final confirm = tester.widget<FilledButton>(
+          find.byKey(const ValueKey('update-confirm')));
+      expect(confirm.onPressed, isNotNull);
+      expect(tester.takeException(), isNull);
+      await leave(tester);
+    });
+
+    testWidgets('Firmwares no tablet: listed by family, one removed (${sz.key})',
+        (tester) async {
+      await pump(tester, sz.value);
+      await settle(tester);
+      await tester.tap(find.byKey(const ValueKey('firmware-library')));
+      await settle(tester);
+
+      expect(find.text('Firmwares no tablet'), findsOneWidget);
+      expect(find.text('MAIS NOVO'), findsNWidgets(3));
+      final remove =
+          find.byKey(const ValueKey('firmware-remove-node-0.1.0.bin'));
+      await tester.ensureVisible(remove);
+      await tester.tap(remove);
+      await settle(tester);
+      await tester.tap(find.byKey(const ValueKey('firmware-remove-confirm')));
+      await settle(tester);
+
+      expect(find.byKey(const ValueKey('firmware-remove-node-0.1.0.bin')),
+          findsNothing);
+      expect(find.byKey(const ValueKey('firmware-remove-node-0.2.0.bin')),
+          findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await leave(tester);
+    });
+  }
 
   testWidgets('the board restarted: it waits for the mesh, and says so',
       (tester) async {

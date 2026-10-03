@@ -379,10 +379,8 @@ void main() {
       await boot(m,
           library: ['board-0.2.0.bin', 'node-0.2.0.bin', 'leaf-0.2.0.bin']);
 
-      expect(
-          container.read(firmwareLibraryProvider).completeVersions, ['0.2.0']);
       meshRejoins();
-      expect(await update().startAll('0.2.0'), isNull);
+      expect(await update().startAll(), isNull);
       expect(run().phases, [SafrProductFamily.board, node],
           reason: 'no detector on the map: no detector phase');
       await ended();
@@ -402,7 +400,7 @@ void main() {
           library: ['board-0.2.0.bin', 'node-0.2.0.bin', 'leaf-0.2.0.bin']);
 
       meshRejoins();
-      await update().startAll('0.2.0');
+      await update().startAll();
       expect(run().phases,
           [SafrProductFamily.board, node, SafrProductFamily.leaf]);
       await _until(() => run().stage == DeviceUpdateStage.deciding,
@@ -428,7 +426,7 @@ void main() {
       m.unit(button).online = false;
 
       meshRejoins();
-      await update().startAll('0.2.0');
+      await update().startAll();
       await _until(() => run().stage == DeviceUpdateStage.deciding,
           what: 'the question before the detectors',
           within: const Duration(seconds: 15));
@@ -463,7 +461,7 @@ void main() {
             mesh.announceUnits();
           });
 
-      await update().startAll('0.2.0');
+      await update().startAll();
       await _until(() => run().stage == DeviceUpdateStage.reconnecting,
           what: 'the wait for the mesh', within: const Duration(seconds: 10));
       expect(run().boardRestartedAt, isNotNull);
@@ -480,7 +478,7 @@ void main() {
           library: ['board-0.2.0.bin', 'node-0.2.0.bin', 'leaf-0.2.0.bin']);
       board.failSelfTest = true;
 
-      await update().startAll('0.2.0');
+      await update().startAll();
       await ended();
 
       expect(run().end, DeviceUpdateEnd.failed);
@@ -489,6 +487,67 @@ void main() {
       expect(board.imageVersions[0x02], isNull,
           reason: 'the node image was never sent');
     });
+  });
+
+  group('Atualizar tudo: the newest image of each family', () {
+    test('each family goes to its own newest version', () async {
+      final m = threeUnits(withDetector: true)..stored.clear();
+      await boot(m, library: [
+        'board-0.1.9.bin',
+        'board-0.3.0.bin',
+        'node-0.2.0.bin',
+        'node-0.2.1.bin',
+        'leaf-0.1.4.bin',
+      ]);
+
+      meshRejoins();
+      expect(await update().startAll(), isNull);
+      expect(run().targetOf(SafrProductFamily.board), '0.3.0');
+      expect(run().targetOf(node), '0.2.1');
+      expect(run().targetOf(SafrProductFamily.leaf), '0.1.4');
+      expect(run().target, 'placa v0.3.0 · nós v0.2.1 · detectores v0.1.4');
+      update().abort();
+    });
+
+    test('a unit that already runs that version, or a newer one, is left alone',
+        () async {
+      final m = threeUnits()..stored.clear();
+      m.unit(siren).version = '0.2.0';
+      m.unit(button).version = '0.3.0';
+      await boot(m, library: ['board-0.2.0.bin', 'node-0.2.0.bin']);
+
+      meshRejoins();
+      expect(await update().startAll(), isNull);
+      expect(run().units[siren]!.state, SafrOtaUnitState.done);
+      expect(run().units[siren]!.note, 'Já estava nesta versão.');
+      expect(run().units[button]!.state, SafrOtaUnitState.done);
+      expect(run().units[button]!.note, startsWith('Já roda uma versão mais nova'));
+      expect(run().units[root]!.state, SafrOtaUnitState.waiting);
+      update().abort();
+    });
+
+    test('a family with units but no image on the tablet: refused, says which',
+        () async {
+      await boot(threeUnits(withDetector: true),
+          library: ['board-0.2.0.bin', 'node-0.2.0.bin']);
+
+      final said = await update().startAll();
+      expect(said, contains('Falta no tablet'));
+      expect(said, contains('bateria'));
+      expect(container.read(deviceUpdateProvider), isNull);
+    });
+  });
+
+  test('removing an image takes it out of the library', () async {
+    await boot(threeUnits(), library: ['node-0.2.0.bin', 'node-0.2.1.bin']);
+    final lib = container.read(firmwareLibraryProvider.notifier);
+
+    expect(container.read(firmwareLibraryProvider).newest(node)?.version,
+        '0.2.1');
+    await lib.remove(image(node, '0.2.1'));
+    expect(container.read(firmwareLibraryProvider).newest(node)?.version,
+        '0.2.0');
+    expect(store.files.keys, ['node-0.2.0.bin']);
   });
 
   test('importing keeps SempreIoT images only, named by what they are',

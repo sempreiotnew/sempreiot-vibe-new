@@ -59,22 +59,10 @@ class FirmwareLibraryState {
     return null;
   }
 
-  /// Versions the tablet has the three images of (board, node, leaf) —
-  /// what "Atualizar tudo" can send — newest first.
-  List<String> get completeVersions {
-    final versions = {for (final e in entries) e.version};
-    final out = [
-      for (final v in versions)
-        if (_families.every((f) => image(f, v) != null)) v,
-    ]..sort((a, b) => compareFirmwareVersions(b, a));
-    return out;
-  }
-
-  static const _families = [
-    SafrProductFamily.board,
-    SafrProductFamily.node,
-    SafrProductFamily.leaf,
-  ];
+  /// The newest image of [family] the tablet has — what "Atualizar tudo"
+  /// sends to that family. Null when there is none.
+  FirmwareLibraryEntry? newest(SafrProductFamily family) =>
+      of(family).firstOrNull;
 
   FirmwareLibraryState copyWith({
     List<FirmwareLibraryEntry>? entries,

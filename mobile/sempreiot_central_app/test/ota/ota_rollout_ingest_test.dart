@@ -120,6 +120,41 @@ void main() {
     expect(acked.every((f) => f.srcMac == unitMac && f.msgId == 77), isTrue);
   });
 
+  test(
+      'OTA_RESULT: its VERSION becomes the unit\'s version (a leaf never '
+      'announces again after an update)', () async {
+    // Before: the unit said 0.1.0 in its NAME_ANNOUNCE.
+    await feed(encoder(unitMac, bootCtr: 4).encode(
+      msgType: SafrMsgType.nameAnnounce,
+      payload: SafrNameAnnouncePayload.build(
+        name: 'Detector',
+        zone: 'Sala',
+        role: SafrNodeRole.leaf,
+        productCode: 0x0301,
+        hwRev: 1,
+        fwVersion: '0.1.0',
+      ),
+    ));
+    expect((await db.select(db.meshDevices).get()).single.fwVersion, '0.1.0');
+
+    await feed(encoder(unitMac).encode(
+      msgType: SafrMsgType.otaResult,
+      payload: const SafrOtaResultPayload(ok: true, version: '0.2.0').build(),
+      ackRequired: true,
+    ));
+    expect((await db.select(db.meshDevices).get()).single.fwVersion, '0.2.0');
+
+    // A rollback says the version it runs again.
+    await feed(encoder(unitMac, bootCtr: 6).encode(
+      msgType: SafrMsgType.otaResult,
+      payload: const SafrOtaResultPayload(
+              ok: false, reasonRaw: 9, version: '0.1.0')
+          .build(),
+      ackRequired: true,
+    ));
+    expect((await db.select(db.meshDevices).get()).single.fwVersion, '0.1.0');
+  });
+
   test('a replay of an OTA_STATUS is not handed over', () async {
     final frame = encoder(unitMac).encode(
       msgType: SafrMsgType.otaStatus,

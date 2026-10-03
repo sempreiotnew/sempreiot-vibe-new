@@ -120,9 +120,10 @@ answers with a plain ACK (taken, or refused: not newer, battery < 60 %, a sensor
 sends `OTA_STATUS downloading 0`, joins its **parent's SoftAP** as a station (the board's AP as fallback),
 pulls `/fw/leaf.bin`, verifies (size, SHA-256, project name, version, signature), installs, notes the
 seconds awake, mirrors its RTC state to NVS (the next image's RTC layout may differ) and **sleeps** — ~40–90 s
-awake, capped at 120 s. The next wake boots the new image, which takes the state back: the
-parent's ACK (3 heartbeats at most) confirms it and `OTA_RESULT {OK, AWAKE_S}` goes up (the parent's hop
-ACK closes it); no ACK → rollback, and the old image reports `SELFTEST_FAIL` / `NOT_VALIDATED` /
+awake, capped at 120 s. The next wake — **1 s later** (2026-10-03; before, the rest of its minute) —
+boots the new image, which takes the state back: the parent's ACK (3 heartbeats at most) confirms it,
+`OTA_RESULT {OK, AWAKE_S}` goes up (the parent's hop ACK closes it) and a `NAME_ANNOUNCE` says the new
+version (a leaf otherwise announces once per installation); no ACK → rollback, and the old image reports `SELFTEST_FAIL` / `NOT_VALIDATED` /
 `NOT_BOOTED` on that same wake. A failed pull is refused next wake, then for 6 h, then for good (RTC).
 
 ## 5. Functionality rows that name the leaf
@@ -169,7 +170,7 @@ and `siot_coordinator` forward any authenticated frame regardless of link (brief
 | Asleep | **off, always** |
 | Setup (no code, 2 min window) | white blink |
 | Post-provisioning verdict (≤ 30 s) | the same as a button press, run by the leaf itself |
-| Button press | blue 100 ms at once → (unbound or `NO_PATH`: discovery, no LED) → walk test: blue 500 ms sent, cyan 500 ms confirmed, or one red · survey: one blink per answering unit, one red = nobody |
+| Button press | blue 100 ms at once → (unbound or `NO_PATH`: discovery, no LED) → walk test: blue 500 ms sent, cyan 500 ms confirmed, or one red · survey: one blink per answering unit, one red = nobody, then dark (2026-10-03: a white "setup" flash after the survey — read as cyan with the board off — removed; the leaf's resting LED is off) |
 | COMM_FAULT | one red blink + trouble chirp per wake |
 | Alarm active | red solid + local sounder, awake |
 | IDENTIFY (from the mailbox) | blue blink N s, then sleep |

@@ -11,6 +11,7 @@ import '../domain/safr/safr_v2_payloads.dart';
 import 'alarm_latch_provider.dart';
 import 'device_update_history.dart';
 import 'device_update_state.dart';
+import 'device_update_words.dart';
 import 'firmware_library_provider.dart';
 import 'ota_push_controller.dart';
 import 'ota_push_report.dart' show unitFamily;
@@ -18,6 +19,7 @@ import 'ota_push_state.dart';
 import 'ota_rollout_controller.dart';
 import 'ota_rollout_report.dart' show otaHeldOnBoardProvider;
 import 'ota_rollout_state.dart';
+import 'ota_rollout_words.dart' show otaFirmwareWord;
 import 'root_election_provider.dart';
 import 'topology_provider.dart';
 
@@ -151,49 +153,65 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
     return null;
   }
 
-  /// "Atualizar tudo" to [version]: the board, then every node, then every
-  /// detector the tablet hears. Returns why not, or null when it started.
-  Future<String?> startAll(String version,
-      {bool reinstall = false, String by = 'system'}) async {
+  /// "Atualizar tudo": the board, then every node, then every detector the
+  /// tablet hears — each family to the NEWEST image of it the tablet has
+  /// (the three need not share a version number). A unit that already runs
+  /// that version or a newer one is left alone. Returns why not, or null
+  /// when it started.
+  Future<String?> startAll({String by = 'system'}) async {
     final blocker = _startBlocker();
     if (blocker != null) return blocker;
     final library = _ref.read(firmwareLibraryProvider);
-    _images.clear();
-    for (final f in const [
-      SafrProductFamily.board,
-      SafrProductFamily.node,
-      SafrProductFamily.leaf,
-    ]) {
-      final image = library.image(f, version);
-      if (image == null) {
-        return 'O tablet não tem as três imagens da versão $version.';
-      }
-      _images[f] = image;
-    }
     final nodes = _online(SafrProductFamily.node);
     final leafs = _online(SafrProductFamily.leaf);
+    final queues = <SafrProductFamily, List<String>>{
+      SafrProductFamily.board: const [deviceUpdateBoardKey],
+      if (nodes.isNotEmpty) SafrProductFamily.node: nodes,
+      if (leafs.isNotEmpty) SafrProductFamily.leaf: leafs,
+    };
+    final images = <SafrProductFamily, FirmwareLibraryEntry>{};
+    final missing = <SafrProductFamily>[];
+    for (final f in queues.keys) {
+      final image = library.newest(f);
+      if (image == null) {
+        missing.add(f);
+      } else {
+        images[f] = image;
+      }
+    }
+    if (missing.isNotEmpty) {
+      return 'Falta no tablet: ${missing.map(otaFirmwareWord).join(', ')}. '
+          'Toque em "Procurar no tablet" e escolha o arquivo .bin.';
+    }
+    final targets = {for (final e in images.entries) e.key: e.value.version};
+    final anything = queues.entries.any((q) =>
+        q.value.any((key) => !_runsAtLeast(key, targets[q.key]!)));
+    if (!anything) {
+      return 'Tudo já roda a versão mais nova que o tablet tem.';
+    }
+    _images
+      ..clear()
+      ..addAll(images);
     _audit(by, 'ota_update_started', {
       'all': true,
-      'version': version,
-      if (reinstall) 'reinstall': true,
+      'versions': {for (final e in targets.entries) e.key.name: e.value},
     });
     _begin(
       all: true,
-      phases: [
-        SafrProductFamily.board,
-        if (nodes.isNotEmpty) SafrProductFamily.node,
-        if (leafs.isNotEmpty) SafrProductFamily.leaf,
-      ],
-      target: version,
-      queues: {
-        SafrProductFamily.board: const [deviceUpdateBoardKey],
-        if (nodes.isNotEmpty) SafrProductFamily.node: nodes,
-        if (leafs.isNotEmpty) SafrProductFamily.leaf: leafs,
-      },
-      reinstall: reinstall,
+      phases: queues.keys.toList(),
+      target: deviceUpdateTargetsText(targets),
+      targets: targets,
+      queues: queues,
       by: by,
     );
     return null;
+  }
+
+  /// [key] runs [target] or a newer version ("Atualizar tudo" never takes a
+  /// unit back).
+  bool _runsAtLeast(String key, String target) {
+    final runs = _versionOf(key);
+    return runs.isNotEmpty && compareFirmwareVersions(runs, target) >= 0;
   }
 
   String? _startBlocker() {
@@ -214,6 +232,7 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
     required bool all,
     required List<SafrProductFamily> phases,
     required String target,
+    Map<SafrProductFamily, String> targets = const {},
     required Map<SafrProductFamily, List<String>> queues,
     bool reinstall = false,
     String by = 'system',
@@ -225,12 +244,14 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
     _rolloutWait = null;
     final units = <String, DeviceUpdateUnit>{};
     for (final e in queues.entries) {
+      final goal = targets[e.key] ?? target;
       for (final key in e.value) {
         final runs = _versionOf(key);
+        final cmp =
+            runs.isEmpty ? -1 : compareFirmwareVersions(runs, goal);
         // Chosen on purpose ("Reinstalar"): offered again all the same.
-        final already = !reinstall &&
-            runs.isNotEmpty &&
-            compareFirmwareVersions(runs, target) == 0;
+        // "Atualizar tudo" also leaves a unit that runs a NEWER version.
+        final already = !reinstall && (cmp == 0 || (all && cmp > 0));
         units[key] = DeviceUpdateUnit(
           key: key,
           family: e.key,
@@ -239,7 +260,11 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
           // A unit already on the version is not offered it again (the
           // version rule may be relaxed on the bench: it would reinstall).
           state: already ? SafrOtaUnitState.done : SafrOtaUnitState.waiting,
-          note: already ? 'Já estava nesta versão.' : null,
+          note: !already
+              ? null
+              : cmp == 0
+                  ? 'Já estava nesta versão.'
+                  : 'Já roda uma versão mais nova (${vText(runs)}).',
         );
       }
     }
@@ -247,6 +272,7 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
       all: all,
       phases: phases,
       target: target,
+      targets: targets,
       queues: queues,
       units: units,
       stage: DeviceUpdateStage.pushing,

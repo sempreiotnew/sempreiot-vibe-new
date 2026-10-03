@@ -9,8 +9,8 @@ import 'ota_rollout_state.dart';
 /// Under a battery image's form (protocol §13.5): what to expect of a leaf.
 const otaLeafNote =
     'Um detector a bateria recebe a oferta quando acorda (a cada minuto), '
-    'baixa o firmware nessa hora se a bateria estiver acima de 60 % e faz o '
-    'autoteste na ativação seguinte. Conte uns 3 minutos por detector.';
+    'baixa o firmware nessa hora se a bateria estiver acima de 60 % e '
+    'reinicia 1 s depois para o autoteste. Conte uns 2 minutos por detector.';
 
 /// A leaf that was offered the image: it hears it on its next wake.
 const otaLeafOfferedText = 'Aguarda a próxima ativação';

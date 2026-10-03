@@ -22,6 +22,7 @@ import '../../application/ota_rollout_state.dart' show OtaPauseCause;
 import '../../application/ota_rollout_report.dart' show otaRolloutViewProvider;
 import '../../application/ota_rollout_words.dart' show otaFirmwareWord;
 import '../../application/topology_provider.dart';
+import '../../domain/ota/firmware_version.dart';
 import '../../domain/safr/safr_product.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
 import 'device_avatar.dart' show deviceDisplayName;
@@ -730,21 +731,10 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
     final runs = widget.all
         ? [_boardVersion(nodes)].where((v) => v.isNotEmpty).toList()
         : _runsOf(nodes, sel.keys);
+    // "Atualizar tudo": the newest image of each family, nothing to choose.
+    final plan = widget.all ? _allPlan(lib, nodes) : const <_FamilyPlan>[];
     if (widget.all) {
-      for (final v in lib.completeVersions) {
-        final kind = deviceUpdateVersionKind(v, runs);
-        options.add((
-          version: v,
-          file: 'placa · nós · detectores',
-          desc: kind == DeviceUpdateVersionKind.newer
-              ? '3 imagens assinadas'
-              : deviceUpdateNotNewerText(v, runs)
-                  .replaceFirst('eles rodam', 'a placa roda')
-                  .replaceFirst('ele roda', 'a placa roda')
-                  .replaceFirst('ele já roda', 'a placa já roda'),
-          kind: kind,
-        ));
-      }
+      // (no options: [plan] says what goes where)
     } else if (family != null) {
       for (final e in lib.of(family)) {
         final kind = deviceUpdateVersionKind(e.version, runs);
@@ -811,19 +801,20 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
           Text(who,
               style: TextStyle(color: context.textSecondary, fontSize: 13)),
           const SizedBox(height: 16),
-          _Label(widget.all ? 'VERSÃO NO TABLET' : 'FIRMWARE NO TABLET'),
+          _Label(widget.all
+              ? 'A VERSÃO MAIS NOVA DE CADA, NO TABLET'
+              : 'FIRMWARE NO TABLET'),
           const SizedBox(height: 8),
-          if (options.isEmpty)
+          if (widget.all) ...[
+            _Plan(plan: plan),
+            const SizedBox(height: 8),
+          ] else if (options.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Text(
-                widget.all
-                    ? 'O tablet não tem as três imagens (placa, nós e '
-                        'detectores) de uma mesma versão. Toque em "Procurar '
-                        'no tablet" e escolha os arquivos .bin.'
-                    : 'Nenhum ${otaFirmwareWord(family ?? SafrProductFamily.node)} '
-                        'no tablet. Toque em "Procurar no tablet" e escolha o '
-                        'arquivo .bin.',
+                'Nenhum ${otaFirmwareWord(family ?? SafrProductFamily.node)} '
+                'no tablet. Toque em "Procurar no tablet" e escolha o '
+                'arquivo .bin.',
                 style: TextStyle(color: context.textSecondary, fontSize: 13),
               ),
             ),
@@ -858,12 +849,6 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
               label: const Text('Procurar no tablet'),
             ),
           ),
-          if (widget.all && chosen != null) ...[
-            const SizedBox(height: 8),
-            const _Label('EM FASES, UMA DEPOIS DA OUTRA'),
-            const SizedBox(height: 8),
-            _Plan(nodes: nodes, target: chosen),
-          ],
           const SizedBox(height: 14),
           Container(
             padding: const EdgeInsets.all(12),
@@ -899,16 +884,27 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
                 onPressed: () => Navigator.pop(context),
                 child: const Text('Cancelar'),
               ),
-              FilledButton(
-                key: const ValueKey('update-confirm'),
-                onPressed: chosen == null || chosenKind == null || _starting
-                    ? null
-                    : () => _start(chosen, family, chosenKind, runs),
-                child: Text(chosen == null || chosenKind == null
-                    ? (widget.all ? 'Atualizar tudo' : 'Atualizar')
-                    : deviceUpdateConfirmText(chosenKind, chosen,
-                        all: widget.all)),
-              ),
+              if (widget.all)
+                FilledButton(
+                  key: const ValueKey('update-confirm'),
+                  onPressed: _starting ||
+                          plan.any((p) => p.image == null) ||
+                          plan.every((p) => p.toUpdate == 0)
+                      ? null
+                      : _startAll,
+                  child: const Text('Atualizar tudo'),
+                )
+              else
+                FilledButton(
+                  key: const ValueKey('update-confirm'),
+                  onPressed: chosen == null || chosenKind == null || _starting
+                      ? null
+                      : () => _start(chosen, family, chosenKind, runs),
+                  child: Text(chosen == null || chosenKind == null
+                      ? 'Atualizar'
+                      : deviceUpdateConfirmText(chosenKind, chosen,
+                          all: false)),
+                ),
             ],
           ),
         ],
@@ -954,23 +950,31 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
     final by = role.auditName;
     setState(() => _starting = true);
     final ctl = ref.read(deviceUpdateProvider.notifier);
-    final String? refused;
-    if (widget.all) {
-      refused = await ctl.startAll(version, reinstall: reinstall, by: by);
-    } else {
-      final sel = ref.read(deviceUpdateSelectionProvider);
-      final image = family == null
-          ? null
-          : ref.read(firmwareLibraryProvider).image(family, version);
-      refused = image == null
-          ? 'O firmware escolhido não está mais no tablet.'
-          : await ctl.start(
-              family: family!,
-              keys: sel.keys,
-              image: image,
-              reinstall: reinstall,
-              by: by);
-    }
+    final sel = ref.read(deviceUpdateSelectionProvider);
+    final image = family == null
+        ? null
+        : ref.read(firmwareLibraryProvider).image(family, version);
+    final refused = image == null
+        ? 'O firmware escolhido não está mais no tablet.'
+        : await ctl.start(
+            family: family!,
+            keys: sel.keys,
+            image: image,
+            reinstall: reinstall,
+            by: by);
+    _started(refused);
+  }
+
+  Future<void> _startAll() async {
+    final role = await ensureOtaPin(context, ref);
+    if (role == null || !mounted) return;
+    setState(() => _starting = true);
+    final refused =
+        await ref.read(deviceUpdateProvider.notifier).startAll(by: role.auditName);
+    _started(refused);
+  }
+
+  void _started(String? refused) {
     if (!mounted) return;
     setState(() => _starting = false);
     if (refused != null) {
@@ -1101,29 +1105,73 @@ class _VersionOption extends StatelessWidget {
   }
 }
 
-/// The three phases of "Atualizar tudo", in the sheet.
+/// One phase of "Atualizar tudo": the newest image the tablet has of the
+/// family, and how many of its units run something older.
+class _FamilyPlan {
+  const _FamilyPlan({
+    required this.family,
+    required this.image,
+    required this.toUpdate,
+    required this.total,
+    required this.runs,
+  });
+
+  final SafrProductFamily family;
+
+  /// Null: the tablet has no image of this family.
+  final FirmwareLibraryEntry? image;
+  final int toUpdate;
+  final int total;
+
+  /// What the units run now, in words ("roda v0.2.0", "rodam v0.1.0 a
+  /// v0.2.0"); empty when none said.
+  final String runs;
+}
+
+/// The phases of "Atualizar tudo": the board always, nodes and detectors
+/// when the tablet hears some — the same rule as
+/// DeviceUpdateController.startAll.
+List<_FamilyPlan> _allPlan(FirmwareLibraryState lib, List<TopologyNode> nodes) {
+  String versionOf(String key) => key == deviceUpdateBoardKey
+      ? _boardVersion(nodes)
+      : _versionOf(nodes, key);
+  return [
+    for (final f in const [
+      SafrProductFamily.board,
+      SafrProductFamily.node,
+      SafrProductFamily.leaf,
+    ])
+      if (f == SafrProductFamily.board ||
+          deviceUpdateOnline(nodes, f).isNotEmpty)
+        () {
+          final keys = deviceUpdateOnline(nodes, f);
+          final image = lib.newest(f);
+          final versions = [for (final k in keys) versionOf(k)];
+          final toUpdate = image == null
+              ? 0
+              : versions
+                  .where((v) =>
+                      v.isEmpty || compareFirmwareVersions(v, image.version) < 0)
+                  .length;
+          return _FamilyPlan(
+            family: f,
+            image: image,
+            toUpdate: toUpdate,
+            total: keys.length,
+            runs: deviceUpdateRunsText(versions),
+          );
+        }(),
+  ];
+}
+
+/// The phases of "Atualizar tudo", in the sheet: per family, the image that
+/// goes and what the units run now.
 class _Plan extends StatelessWidget {
-  const _Plan({required this.nodes, required this.target});
-  final List<TopologyNode> nodes;
-  final String target;
+  const _Plan({required this.plan});
+  final List<_FamilyPlan> plan;
 
   @override
   Widget build(BuildContext context) {
-    final n = deviceUpdateOnline(nodes, SafrProductFamily.node).length;
-    final l = deviceUpdateOnline(nodes, SafrProductFamily.leaf).length;
-    final board = _boardVersion(nodes);
-    final rows = [
-      (SafrProductFamily.board, 'Placa', board, '~1 min'),
-      if (n > 0)
-        (
-          SafrProductFamily.node,
-          'Nós ($n)',
-          '',
-          '~${((n * 40) / 60).ceil()} min'
-        ),
-      if (l > 0)
-        (SafrProductFamily.leaf, 'Detectores ($l)', '', '~${l * 3} min'),
-    ];
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
@@ -1131,7 +1179,7 @@ class _Plan extends StatelessWidget {
       ),
       child: Column(
         children: [
-          for (var i = 0; i < rows.length; i++)
+          for (var i = 0; i < plan.length; i++)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
@@ -1139,61 +1187,277 @@ class _Plan extends StatelessWidget {
                     ? null
                     : Border(top: BorderSide(color: context.borderColor)),
               ),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 12,
-                    backgroundColor: Colors.transparent,
-                    foregroundColor: AppColors.secondary,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border:
-                            Border.all(color: AppColors.secondary, width: 1.6),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text('${i + 1}',
-                          style: const TextStyle(
-                              fontSize: 12, fontWeight: FontWeight.w700)),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(rows[i].$2,
-                            style: TextStyle(
-                                color: context.textPrimary,
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w600)),
-                        Text(deviceUpdatePhaseHow(rows[i].$1),
-                            style: TextStyle(
-                                color: context.textSecondary, fontSize: 11.5)),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        rows[i].$3.isEmpty
-                            ? '→ ${vText(target)}'
-                            : '${vText(rows[i].$3)} → ${vText(target)}',
-                        style: const TextStyle(
-                            color: AppColors.secondary,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w600),
-                      ),
-                      Text(rows[i].$4,
-                          style: TextStyle(
-                              color: context.textSecondary, fontSize: 11)),
-                    ],
-                  ),
-                ],
+              child: _PlanRow(step: i + 1, p: plan[i]),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PlanRow extends StatelessWidget {
+  const _PlanRow({required this.step, required this.p});
+  final int step;
+  final _FamilyPlan p;
+
+  @override
+  Widget build(BuildContext context) {
+    final image = p.image;
+    final name = p.family == SafrProductFamily.board
+        ? 'Placa'
+        : '${deviceUpdatePhaseName(p.family)} (${p.total})';
+    final (status, color) = image == null
+        ? ('Falta no tablet', AppColors.error)
+        : p.toUpdate == 0
+            ? ('Já na versão mais nova', context.textSecondary)
+            : p.family == SafrProductFamily.board
+                ? ('Atualiza', AppColors.secondary)
+                : ('${p.toUpdate} de ${p.total} atualizam', AppColors.secondary);
+    return Row(
+      children: [
+        Container(
+          width: 24,
+          height: 24,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: AppColors.secondary, width: 1.6),
+          ),
+          child: Text('$step',
+              style: const TextStyle(
+                  color: AppColors.secondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700)),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(name,
+                  style: TextStyle(
+                      color: context.textPrimary,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600)),
+              Text(
+                  [
+                    if (p.runs.isNotEmpty) _capital(p.runs),
+                    deviceUpdatePhaseHow(p.family),
+                  ].join(' · '),
+                  style:
+                      TextStyle(color: context.textSecondary, fontSize: 11.5)),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              image == null ? '—' : '→ ${vText(image.version)}',
+              style: const TextStyle(
+                  color: AppColors.secondary,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600),
+            ),
+            Text(status, style: TextStyle(color: color, fontSize: 11)),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+// ── The firmware files on the tablet ───────────────────────────────────────
+
+/// The images the tablet keeps, by family, newest first — each one can be
+/// removed. Not while an update runs (it may be sending one of them).
+Future<void> showFirmwareLibrarySheet(BuildContext context) {
+  final size = MediaQuery.sizeOf(context);
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    constraints: BoxConstraints(maxWidth: 640, maxHeight: size.height * 0.92),
+    builder: (_) => const _LibrarySheet(),
+  );
+}
+
+class _LibrarySheet extends ConsumerWidget {
+  const _LibrarySheet();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final lib = ref.watch(firmwareLibraryProvider);
+    final busy = ref.watch(deviceUpdateProvider)?.running == true ||
+        ref.watch(otaPushViewProvider).running;
+    final families = [
+      for (final f in const [
+        SafrProductFamily.board,
+        SafrProductFamily.node,
+        SafrProductFamily.leaf,
+      ])
+        if (lib.of(f).isNotEmpty) f,
+    ];
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: context.borderColor,
+                borderRadius: BorderRadius.circular(2),
               ),
             ),
+          ),
+          const SizedBox(height: 14),
+          Text('Firmwares no tablet',
+              style: TextStyle(
+                  color: context.textPrimary,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w500)),
+          const SizedBox(height: 4),
+          Text(
+              busy
+                  ? 'Há uma atualização em andamento: remova depois que ela '
+                      'terminar.'
+                  : '"Atualizar tudo" envia o mais novo de cada tipo.',
+              style: TextStyle(color: context.textSecondary, fontSize: 13)),
+          const SizedBox(height: 16),
+          if (families.isEmpty)
+            Text('Nenhum firmware guardado.',
+                style: TextStyle(color: context.textSecondary, fontSize: 13)),
+          for (final f in families) ...[
+            _Label(_capital(otaFirmwareWord(f)).toUpperCase()),
+            const SizedBox(height: 8),
+            for (final e in lib.of(f)) ...[
+              _LibraryRow(
+                entry: e,
+                newest: identical(e, lib.newest(f)),
+                onRemove: busy ? null : () => _remove(context, ref, e),
+              ),
+              const SizedBox(height: 8),
+            ],
+            const SizedBox(height: 8),
+          ],
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: lib.busy
+                  ? null
+                  : () async {
+                      final said = await ref
+                          .read(firmwareLibraryProvider.notifier)
+                          .importFromTablet();
+                      if (said != null && context.mounted) {
+                        ScaffoldMessenger.of(context)
+                            .showSnackBar(SnackBar(content: Text(said)));
+                      }
+                    },
+              icon: const Icon(Icons.folder_open_rounded, size: 18),
+              label: const Text('Procurar no tablet'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _remove(
+      BuildContext context, WidgetRef ref, FirmwareLibraryEntry e) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Remover ${vText(e.version)}?'),
+        content: Text('O ${otaFirmwareWord(e.family)} ${vText(e.version)} '
+            '(${e.fileName}) sai do tablet. Os dispositivos não mudam; para '
+            'usá-lo de novo, escolha o arquivo outra vez.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar')),
+          FilledButton(
+              key: const ValueKey('firmware-remove-confirm'),
+              style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Remover')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await ref.read(firmwareLibraryProvider.notifier).remove(e);
+  }
+}
+
+class _LibraryRow extends StatelessWidget {
+  const _LibraryRow({
+    required this.entry,
+    required this.newest,
+    required this.onRemove,
+  });
+
+  final FirmwareLibraryEntry entry;
+  final bool newest;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 6, 4, 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: context.borderColor),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 2,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(vText(entry.version),
+                    style: TextStyle(
+                        color: context.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600)),
+                Text('${entry.fileName} · ${_mb(entry.size)}',
+                    style: TextStyle(
+                        color: context.textSecondary,
+                        fontSize: 12,
+                        fontFamily: 'monospace')),
+                if (newest)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: AppColors.success.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text('MAIS NOVO',
+                        style: TextStyle(
+                            color: AppColors.success,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.6)),
+                  ),
+              ],
+            ),
+          ),
+          IconButton(
+            key: ValueKey('firmware-remove-${entry.fileName}'),
+            tooltip: 'Remover do tablet',
+            onPressed: onRemove,
+            icon: Icon(Icons.delete_outline_rounded,
+                color: onRemove == null
+                    ? context.textSecondary.withValues(alpha: 0.4)
+                    : AppColors.error),
+          ),
         ],
       ),
     );
@@ -1249,7 +1513,7 @@ class _UnitSheet extends ConsumerWidget {
             Text(
               u.state == SafrOtaUnitState.done
                   ? '${vText(u.versionBefore.isEmpty ? '?' : u.versionBefore)} → ${vText(u.version)}'
-                  : 'Roda ${vText(u.version.isEmpty ? '?' : u.version)} · alvo ${vText(run.target)}',
+                  : 'Roda ${vText(u.version.isEmpty ? '?' : u.version)} · alvo ${vText(run.targetOf(u.family))}',
               style: TextStyle(color: context.textSecondary, fontSize: 13),
             ),
             const SizedBox(height: 10),
