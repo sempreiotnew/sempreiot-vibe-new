@@ -982,8 +982,16 @@ provisioning, a button press, and the COMM_FAULT chirp (§12.8).
   tablet.
 - **After a bind:** `NAME_ANNOUNCE` (only once ever after provisioning, RTC
   flag; §7.11), `TOPOLOGY` (§12.7), then the first `HEARTBEAT`.
+- **Re-probe at once** *(2026-10-03)*: when a unicast to the parent gets **no
+  MAC ACK** (two sends — the parent is off or out of reach), the leaf probes
+  on that same wake (once per wake), binds to the best answer and sends the
+  same frame (same `MSG_ID`) to it. A failed probe keeps the old parent. Before
+  this, a TEST press with the parent off went red and its event waited ≈ 2 min
+  in the outbox with other nodes in reach. A parent that answers at the MAC but
+  not with its ACK is alive and is kept (the rule below).
 - **Re-probe:** on the **2nd consecutive miss** (so a dead parent is replaced at
-  ≈ 120 s, before the board's 180 s missing rule); on the next wake after an ACK
+  ≈ 120 s, before the board's 180 s missing rule) — the outbox and the
+  heartbeat then go to the new parent on that same wake; on the next wake after an ACK
   with `NO_PATH`; and once every **24 h** to pick up a better parent that
   appeared later.
 - **Back-off while unbound:** offers were heard but all `LAYER 0xFF` (nodes

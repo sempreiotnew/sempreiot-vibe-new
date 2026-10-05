@@ -628,15 +628,56 @@ static bool discover(void)
 
 /* ---- 5. heartbeat cycle ------------------------------------------------------ */
 
+/* The parent was replaced on this wake already: one search per wake. */
+static bool s_rebound;
+
+/* The parent did not take a frame at the radio (no MAC ACK, twice): it is off
+ * or out of reach. Look for another one NOW — 200 ms — instead of after two
+ * missed wakes (§12.3): a TEST press went red and its event waited ~2 min
+ * in the outbox with other nodes in reach. A failed search keeps the old
+ * parent (it may be back next wake). True when bound after the search — a
+ * new parent, or the same one answering again (a radio glitch): either way
+ * the frame is worth sending once more. */
+static bool rebind_now(void)
+{
+    if (s_rebound || s_probing || s_rtc.bind != BIND_BOUND) return false;
+    s_rebound = true;
+    uint8_t old[6];
+    memcpy(old, s_rtc.parent_mac, 6);
+    char m[SIOT_MAC_STR_LEN];
+    ESP_LOGW(TAG, "parent %s does not answer at the radio: looking for another one now", siot_mac_to_str(old, m));
+    if (!discover()) {
+        s_rtc.bind = BIND_BOUND;
+        ESP_LOGW(TAG, "no other parent in reach: keeping %s", m);
+        return false;
+    }
+    if (siot_mac_eq(s_rtc.parent_mac, old)) ESP_LOGW(TAG, "%s answered the search after all: sending again", m);
+    return true;
+}
+
+static void build_heartbeat(uint8_t p[20]);
+
 /* Sends one frame with F_ACK_REQ and waits ≤ wait_ms for the parent's ACK.
  * Returns true on the hop ACK (§12.6 custody). */
 static bool send_acked(uint8_t msg_type, const uint8_t *payload, size_t len, uint32_t wait_ms, uint8_t extra_flags)
 {
+    uint8_t hb[20];
     s_ack_wanted = siot_safr_next_msg_id();
     s_ack_hop = s_ack_central = false;
     siot_safr_send(SAFR_BCAST_MAC, msg_type, s_ack_wanted, SAFR_F_ACK_REQ | extra_flags, payload, len);
     if (!s_last_tx_ok) { /* no MAC ACK: one retry (§12.2) */
         siot_safr_send(SAFR_BCAST_MAC, msg_type, s_ack_wanted, SAFR_F_ACK_REQ | extra_flags, payload, len);
+        /* Still nothing: the parent is gone — a new one, and the same frame
+         * (same MSG_ID) to it on this wake. A HEARTBEAT names the parent,
+         * link and level: rebuilt, or it would re-home the leaf under the
+         * dead parent on the board and the tablet right after the TOPOLOGY. */
+        if (!s_last_tx_ok && rebind_now()) {
+            if (msg_type == SAFR_MSG_HEARTBEAT && len == sizeof(hb)) {
+                build_heartbeat(hb);
+                payload = hb;
+            }
+            siot_safr_send(SAFR_BCAST_MAC, msg_type, s_ack_wanted, SAFR_F_ACK_REQ | extra_flags, payload, len);
+        }
         if (!s_last_tx_ok) return false;
     }
     const int64_t until = now_ms() + wait_ms;
@@ -920,6 +961,7 @@ static void one_wake(esp_sleep_wakeup_cause_t cause)
     const int64_t wake_started_ms = now_ms();
     s_rtc.wake_count++;
     s_rtc.wakes_since_probe++;
+    s_rebound = false;
     ESP_LOGW(TAG, "wake #%lu cause=%s bind=%s misses=%u outbox=%u ch=%u", (unsigned long)s_rtc.wake_count,
              cause_name(cause), s_rtc.bind == BIND_BOUND ? "bound" : s_rtc.bind == BIND_COMM_FAULT ? "COMM_FAULT" : "none",
              s_rtc.misses, siot_leaf_outbox_count(&s_rtc.outbox), s_rtc.channel);
@@ -959,7 +1001,8 @@ static void one_wake(esp_sleep_wakeup_cause_t cause)
         }
         if (!heard && siot_leaf_probe_after_misses(s_rtc.misses)) {
             ESP_LOGW(TAG, "%u misses → looking for another parent", s_rtc.misses);
-            if (discover() && selftest) heard = heartbeat_cycle();
+            /* bound again: the outbox and this wake's heartbeat go now, not a minute later */
+            if (discover()) heard = heartbeat_cycle();
         }
     } else {
         if (ota_wants_parent || siot_leaf_probe_due_unbound(s_rtc.wakes_since_probe, s_rtc.heard_any)) {

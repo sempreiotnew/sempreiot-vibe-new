@@ -76,7 +76,10 @@ candidates, `HEARTBEAT`. Re-probe on the 2nd consecutive miss (≈ 120 s, before
 on the next wake after `NO_PATH`, and once a day. Unbound back-off: every wake while nodes are heard but
 none online (board not there yet), every 5 min when nobody answers.
 
-**Losing the parent** (spec §12.3, §12.6): miss → miss → probe → new parent. Nobody: COMM_FAULT, one red
+**Losing the parent** (spec §12.3, §12.6): a parent that is **off** (no MAC ACK to two sends) is
+replaced **on that wake**: probe, bind to the best answer, the same frame again to it (2026-10-03 — a TEST
+press then goes blue → cyan through the new parent instead of red). A parent that answers at the radio but
+not with its ACK: miss → miss → probe → new parent, with the outbox and heartbeat sent on that wake. Nobody: COMM_FAULT, one red
 blink + trouble chirp per wake, events go to the outbox, the board shows the leaf missing at 180 s.
 Parent up but board gone: the ACK says `NO_PATH`; the leaf keeps the parent (it is still the best relay),
 probes next wake, and its events sit in the parent's custody until the board is back.
@@ -184,7 +187,7 @@ and `siot_coordinator` forward any authenticated frame regardless of link (brief
 | Wake budget / ACK wait / probe listen | 500 ms / 100 ms / ≈ 200 ms |
 | Post-provisioning verdict | ≤ 30 s awake |
 | Bind preference / weak-link flag | link ≥ −85 dBm / < −85 flagged, < −75 reported |
-| Re-probe | 2nd miss · after `NO_PATH` · every 24 h |
+| Re-probe | at once when the parent gives no MAC ACK · 2nd miss · after `NO_PATH` · every 24 h |
 | Unbound back-off | every wake (nodes heard) · every 5 min (nobody) |
 | Mailbox | 4 per leaf, same-`CMD` replace, ≤ 4 drained per wake, expiry 180 s |
 | Custody queue (parent) | 32 frames, ALARM never dropped |
