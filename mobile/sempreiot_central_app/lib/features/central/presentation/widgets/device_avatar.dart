@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +10,8 @@ import '../../application/device_led_provider.dart';
 import '../../application/topology_provider.dart';
 import '../../domain/led/led_language.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
+import 'network_3d/device_model_painter.dart';
+import 'network_3d/device_model_sprites.dart';
 
 /// Opacity of a device that has been silent for longer than
 /// [topologyStaleAfter]: still shown, visibly faded.
@@ -46,8 +50,8 @@ String _deviceStateLabel(TopologyNode node) => node.online
 /// A device drawn as a circle: double ring, role icon (or the animated moon
 /// of a sleeping leaf), status dot, and the ALARME / ROOT / CANDIDATO badges.
 /// One widget for the Rede map and the Dispositivos screen, so a device
-/// looks the same everywhere — and a product photo, when there is one, only
-/// has to replace the inner icon here.
+/// looks the same everywhere. A unit whose product has a 3D model is drawn
+/// as that model on Dispositivos and Dispositivo ([DeviceModelAvatar]).
 class DeviceAvatar extends StatelessWidget {
   const DeviceAvatar({
     super.key,
@@ -187,6 +191,283 @@ class DeviceAvatar extends StatelessWidget {
                   ),
           ),
       ],
+    );
+  }
+}
+
+/// Opacity of a unit's LED dot when the LED is on the far side of its 3D
+/// model: still clearly showing its status, a little dimmed for depth.
+const deviceLedAwayOpacity = 0.75;
+
+/// A device drawn as its product's 3D model (system reference §2.1.1 —
+/// the same Blender renders as Rede 3D), as rendered (no outline), with
+/// everything [DeviceAvatar] shows: the LED on the model's LED (always
+/// visible), the status dot, the sleeping moon and the ALARME / ROOT /
+/// CANDIDATO badges. In ALARME a siren lights up red and rings
+/// ([DeviceModelPainter]). A unit whose product has no model — or while its
+/// model loads — is the [DeviceAvatar] circle, same size, so a list never
+/// jumps.
+///
+/// [size] is the layout box (the circle's diameter); the model's largest
+/// side fills it. [spin]: it turns on itself, one turn every [spinPeriod]
+/// (Dispositivos); still otherwise, three-quarter from the front
+/// (Dispositivo). [interactive]: a horizontal drag turns it, a double tap
+/// puts it back. Spinning stops when the system asks for reduced motion.
+class DeviceModelAvatar extends StatefulWidget {
+  const DeviceModelAvatar({
+    super.key,
+    required this.node,
+    this.isRoot = false,
+    this.isCandidate = false,
+    this.size = 46,
+    this.spin = false,
+    this.interactive = false,
+  });
+
+  final TopologyNode node;
+  final bool isRoot;
+  final bool isCandidate;
+  final double size;
+  final bool spin;
+  final bool interactive;
+
+  /// The resting view: turned 30° to show the unit's right side, seen from
+  /// the spin tilt (15° above) — how it reads on a wall.
+  static const restYaw = 30 * math.pi / 180;
+  static const spinPeriod = Duration(seconds: 7);
+
+  @override
+  State<DeviceModelAvatar> createState() => _DeviceModelAvatarState();
+}
+
+class _DeviceModelAvatarState extends State<DeviceModelAvatar>
+    with SingleTickerProviderStateMixin {
+  double _yaw = DeviceModelAvatar.restYaw;
+  DeviceModelSpec? _spec;
+  Future<DeviceModelSprites>? _future;
+  DeviceModelSprites? _sprites;
+
+  /// Seconds since the clock started; drives the spin and the alarm.
+  final _clock = ValueNotifier<double>(0);
+  late final Ticker _ticker = createTicker(
+      (elapsed) => _clock.value = elapsed.inMicroseconds / 1e6);
+
+  void _resolve() {
+    final spec = deviceModelFor(widget.node.productCode,
+        isLeaf: widget.node.isLeaf);
+    if (spec?.slug == _spec?.slug && (_future != null || spec == null)) {
+      return;
+    }
+    _spec = spec;
+    _sprites = null;
+    _future = spec == null ? null : DeviceModelSprites.load(spec);
+    _future?.then((s) {
+      if (!mounted || _spec?.slug != s.spec.slug) return;
+      setState(() => _sprites = s);
+    }, onError: (_) {});
+  }
+
+  bool get _reduceMotion =>
+      MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+
+  /// The clock runs only while something moves: a spinning model, or an
+  /// alarm on a model that shows one.
+  void _syncTicker() {
+    final s = _sprites;
+    final alarmFx = s != null &&
+        widget.node.alarmLatched &&
+        (s.hasAlarmLights || s.spec.alarmSound);
+    final run = s != null && ((widget.spin && !_reduceMotion) || alarmFx);
+    if (run && !_ticker.isActive) {
+      _ticker.start();
+    } else if (!run && _ticker.isActive) {
+      _ticker.stop();
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _resolve();
+  }
+
+  @override
+  void didUpdateWidget(DeviceModelAvatar old) {
+    super.didUpdateWidget(old);
+    _resolve();
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    _clock.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sprites = _sprites;
+    _syncTicker();
+    if (sprites == null) {
+      return DeviceAvatar(
+        node: widget.node,
+        isRoot: widget.isRoot,
+        isCandidate: widget.isCandidate,
+        diameter: widget.size,
+      );
+    }
+    final model = ValueListenableBuilder<double>(
+      valueListenable: _clock,
+      builder: (context, t, _) => _model(context, sprites, t),
+    );
+    if (!widget.interactive) return model;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragUpdate: (d) =>
+          setState(() => _yaw -= d.delta.dx * 0.018),
+      onDoubleTap: () => setState(() => _yaw = DeviceModelAvatar.restYaw),
+      child: model,
+    );
+  }
+
+  Widget _model(BuildContext context, DeviceModelSprites sprites, double t) {
+    final node = widget.node;
+    final size = widget.size;
+    final k = size / 46;
+    final spinning = widget.spin && !_reduceMotion;
+    final yaw = spinning
+        ? DeviceModelAvatar.restYaw +
+            t * 2 * math.pi * 1e6 / DeviceModelAvatar.spinPeriod.inMicroseconds
+        : _yaw;
+    final pose = sprites.spinPose(yaw);
+    final box = size / sprites.frames.bodyFraction;
+    final dst = Rect.fromCenter(
+        center: Offset(size / 2, size / 2), width: box, height: box);
+    final led = pose.led;
+    final alarm = node.alarmLatched ? (_reduceMotion ? 0.06 : t) : null;
+    final statusColor = !node.online
+        ? AppColors.error
+        : node.sleeping
+            ? context.textSecondary
+            : AppColors.success;
+
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: CustomPaint(
+              painter: DeviceModelPainter(
+                pose: pose,
+                dst: dst,
+                bodyFraction: sprites.frames.bodyFraction,
+                online: node.online,
+                isDark: context.isDark,
+                alarm: alarm,
+                sound: sprites.spec.alarmSound,
+              ),
+            ),
+          ),
+          // The unit's LED where it is on the model — always shown, a little
+          // dimmed on the far side. No LED marker: top centre, as on the
+          // circle.
+          Positioned(
+            left: led == null
+                ? (size - 10 * k) / 2
+                : dst.left + led.at.dx * dst.width - 5 * k,
+            top: led == null
+                ? -3 * k
+                : dst.top + led.at.dy * dst.height - 5 * k,
+            child: Opacity(
+              opacity: led == null || led.visible ? 1 : deviceLedAwayOpacity,
+              child: DeviceLedDot(node: node, size: 10 * k),
+            ),
+          ),
+          Positioned(
+            right: -1,
+            top: -1,
+            child: Container(
+              width: 12 * k,
+              height: 12 * k,
+              decoration: BoxDecoration(
+                color: statusColor,
+                shape: BoxShape.circle,
+                border: Border.all(color: context.bgColor, width: 1.8),
+                boxShadow: node.online && !node.sleeping
+                    ? [
+                        BoxShadow(
+                          color: statusColor.withValues(alpha: 0.6),
+                          blurRadius: 5,
+                        ),
+                      ]
+                    : null,
+              ),
+            ),
+          ),
+          if (node.sleeping)
+            Positioned(
+              left: -2,
+              top: -2,
+              width: 20 * k,
+              height: 20 * k,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: context.surfaceColor,
+                  border: Border.all(color: context.borderColor, width: 0.8),
+                ),
+                child: DeviceSleepingMoon(
+                  color: context.textPrimary,
+                  zColor: context.textSecondary,
+                ),
+              ),
+            ),
+          if (node.alarmLatched)
+            const Positioned(
+              right: -10,
+              bottom: -7,
+              child: _Badge(
+                label: 'ALARME',
+                background: AppColors.error,
+                foreground: Colors.white,
+                glow: AppColors.error,
+              ),
+            ),
+          if (widget.isRoot || widget.isCandidate)
+            Positioned(
+              left: widget.isCandidate ? -18 : -8,
+              bottom: -7,
+              child: widget.isRoot
+                  ? const _Badge(
+                      label: 'ROOT',
+                      background: AppColors.warning,
+                      foreground: Colors.black,
+                      glow: AppColors.warning,
+                    )
+                  : _Badge(
+                      label: 'CANDIDATO',
+                      background: AppColors.warning.withValues(alpha: 0.18),
+                      foreground: AppColors.warning,
+                      border: AppColors.warning.withValues(alpha: 0.7),
+                    ),
+            ),
+          if (widget.interactive && !node.alarmLatched)
+            Positioned(
+              right: -4 * k,
+              bottom: -4 * k,
+              child: Tooltip(
+                message: 'Arraste para girar',
+                child: Icon(
+                  Icons.threesixty_rounded,
+                  size: 13 * k,
+                  color: context.textSecondary.withValues(alpha: 0.7),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

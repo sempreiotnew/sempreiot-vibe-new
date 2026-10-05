@@ -49,6 +49,22 @@ The LED drawn on a device (avatar, Dispositivo screen, Rede / Rede 3D, packets i
 
 ---
 
+# 🚨 3D device models (Rede 3D) come from the factory
+
+A product's 3D model is a `.glb` in `assets/models/`, declared in `tool/blender/models.json` by its
+model string from the product catalogue (system reference §2.1). `tool/blender/factory.sh` (or the
+Blender add-on's **Export to app**) renders the sprites and **generates** `device_models.g.dart`, the
+`pubspec.yaml` block between the `device-models` markers and system reference §2.1.1 — never edit those
+by hand, never add a model-specific class: `Model3dChip` (Rede 3D), `DeviceModelAvatar` (Dispositivos,
+Dispositivo) and `deviceModelFor()` draw every model.
+A new product goes into §2.1 and `SafrProduct.catalogue` first. Run
+`flutter test test/central/device_models_test.dart` after the factory. See `tool/blender/README.md`.
+The model is drawn as rendered (no outline); the unit's LED is never part of the render — it is
+`DeviceLedDot` on the model's `led` marker, always visible. A siren's red lights / sound waves in
+ALARME are its sounder and strobe (`models.json` `alarm`), never its LED.
+
+---
+
 # 🧠 General Principles
 
 - Prefer simplicity over overengineering

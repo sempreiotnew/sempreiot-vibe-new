@@ -364,11 +364,15 @@ class _DeviceCard extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(10, 16, 10, 12),
               child: Column(
                 children: [
-                  DeviceAvatar(
+                  // Its product's 3D model, turning on itself, when it has
+                  // one (system reference §2.1.1); the circle otherwise.
+                  // Tapping opens Dispositivo, where it stands still.
+                  DeviceModelAvatar(
                     node: node,
                     isRoot: isRoot,
                     isCandidate: isCandidate,
-                    diameter: 64,
+                    size: 64,
+                    spin: true,
                   ),
                   const SizedBox(height: 14),
                   Text(

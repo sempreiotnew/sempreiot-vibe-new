@@ -8,7 +8,8 @@ import '../../../application/topology_provider.dart';
 import '../../../domain/safr/safr_v2_payloads.dart';
 import '../device_avatar.dart';
 import '../ota_rede_widgets.dart';
-import 'detector_sprites.dart';
+import 'device_model_painter.dart';
+import 'device_model_sprites.dart';
 
 /// Where the sphere's centre sits inside the chip (the anchor the graph
 /// places on the device's point) — same as the flat 2D chips.
@@ -347,47 +348,54 @@ class Central3dChip extends StatelessWidget {
   }
 }
 
-/// A sensor (leaf) as the real smoke detector model: the atlas frame for
-/// the camera's turn and tilt, its rim tinted with the status colour, the
-/// LED lens on the model's LED, and the same status dot, sleeping moon,
-/// ALARME badge and name as every chip.
-class Detector3dChip extends StatelessWidget {
-  const Detector3dChip({
+/// A unit drawn as its product's 3D model (system reference §2.1.1): the
+/// atlas frame for the camera's turn and tilt, as rendered (no outline), the
+/// LED lens on the model's LED, the siren's lights and sound waves in
+/// ALARME, and the same status dot, sleeping moon, ALARME / ROOT / CANDIDATO
+/// badges, name and firmware line as every chip.
+class Model3dChip extends StatelessWidget {
+  const Model3dChip({
     super.key,
     required this.node,
     required this.sprites,
     required this.yaw,
     required this.pitch,
+    this.isRoot = false,
+    this.isCandidate = false,
     this.pending,
+    this.activity,
   });
 
   final TopologyNode node;
-  final DetectorSprites sprites;
+  final DeviceModelSprites sprites;
   final double yaw, pitch;
+  final bool isRoot;
+  final bool isCandidate;
 
   /// The version of an image of this unit's family that is stored on the
   /// board and was not delivered; null = none.
   final String? pending;
 
-  static const width = 104.0;
+  /// A rollout has this unit in it (see [Device3dChip.activity]).
+  final OtaUnitActivity? activity;
 
-  /// On-screen diameter of the detector at chip scale 1 (the flat avatar
-  /// is 46; the model reads better a touch larger).
-  static const _body = 52.0;
+  static const width = 104.0;
 
   @override
   Widget build(BuildContext context) {
-    final frame = sprites.frameFor(yaw, pitch);
-    const box = _body / DetectorSprites.bodyFraction;
+    final frames = sprites.frames;
+    final pose = sprites.mapPose(yaw, pitch);
+    final body = sprites.spec.displaySize;
+    final box = body / frames.bodyFraction;
     const cx = width / 2, cy = device3dAnchorY;
     final dst =
         Rect.fromCenter(center: const Offset(cx, cy), width: box, height: box);
-    final led = sprites.leds[frame];
-    final rim = node.alarmLatched
-        ? AppColors.error
-        : node.online
-            ? AppColors.secondary
-            : AppColors.error;
+    final led = pose.led;
+    // The screen redraws every frame: in ALARME the siren's lights and sound
+    // waves run off the clock.
+    final alarm = node.alarmLatched
+        ? DateTime.now().microsecondsSinceEpoch / 1e6
+        : null;
     final statusColor = !node.online
         ? AppColors.error
         : node.sleeping
@@ -407,28 +415,39 @@ class Detector3dChip extends StatelessWidget {
               children: [
                 Positioned.fill(
                   child: CustomPaint(
-                    painter: _DetectorPainter(
-                      sprites: sprites,
-                      frame: frame,
+                    painter: DeviceModelPainter(
+                      pose: pose,
                       dst: dst,
-                      rim: rim,
+                      bodyFraction: frames.bodyFraction,
                       online: node.online,
                       isDark: context.isDark,
+                      alarm: alarm,
+                      sound: sprites.spec.alarmSound,
                     ),
                   ),
                 ),
-                // The LED lens on the model's LED; dimmed when it faces away.
+                if (activity?.updating == true)
+                  Positioned(
+                    left: cx - OtaProgressRing.sizeFor(body) / 2,
+                    top: cy - OtaProgressRing.sizeFor(body) / 2,
+                    child: OtaUnitRing(activity: activity!, diameter: body),
+                  ),
+                // The LED lens on the model's LED — always shown, a little
+                // dimmed when it faces away. A model without an LED marker
+                // gets it on top.
                 Positioned(
-                  left: dst.left + led.at.dx * dst.width - 5,
-                  top: dst.top + led.at.dy * dst.height - 5,
+                  left: led == null ? cx - 5 : dst.left + led.at.dx * dst.width - 5,
+                  top: led == null
+                      ? cy - body * 0.5 - 3
+                      : dst.top + led.at.dy * dst.height - 5,
                   child: Opacity(
-                    opacity: led.visible ? 1 : 0.35,
+                    opacity: led == null || led.visible ? 1 : deviceLedAwayOpacity,
                     child: DeviceLedDot(node: node, size: 10),
                   ),
                 ),
                 Positioned(
-                  left: cx + _body * 0.34,
-                  top: cy - _body * 0.48,
+                  left: cx + body * 0.34,
+                  top: cy - body * 0.48,
                   child: Container(
                     width: 12,
                     height: 12,
@@ -449,8 +468,8 @@ class Detector3dChip extends StatelessWidget {
                 ),
                 if (node.sleeping)
                   Positioned(
-                    left: cx - _body * 0.5 - 4,
-                    top: cy - _body * 0.5 - 4,
+                    left: cx - body * 0.5 - 4,
+                    top: cy - body * 0.5 - 4,
                     width: 20,
                     height: 20,
                     child: DecoratedBox(
@@ -467,15 +486,34 @@ class Detector3dChip extends StatelessWidget {
                     ),
                   ),
                 if (node.alarmLatched)
-                  const Positioned(
+                  Positioned(
                     left: cx + 6,
-                    top: cy + 20,
-                    child: _Badge(
+                    top: cy + body * 0.38,
+                    child: const _Badge(
                       label: 'ALARME',
                       background: AppColors.error,
                       foreground: Colors.white,
                       glow: AppColors.error,
                     ),
+                  ),
+                if (isRoot || isCandidate)
+                  Positioned(
+                    right: cx + body * 0.5 - (isCandidate ? 4 : 14),
+                    top: cy + body * 0.38,
+                    child: isRoot
+                        ? const _Badge(
+                            label: 'ROOT',
+                            background: AppColors.warning,
+                            foreground: Colors.black,
+                            glow: AppColors.warning,
+                          )
+                        : _Badge(
+                            label: 'CANDIDATO',
+                            background:
+                                AppColors.warning.withValues(alpha: 0.18),
+                            foreground: AppColors.warning,
+                            border: AppColors.warning.withValues(alpha: 0.7),
+                          ),
                   ),
               ],
             ),
@@ -494,78 +532,15 @@ class Detector3dChip extends StatelessWidget {
             ),
           ),
           // The firmware it runs, and whether another waits on the board.
-          FirmwareTag(version: node.fwVersion, pending: pending),
+          // In a rollout: where the unit is in it.
+          if (activity != null)
+            OtaUnitTag(activity: activity!, version: node.fwVersion)
+          else
+            FirmwareTag(version: node.fwVersion, pending: pending),
         ],
       ),
     );
   }
-}
-
-class _DetectorPainter extends CustomPainter {
-  _DetectorPainter({
-    required this.sprites,
-    required this.frame,
-    required this.dst,
-    required this.rim,
-    required this.online,
-    required this.isDark,
-  });
-
-  final DetectorSprites sprites;
-  final int frame;
-  final Rect dst;
-  final Color rim;
-  final bool online, isDark;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final src = sprites.source(frame);
-    final body =
-        dst.deflate(dst.width * (1 - DetectorSprites.bodyFraction) / 2);
-    // Status glow and contact shadow under the model.
-    canvas.drawOval(
-      body.inflate(2),
-      Paint()
-        ..color = rim.withValues(alpha: online ? 0.28 : 0.14)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 9),
-    );
-    canvas.drawOval(
-      Rect.fromCenter(
-          center: body.bottomCenter,
-          width: body.width * 0.8,
-          height: body.height * 0.18),
-      Paint()
-        ..color = Colors.black.withValues(alpha: isDark ? 0.5 : 0.2)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
-    );
-    // The model; offline = a little faded, as the flat chips.
-    canvas.drawImageRect(
-      sprites.atlas,
-      src,
-      dst,
-      Paint()
-        ..filterQuality = FilterQuality.medium
-        ..color = Colors.white.withValues(alpha: online ? 1 : 0.7),
-    );
-    // Its rim in the status colour.
-    canvas.drawImageRect(
-      sprites.rim,
-      src,
-      dst,
-      Paint()
-        ..filterQuality = FilterQuality.medium
-        ..colorFilter = ColorFilter.mode(
-            rim.withValues(alpha: online ? 0.95 : 0.8), BlendMode.srcIn),
-    );
-  }
-
-  @override
-  bool shouldRepaint(_DetectorPainter o) =>
-      o.frame != frame ||
-      o.dst != dst ||
-      o.rim != rim ||
-      o.online != online ||
-      o.isDark != isDark;
 }
 
 /// A lit sphere: contact shadow, status glow, body shaded from [light],

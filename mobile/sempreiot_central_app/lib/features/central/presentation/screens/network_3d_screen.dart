@@ -13,7 +13,8 @@ import '../../application/safr_traffic_provider.dart';
 import '../../application/topology_provider.dart';
 import '../widgets/device_avatar.dart';
 import '../widgets/device_menu.dart';
-import '../widgets/network_3d/detector_sprites.dart';
+import '../widgets/network_3d/device_model_sprites.dart';
+import '../widgets/network_3d/device_models.g.dart';
 import '../widgets/network_3d/device_3d_chip.dart';
 import '../widgets/network_3d/force_graph_3d.dart';
 import '../widgets/network_3d/network_3d_math.dart';
@@ -67,8 +68,9 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
 
   Map<String, TopologyNode> _nodes = const {};
 
-  /// The smoke detector model's sprites (loaded once; spheres until then).
-  DetectorSprites? _sprites;
+  /// The products' 3D models by slug (system reference §2.1.1), loaded
+  /// once; a unit is a sphere until its model is in.
+  final _models = <String, DeviceModelSprites>{};
   TopologyNode? _board;
   String? _graphKey;
   final _packets = <Packet3d>[];
@@ -94,9 +96,11 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
           ..addListener(_onFrame)
           ..repeat();
     _trafficSub = ref.read(safrTrafficProvider).stream.listen(_onTraffic);
-    DetectorSprites.load().then((s) {
-      if (mounted) setState(() => _sprites = s);
-    });
+    for (final spec in deviceModelSpecs) {
+      DeviceModelSprites.load(spec).then((s) {
+        if (mounted) setState(() => _models[spec.slug] = s);
+      });
+    }
   }
 
   @override
@@ -608,19 +612,25 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
     // Devices as spheres; the light is fixed in the world, so turning the
     // graph moves their highlight.
     final light = sphereLightFor(_camera.yaw, _camera.pitch);
-    final sprites = _sprites;
+    // A unit is drawn as its product's model (or its family's fallback
+    // model) once that is loaded; a sphere otherwise.
+    final spec = isCentral
+        ? null
+        : deviceModelFor(node!.productCode, isLeaf: node.isLeaf);
+    final sprites = spec == null ? null : _models[spec.slug];
     final child = isCentral
         ? Central3dChip(light: light, board: _board)
-        // Sensors are smoke detectors: the Blender model once it is loaded.
-        : node!.isLeaf && sprites != null
-            ? Detector3dChip(
-                node: node,
+        : sprites != null
+            ? Model3dChip(
+                node: node!,
                 sprites: sprites,
                 yaw: _camera.yaw,
                 pitch: _camera.pitch,
+                isRoot: node.online && node.mac == election.rootMac,
+                isCandidate: candidates.contains(node.mac),
               )
             : Device3dChip(
-                node: node,
+                node: node!,
                 light: light,
                 isRoot: node.online && node.mac == election.rootMac,
                 isCandidate: candidates.contains(node.mac),

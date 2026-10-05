@@ -1,0 +1,75 @@
+{
+  "_comment": [
+    "Device 3D models (Rede 3D, Dispositivos, Dispositivo). One entry per .glb in assets/models/.",
+    "products: model strings from the product catalogue (docs/sempreiot-system-reference.md §2.1).",
+    "familyFallback: also used for units of that family whose product has no model of its own (or is not reported).",
+    "markers.led: where the app draws the unit's LED. alarm.lights: objects that light up red in ALARME; alarm.sound: sound waves.",
+    "Coordinates are glTF (metres, Y up, Z toward the viewer = the unit's front). Edit, then run tool/blender/factory.sh (README.md)."
+  ],
+  "defaults": {
+    "size": 160,
+    "yaws": [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210, 225, 240, 255, 270, 285, 300, 315, 330, 345],
+    "pitches": [-15, 0, 15, 30, 45, 60, 75],
+    "bodyFraction": 0.79,
+    "displaySize": 52,
+    "spin": {
+      "pitch": 15,
+      "step": 5,
+      "cols": 12
+    }
+  },
+  "models": [
+    {
+      "slug": "smoke_detector",
+      "glb": "assets/models/smoke_detector.glb",
+      "products": ["SIOT-SMOKE-01"],
+      "familyFallback": "leaf",
+      "orthoScale": 0.125,
+      "displaySize": 52,
+      "markers": {
+        "led": {
+          "object": "LED",
+          "normal": [0, 0, 1]
+        }
+      },
+      "alarm": {
+        "lights": [],
+        "sound": false
+      }
+    },
+    {
+      "slug": "siren",
+      "glb": "assets/models/siren.glb",
+      "products": ["SIOT-SIREN-01"],
+      "displaySize": 56,
+      "hide": ["SIREN_Wire_*", "SIREN_Tip_*", "SIREN_ZipTie*"],
+      "markers": {
+        "led": {
+          "point": [0, -0.034, 0.0125],
+          "normal": [0, 0, 1]
+        }
+      },
+      "alarm": {
+        "lights": ["SIREN_Lens", "SIREN_Lens_Boss"],
+        "sound": true
+      }
+    },
+    {
+      "slug": "push_button",
+      "glb": "assets/models/push_button.glb",
+      "products": ["SIOT-PBS-01"],
+      "hide": ["PBS_Glass"],
+      "displaySize": 52.0,
+      "alarm": {
+        "lights": [],
+        "sound": false
+      },
+      "markers": {
+        "led": {
+          "point": [-0.0115, 0.0006, 0.01946],
+          "normal": [0, 0, 1]
+        }
+      }
+    }
+  ]
+}

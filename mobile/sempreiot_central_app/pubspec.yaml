@@ -58,11 +58,21 @@ flutter:
     - assets/images/logo_no_shadow.png
     - assets/images/google_icon.png
     - assets/images/logo_no_color.png
-    # Rede 3D prototype: the smoke detector pre-rendered from
-    # assets/models/smoke_detector.glb (the .glb itself is not bundled).
+    # Rede 3D device models, pre-rendered from assets/models/<slug>.glb (the
+    # .glb itself is not bundled). Written by tool/blender/factory.sh.
+    # >>> device-models (generated — do not edit by hand)
     - assets/models/smoke_detector_atlas.png
-    - assets/models/smoke_detector_rim.png
+    - assets/models/smoke_detector_spin.png
     - assets/models/smoke_detector_frames.json
+    - assets/models/siren_atlas.png
+    - assets/models/siren_spin.png
+    - assets/models/siren_glow.png
+    - assets/models/siren_spin_glow.png
+    - assets/models/siren_frames.json
+    - assets/models/push_button_atlas.png
+    - assets/models/push_button_spin.png
+    - assets/models/push_button_frames.json
+    # <<< device-models
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 

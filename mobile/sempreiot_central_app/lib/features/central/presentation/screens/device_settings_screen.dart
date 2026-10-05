@@ -541,7 +541,9 @@ class _Hero extends StatelessWidget {
           padding: const EdgeInsets.all(6),
           child: Opacity(
             opacity: node.stale ? deviceStaleOpacity : 1,
-            child: DeviceAvatar(node: node, diameter: 72),
+            // Its product's 3D model when it has one — drag to turn it —
+            // the circle otherwise.
+            child: DeviceModelAvatar(node: node, size: 72, interactive: true),
           ),
         ),
         const SizedBox(width: 16),
