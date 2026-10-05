@@ -9,6 +9,8 @@ import '../../iot/application/iot_provider.dart';
 import '../../iot/application/presence_provider.dart';
 import '../../iot/domain/entities/mqtt_message_entity.dart';
 import '../../iot/domain/repositories/i_iot_mqtt_repository.dart';
+import '../domain/ota/firmware_release.dart';
+import '../domain/safr/safr_product.dart';
 import 'central_mirror_codec.dart';
 import 'device_led_provider.dart';
 import 'device_update_state.dart';
@@ -53,6 +55,8 @@ class CentralMirrorView {
     this.run,
     this.push = const OtaPushState(),
     this.otaHistory = const [],
+    this.releases,
+    this.updates = UpdatesAvailable.none,
   });
 
   /// The units of the last snapshot, their last-seen time kept moving by
@@ -82,6 +86,13 @@ class CentralMirrorView {
   /// this phone asked ([CentralMirrorViewer.requestOtaHistory]).
   final List<MirrorOtaHistoryRun> otaHistory;
 
+  /// The versions the central may install from the Internet, newest first;
+  /// null = the central has not said (no catalog heard, or an older app).
+  final List<FirmwareRelease>? releases;
+
+  /// What the central's badge counts.
+  final UpdatesAvailable updates;
+
   /// A snapshot arrived, the central is online and so is this phone: the
   /// picture is live.
   bool get live => snapshotAt != null && centralOnline && connected;
@@ -98,6 +109,8 @@ class CentralMirrorView {
     Object? run = _keep,
     OtaPushState? push,
     List<MirrorOtaHistoryRun>? otaHistory,
+    Object? releases = _keep,
+    UpdatesAvailable? updates,
   }) =>
       CentralMirrorView(
         nodes: nodes ?? this.nodes,
@@ -108,6 +121,10 @@ class CentralMirrorView {
         run: identical(run, _keep) ? this.run : run as DeviceUpdateRun?,
         push: push ?? this.push,
         otaHistory: otaHistory ?? this.otaHistory,
+        releases: identical(releases, _keep)
+            ? this.releases
+            : releases as List<FirmwareRelease>?,
+        updates: updates ?? this.updates,
       );
 }
 
@@ -117,6 +134,13 @@ const _keep = Object();
 /// ends the wait.
 class _IdentifyAsked {
   final done = Completer<MirrorIdentifyOutcome>();
+  Timer? timer;
+}
+
+/// An Internet update (or its cancel) this phone asked for: null when the
+/// central did it, otherwise why not.
+class _OtaAsked {
+  final done = Completer<String?>();
   Timer? timer;
 }
 
@@ -168,6 +192,16 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
 
   /// Unit → the IDENTIFY this phone asked for and still waits on.
   final _identifyAsked = <String, _IdentifyAsked>{};
+
+  /// How long a phone waits for the central to say it heard an update
+  /// request, and then for the update to start (the central may have to
+  /// download the images first).
+  static const otaAnswerTimeout = Duration(seconds: 8);
+  static const otaStartTimeout = Duration(minutes: 3);
+
+  /// Request id → the update request this phone waits on.
+  final _otaAsked = <String, _OtaAsked>{};
+  int _otaRequests = 0;
 
   /// The account name, as last read: [dispose] must not ask for it again
   /// (the provider behind it is gone by then).
@@ -308,6 +342,8 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
     state = state.copyWith(
       run: ota.run,
       push: ota.push ?? const OtaPushState(),
+      releases: ota.releases,
+      updates: ota.updates,
     );
     // An update just ended: the history has a new line.
     if (ended && state.otaHistory.isNotEmpty) requestOtaHistory();
@@ -357,6 +393,58 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
     return asked.done.future;
   }
 
+  /// Asks the central for an Internet update: "Atualizar tudo" ([all]), or
+  /// [family] at [version] on [units]. Null when it started; otherwise why
+  /// not. The central checks who asks (the topic) and that the version is
+  /// published (docs/ota/ota-internet-plan.md §5.4).
+  Future<String?> sendOtaStart({
+    bool all = false,
+    SafrProductFamily? family,
+    String? version,
+    List<String> units = const [],
+  }) =>
+      _sendOta((id) => encodeMirrorOtaStart(
+            id: id,
+            all: all,
+            family: family,
+            version: version,
+            units: units,
+            name: _who(),
+          ));
+
+  /// Asks the central to cancel the update that runs.
+  Future<String?> sendOtaCancel() =>
+      _sendOta((id) => encodeMirrorOtaCancel(id: id, name: _who()));
+
+  Future<String?> _sendOta(String Function(String id) payload) {
+    final central = centralId;
+    final me = _repo.identityId;
+    if (central == null || me == null || !_connected || !_repo.isConnected) {
+      return Future.value('Sem conexão com a nuvem.');
+    }
+    final id = '${_clock().millisecondsSinceEpoch.toRadixString(36)}-'
+        '${++_otaRequests}';
+    try {
+      _repo.publish(mirrorUserCommandTopic(central, me), payload(id));
+    } catch (e) {
+      MqttLog.event('mirror ota request failed: $e');
+      return Future.value('Não foi possível enviar o pedido.');
+    }
+    final asked = _OtaAsked();
+    _otaAsked[id] = asked;
+    asked.timer = Timer(otaAnswerTimeout,
+        () => _otaDone(id, 'A central não respondeu. Ela está conectada?'));
+    return asked.done.future;
+  }
+
+  void _otaDone(String id, String? refused) {
+    final asked = _otaAsked.remove(id);
+    if (asked == null) return;
+    asked.timer?.cancel();
+    if (!asked.done.isCompleted) asked.done.complete(refused);
+    MqttLog.event('mirror ota request $id: ${refused ?? 'ok'}');
+  }
+
   void _identifyDone(String mac, MirrorIdentifyOutcome outcome) {
     final asked = _identifyAsked.remove(mac);
     if (asked == null) return;
@@ -379,6 +467,20 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
         _identifyDone(event.mac, MirrorIdentifyOutcome.confirmed);
       case MirrorEventKind.identifyFailed:
         _identifyDone(event.mac, MirrorIdentifyOutcome.notConfirmed);
+      case MirrorEventKind.otaAnswer:
+        final asked = _otaAsked[event.mac];
+        if (asked == null) return;
+        if (event.arg == MirrorOtaAnswer.working) {
+          asked.timer?.cancel();
+          asked.timer = Timer(otaStartTimeout,
+              () => _otaDone(event.mac, 'A central não confirmou o início.'));
+        } else {
+          _otaDone(
+              event.mac,
+              event.arg == MirrorOtaAnswer.started
+                  ? null
+                  : (event.text ?? 'A central recusou.'));
+        }
     }
   }
 
@@ -444,6 +546,9 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
     }
     for (final mac in _identifyAsked.keys.toList()) {
       _identifyDone(mac, MirrorIdentifyOutcome.noAnswer);
+    }
+    for (final id in _otaAsked.keys.toList()) {
+      _otaDone(id, 'A tela foi fechada antes da resposta.');
     }
     _cancelSubs();
     final id = centralId;

@@ -120,8 +120,17 @@ class OtaRuns extends Table {
   DateTimeColumn get startedAt => dateTime()();
   DateTimeColumn get endedAt => dateTime().nullable()();
 
-  /// Audit actor who started it: 'master' | 'admin' | 'system'.
+  /// Audit actor who started it: 'master' | 'admin' | 'system', or
+  /// 'remote:<name>' for a user's phone (docs/ota/ota-internet-plan.md §5.4).
   TextColumn get startedBy => text()();
+
+  /// Where the image came from: 'manual' (a file chosen on the tablet) or
+  /// 'internet' (a published release, docs/ota/ota-internet-plan.md).
+  TextColumn get source => text().withDefault(const Constant('manual'))();
+
+  /// Who published the release ("tallesaugusto · MacBook-Pro · 4706fbb");
+  /// null for a manual image.
+  TextColumn get publishedBy => text().nullable()();
 
   /// "Atualizar tudo" (board → nodes → detectors).
   BoolColumn get allPhases => boolean()();
@@ -174,7 +183,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 11;
+  int get schemaVersion => 12;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -234,6 +243,13 @@ class AppDatabase extends _$AppDatabase {
             // Firmware update history (OTA brief decision 9).
             await m.createTable(otaRuns);
             await m.createTable(otaRunUnits);
+          }
+          if (from < 12 && from >= 11) {
+            // OTA through the Internet: where the image came from, and who
+            // published it (docs/ota/ota-internet-plan.md D12). A database
+            // older than 11 got the table with these columns just above.
+            await m.addColumn(otaRuns, otaRuns.source);
+            await m.addColumn(otaRuns, otaRuns.publishedBy);
           }
         },
       );

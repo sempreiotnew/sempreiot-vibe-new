@@ -104,6 +104,15 @@ const _keep = Object();
 /// One update, started on "Atualizar dispositivos": a family to the units
 /// the operator chose, or "Atualizar tudo" — board, then nodes, then
 /// detectors.
+/// Where the image of a run came from (docs/ota/ota-internet-plan.md).
+enum DeviceUpdateSource {
+  /// A published release: the catalog, downloaded and checked.
+  internet,
+
+  /// A file chosen on the tablet ("Procurar no tablet").
+  manual,
+}
+
 class DeviceUpdateRun {
   const DeviceUpdateRun({
     required this.all,
@@ -123,6 +132,8 @@ class DeviceUpdateRun {
     this.boardRestartedAt,
     this.runId = '',
     this.startedBy = 'system',
+    this.source = DeviceUpdateSource.manual,
+    this.publishedBy,
   });
 
   /// "Atualizar tudo".
@@ -166,8 +177,16 @@ class DeviceUpdateRun {
   /// The run in the history (`OtaRuns.runId`).
   final String runId;
 
-  /// Audit actor who started it: 'master' | 'admin' | 'system'.
+  /// Audit actor who started it: 'master' | 'admin' | 'system', or
+  /// 'remote:<name>' for a user's phone.
   final String startedBy;
+
+  /// Where the image came from.
+  final DeviceUpdateSource source;
+
+  /// Who published the release (Internet only): "who · host · commit", one
+  /// per version when "Atualizar tudo" sends more than one.
+  final String? publishedBy;
 
   /// When the board restarted into a new image (this run or one shortly
   /// before): a unit counts as back once heard after it.
@@ -243,5 +262,7 @@ class DeviceUpdateRun {
             : boardRestartedAt as DateTime?,
         runId: runId,
         startedBy: startedBy,
+        source: source,
+        publishedBy: publishedBy,
       );
 }

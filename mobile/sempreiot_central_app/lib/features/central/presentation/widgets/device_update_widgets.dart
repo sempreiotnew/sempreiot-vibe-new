@@ -13,9 +13,11 @@ import '../../application/credentials_admin_provider.dart'
 import '../../application/device_update_controller.dart';
 import '../../application/device_update_history.dart';
 import '../../application/device_update_selection.dart';
+import '../../application/device_update_source.dart';
 import '../../application/device_update_state.dart';
 import '../../application/device_update_words.dart';
 import '../../application/firmware_library_provider.dart';
+import '../../application/firmware_release_provider.dart';
 import '../../application/ota_push_report.dart';
 import '../../application/ota_pin_policy.dart';
 import '../../application/ota_push_state.dart';
@@ -23,6 +25,7 @@ import '../../application/ota_rollout_state.dart' show OtaPauseCause;
 import '../../application/ota_rollout_report.dart' show otaRolloutViewProvider;
 import '../../application/ota_rollout_words.dart' show otaFirmwareWord;
 import '../../application/topology_provider.dart';
+import '../../domain/ota/firmware_release.dart';
 import '../../domain/ota/firmware_version.dart';
 import '../../domain/safr/safr_product.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
@@ -197,11 +200,26 @@ class DeviceUpdateBar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final run = ref.watch(deviceUpdateRunProvider);
-    // A user's phone viewing a central: where the update is, no controls.
+    // A user's phone viewing a central: where the update is. An
+    // Administrador may start an Internet update and cancel it (plan §6);
+    // everyone else only watches.
     if (ref.watch(mirrorViewOnlyProvider)) {
-      return _ViewOnlyBar(run: run, nodes: nodes);
+      final canUpdate = ref.watch(mirrorCanUpdateProvider);
+      if (run == null && canUpdate) return _SelectBar(nodes: nodes);
+      return _ViewOnlyBar(run: run, nodes: nodes, canCancel: canUpdate);
     }
-    if (run != null) return _RunBar(run: run, nodes: nodes);
+    if (run != null) {
+      // Started from a phone: the site sees who, for the whole run.
+      final who = remoteStarter(run.startedBy);
+      if (who == null) return _RunBar(run: run, nodes: nodes);
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _RemoteBanner(who: who),
+          _RunBar(run: run, nodes: nodes),
+        ],
+      );
+    }
     return _SelectBar(nodes: nodes);
   }
 }
@@ -209,19 +227,31 @@ class DeviceUpdateBar extends ConsumerWidget {
 /// The bar on a user's phone: the same words as the tablet's, and nothing
 /// to press — an update is started, paused and cancelled at the tablet.
 class _ViewOnlyBar extends ConsumerWidget {
-  const _ViewOnlyBar({required this.run, required this.nodes});
+  const _ViewOnlyBar({
+    required this.run,
+    required this.nodes,
+    this.canCancel = false,
+  });
   final DeviceUpdateRun? run;
   final List<TopologyNode> nodes;
+
+  /// An Administrador's phone: "Cancelar" while an update runs.
+  final bool canCancel;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final run = this.run;
     if (run == null) {
+      final updates = ref.watch(updatesAvailableProvider);
       return _BarFrame(
         border: context.borderColor.withValues(alpha: 0.6),
-        texts: const _BarTexts(
-          title: 'Nenhuma atualização em andamento',
-          sub: 'As atualizações são iniciadas na central.',
+        texts: _BarTexts(
+          title: updates.any
+              ? '${updates.countText} com atualização para '
+                  '${updates.versions.values.toSet().map(vText).join(', ')}'
+              : 'Nenhuma atualização em andamento',
+          sub: 'Só um Administrador desta central pode iniciar uma '
+              'atualização pela internet.',
         ),
         actions: const [],
       );
@@ -243,9 +273,81 @@ class _ViewOnlyBar extends ConsumerWidget {
         sub: text.sub,
         color: text.tone == DeviceUpdateTone.info ? null : tone,
       ),
-      actions: const [],
+      actions: [
+        if (canCancel && run.running)
+          OutlinedButton(
+            key: const ValueKey('remote-cancel'),
+            style: OutlinedButton.styleFrom(foregroundColor: AppColors.error),
+            onPressed: () => _remoteCancel(context, ref),
+            child: const Text('Cancelar'),
+          ),
+      ],
     );
   }
+
+  Future<void> _remoteCancel(BuildContext context, WidgetRef ref) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cancelar a atualização?'),
+        content: const Text('A central não começa mais nenhum dispositivo. '
+            'O que já está sendo atualizado termina.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Voltar')),
+          FilledButton(
+              key: const ValueKey('remote-cancel-confirm'),
+              style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Cancelar a atualização')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final refused =
+        await ref.read(centralMirrorProvider.notifier).sendOtaCancel();
+    if (refused != null && context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(refused)));
+    }
+  }
+}
+
+/// The audit name a phone's update was started with (`remote:<name>`) →
+/// the name; null = started at the tablet.
+String? remoteStarter(String startedBy) =>
+    startedBy.startsWith('remote:') ? startedBy.substring(7) : null;
+
+/// On the tablet, over a run a phone started (plan §5.4).
+class _RemoteBanner extends StatelessWidget {
+  const _RemoteBanner({required this.who});
+  final String who;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        key: const ValueKey('remote-started'),
+        margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: AppColors.secondary.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.phone_iphone_rounded,
+                size: 18, color: AppColors.secondary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Atualização iniciada remotamente por $who. '
+                'Pausar e Cancelar continuam aqui na central.',
+                style: TextStyle(color: context.textPrimary, fontSize: 12.5),
+              ),
+            ),
+          ],
+        ),
+      );
 }
 
 /// Wide: one line. Narrow (a phone, the tablet upright): the leading part
@@ -378,9 +480,19 @@ class _SelectBar extends ConsumerWidget {
       );
     }
 
+    final source = ref.watch(deviceUpdateSourceProvider);
+    // A phone has only Internet: no switch.
+    final viewOnly = ref.watch(mirrorViewOnlyProvider);
     final chips = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (!viewOnly) ...[
+          _SourceSwitch(
+            source: source,
+            onChanged: (s) => chooseDeviceUpdateSource(ref, s),
+          ),
+          const SizedBox(width: 12),
+        ],
         quick(SafrProductFamily.board, 'Central', Icons.developer_board_rounded),
         const SizedBox(width: 8),
         quick(SafrProductFamily.node, 'Nodes', Icons.cell_tower_rounded),
@@ -395,7 +507,9 @@ class _SelectBar extends ConsumerWidget {
         border: context.borderColor.withValues(alpha: 0.6),
         leading: chips,
         texts: _BarTexts(
-          title: '',
+          title: source == DeviceUpdateSource.internet
+              ? _internetSummary(ref)
+              : '',
           sub: sel.note ?? 'ou toque nos dispositivos no mapa',
           color: sel.note != null ? AppColors.warning : null,
         ),
@@ -518,6 +632,56 @@ class _QuickChip extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Internet | Manual (docs/ota/ota-internet-plan.md §5.3).
+class _SourceSwitch extends StatelessWidget {
+  const _SourceSwitch({required this.source, required this.onChanged});
+  final DeviceUpdateSource source;
+  final ValueChanged<DeviceUpdateSource> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SegmentedButton<DeviceUpdateSource>(
+      key: const ValueKey('update-source'),
+      showSelectedIcon: false,
+      style: SegmentedButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        selectedBackgroundColor: AppColors.secondary.withValues(alpha: 0.16),
+        selectedForegroundColor: AppColors.secondary,
+        side: BorderSide(color: AppColors.secondary.withValues(alpha: 0.35)),
+        textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+      ),
+      segments: const [
+        ButtonSegment(
+          value: DeviceUpdateSource.internet,
+          icon: Icon(Icons.cloud_download_rounded, size: 17),
+          label: Text('Internet'),
+        ),
+        ButtonSegment(
+          value: DeviceUpdateSource.manual,
+          icon: Icon(Icons.folder_open_rounded, size: 17),
+          label: Text('Manual'),
+        ),
+      ],
+      selected: {source},
+      onSelectionChanged: (s) => onChanged(s.first),
+    );
+  }
+}
+
+/// The Internet bar in one line: what is published and who is behind it.
+String _internetSummary(WidgetRef ref) {
+  final releases = ref.watch(firmwareReleasesViewProvider);
+  final updates = ref.watch(updatesAvailableProvider);
+  if (!releases.known) return 'Aguardando a lista de versões da internet…';
+  if (releases.releases.isEmpty) return 'Nenhuma versão publicada na internet.';
+  if (updates.any) {
+    final to = updates.versions.values.toSet().map(vText).join(', ');
+    return '${updates.countText} com atualização para $to';
+  }
+  final top = releases.releases.first.version;
+  return 'Tudo na versão mais nova publicada (${vText(top)})';
 }
 
 /// A run on screen: where it is, and its controls.
@@ -762,7 +926,16 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final lib = ref.watch(firmwareLibraryProvider);
+    // A phone (an Administrador's, through the mirror) has no library and
+    // only Internet: what it shows comes from the central.
+    final viewOnly = ref.watch(mirrorViewOnlyProvider);
+    final lib = viewOnly
+        ? const FirmwareLibraryState()
+        : ref.watch(firmwareLibraryProvider);
+    final releases = ref.watch(firmwareReleasesProvider);
+    final published = ref.watch(firmwareReleasesViewProvider);
+    final internet =
+        ref.watch(deviceUpdateSourceProvider) == DeviceUpdateSource.internet;
     final sel = ref.watch(deviceUpdateSelectionProvider);
     final nodes = ref.watch(topologyProvider);
     final family = sel.family;
@@ -779,9 +952,40 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
         ? [_boardVersion(nodes)].where((v) => v.isNotEmpty).toList()
         : _runsOf(nodes, sel.keys);
     // "Atualizar tudo": the newest image of each family, nothing to choose.
-    final plan = widget.all ? _allPlan(lib, nodes) : const <_FamilyPlan>[];
+    final plan = !widget.all
+        ? const <_FamilyPlan>[]
+        : _allPlan(
+            nodes,
+            internet
+                ? (f) => published.highest(f)?.version
+                : (f) => lib.newest(f)?.version,
+            missing: internet ? 'Nada publicado' : 'Falta no tablet');
     if (widget.all) {
       // (no options: [plan] says what goes where)
+    } else if (family != null && internet) {
+      for (final r in releasesOf(published.releases, family)) {
+        final kind = deviceUpdateVersionKind(r.version, runs);
+        final img = r.images[family]!;
+        final held = lib.image(family, r.version);
+        options.add((
+          version: r.version,
+          file: r.forThisCentral
+              ? 'só esta central'
+              : viewOnly
+                  ? 'publicada'
+                  : held != null && releases.publishedAs(held) != null
+                      ? 'no tablet'
+                      : 'na internet',
+          desc: [
+            kind == DeviceUpdateVersionKind.newer
+                ? '${_capital(otaFirmwareWord(family))} · ${_mb(img.size)}'
+                : deviceUpdateNotNewerText(r.version, runs),
+            if (r.publishedBy != null) 'publicado por ${r.publishedBy!.who}',
+            if (r.notes.isNotEmpty) r.notes,
+          ].join(' · '),
+          kind: kind,
+        ));
+      }
     } else if (family != null) {
       for (final e in lib.of(family)) {
         final kind = deviceUpdateVersionKind(e.version, runs);
@@ -849,8 +1053,12 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
               style: TextStyle(color: context.textSecondary, fontSize: 13)),
           const SizedBox(height: 16),
           _Label(widget.all
-              ? 'A VERSÃO MAIS NOVA DE CADA, NO TABLET'
-              : 'FIRMWARE NO TABLET'),
+              ? internet
+                  ? 'A VERSÃO MAIS NOVA PUBLICADA DE CADA'
+                  : 'A VERSÃO MAIS NOVA DE CADA, NO TABLET'
+              : internet
+                  ? 'VERSÕES PUBLICADAS NA INTERNET'
+                  : 'FIRMWARE NO TABLET'),
           const SizedBox(height: 8),
           if (widget.all) ...[
             _Plan(plan: plan),
@@ -859,9 +1067,15 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Text(
-                'Nenhum ${otaFirmwareWord(family ?? SafrProductFamily.node)} '
-                'no tablet. Toque em "Procurar no tablet" e escolha o '
-                'arquivo .bin.',
+                internet
+                    ? published.known
+                        ? 'Nenhum ${otaFirmwareWord(family ?? SafrProductFamily.node)} '
+                            'publicado na internet.'
+                        : 'A lista de versões da internet ainda não chegou: '
+                            'a central está conectada à nuvem?'
+                    : 'Nenhum ${otaFirmwareWord(family ?? SafrProductFamily.node)} '
+                        'no tablet. Toque em "Procurar no tablet" e escolha o '
+                        'arquivo .bin.',
                 style: TextStyle(color: context.textSecondary, fontSize: 13),
               ),
             ),
@@ -888,14 +1102,25 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
             ),
             const SizedBox(height: 8),
           ],
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: lib.busy ? null : _import,
-              icon: const Icon(Icons.folder_open_rounded, size: 18),
-              label: const Text('Procurar no tablet'),
+          if (!internet)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: lib.busy ? null : _import,
+                icon: const Icon(Icons.folder_open_rounded, size: 18),
+                label: const Text('Procurar no tablet'),
+              ),
             ),
-          ),
+          if (internet && _starting)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                  viewOnly
+                      ? 'Pedindo à central… ela baixa o firmware e começa.'
+                      : 'Baixando o firmware da internet e conferindo…',
+                  style:
+                      TextStyle(color: context.textSecondary, fontSize: 12.5)),
+            ),
           const SizedBox(height: 14),
           Container(
             padding: const EdgeInsets.all(12),
@@ -935,7 +1160,7 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
                 FilledButton(
                   key: const ValueKey('update-confirm'),
                   onPressed: _starting ||
-                          plan.any((p) => p.image == null) ||
+                          plan.any((p) => p.version == null) ||
                           plan.every((p) => p.toUpdate == 0)
                       ? null
                       : _startAll,
@@ -992,10 +1217,33 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
       if (ok != true || !mounted) return;
     }
     final reinstall = kind == DeviceUpdateVersionKind.same;
+    // A phone: no PIN (it has none of the central's); the central checks
+    // that this account is an Administrador, from the topic AWS proved.
+    if (ref.read(mirrorViewOnlyProvider)) {
+      if (family == null) return;
+      setState(() => _starting = true);
+      final refused =
+          await ref.read(centralMirrorProvider.notifier).sendOtaStart(
+                family: family,
+                version: version,
+                units: ref.read(deviceUpdateSelectionProvider).keys.toList(),
+              );
+      return _started(refused);
+    }
     final role = await ensureOtaPin(context, ref);
     if (role == null || !mounted) return;
     final by = role.auditName;
+    final source = ref.read(deviceUpdateSourceProvider);
     setState(() => _starting = true);
+    // Internet: the published image, downloaded and checked first (the
+    // newest is usually on the tablet already).
+    if (source == DeviceUpdateSource.internet && family != null) {
+      final failed = await ref
+          .read(firmwareReleasesProvider.notifier)
+          .ensureImage(family, version);
+      if (failed != null) return _started(failed);
+    }
+    if (!mounted) return;
     final ctl = ref.read(deviceUpdateProvider.notifier);
     final sel = ref.read(deviceUpdateSelectionProvider);
     final image = family == null
@@ -1008,16 +1256,24 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
             keys: sel.keys,
             image: image,
             reinstall: reinstall,
-            by: by);
+            by: by,
+            source: source);
     _started(refused);
   }
 
   Future<void> _startAll() async {
+    if (ref.read(mirrorViewOnlyProvider)) {
+      setState(() => _starting = true);
+      final refused = await ref
+          .read(centralMirrorProvider.notifier)
+          .sendOtaStart(all: true);
+      return _started(refused);
+    }
     final role = await ensureOtaPin(context, ref);
     if (role == null || !mounted) return;
     setState(() => _starting = true);
-    final refused =
-        await ref.read(deviceUpdateProvider.notifier).startAll(by: role.auditName);
+    final refused = await ref.read(deviceUpdateProvider.notifier).startAll(
+        by: role.auditName, source: ref.read(deviceUpdateSourceProvider));
     _started(refused);
   }
 
@@ -1157,7 +1413,8 @@ class _VersionOption extends StatelessWidget {
 class _FamilyPlan {
   const _FamilyPlan({
     required this.family,
-    required this.image,
+    required this.version,
+    required this.missing,
     required this.toUpdate,
     required this.total,
     required this.runs,
@@ -1165,8 +1422,10 @@ class _FamilyPlan {
 
   final SafrProductFamily family;
 
-  /// Null: the tablet has no image of this family.
-  final FirmwareLibraryEntry? image;
+  /// The version the family goes to; null: there is none ([missing] says
+  /// why: nothing on the tablet, or nothing published).
+  final String? version;
+  final String missing;
   final int toUpdate;
   final int total;
 
@@ -1177,8 +1436,12 @@ class _FamilyPlan {
 
 /// The phases of "Atualizar tudo": the board always, nodes and detectors
 /// when the tablet hears some — the same rule as
-/// DeviceUpdateController.startAll.
-List<_FamilyPlan> _allPlan(FirmwareLibraryState lib, List<TopologyNode> nodes) {
+/// DeviceUpdateController.startAll. [target] is the version a family goes
+/// to: the newest on the tablet (Manual) or the highest published
+/// (Internet).
+List<_FamilyPlan> _allPlan(
+    List<TopologyNode> nodes, String? Function(SafrProductFamily) target,
+    {required String missing}) {
   String versionOf(String key) => key == deviceUpdateBoardKey
       ? _boardVersion(nodes)
       : _versionOf(nodes, key);
@@ -1192,17 +1455,18 @@ List<_FamilyPlan> _allPlan(FirmwareLibraryState lib, List<TopologyNode> nodes) {
           deviceUpdateOnline(nodes, f).isNotEmpty)
         () {
           final keys = deviceUpdateOnline(nodes, f);
-          final image = lib.newest(f);
+          final version = target(f);
           final versions = [for (final k in keys) versionOf(k)];
-          final toUpdate = image == null
+          final toUpdate = version == null
               ? 0
               : versions
                   .where((v) =>
-                      v.isEmpty || compareFirmwareVersions(v, image.version) < 0)
+                      v.isEmpty || compareFirmwareVersions(v, version) < 0)
                   .length;
           return _FamilyPlan(
             family: f,
-            image: image,
+            version: version,
+            missing: missing,
             toUpdate: toUpdate,
             total: keys.length,
             runs: deviceUpdateRunsText(versions),
@@ -1249,12 +1513,12 @@ class _PlanRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final image = p.image;
+    final version = p.version;
     final name = p.family == SafrProductFamily.board
         ? 'Placa'
         : '${deviceUpdatePhaseName(p.family)} (${p.total})';
-    final (status, color) = image == null
-        ? ('Falta no tablet', AppColors.error)
+    final (status, color) = version == null
+        ? (p.missing, AppColors.error)
         : p.toUpdate == 0
             ? ('Já na versão mais nova', context.textSecondary)
             : p.family == SafrProductFamily.board
@@ -1301,7 +1565,7 @@ class _PlanRow extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Text(
-              image == null ? '—' : '→ ${vText(image.version)}',
+              version == null ? '—' : '→ ${vText(version)}',
               style: const TextStyle(
                   color: AppColors.secondary,
                   fontSize: 12.5,
@@ -1336,6 +1600,7 @@ class _LibrarySheet extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final lib = ref.watch(firmwareLibraryProvider);
+    final releases = ref.watch(firmwareReleasesProvider);
     final busy = ref.watch(deviceUpdateProvider)?.running == true ||
         ref.watch(otaPushViewProvider).running;
     final families = [
@@ -1376,6 +1641,7 @@ class _LibrarySheet extends ConsumerWidget {
                   : '"Atualizar tudo" envia o mais novo de cada tipo.',
               style: TextStyle(color: context.textSecondary, fontSize: 13)),
           const SizedBox(height: 16),
+          _ReleaseSyncNote(releases),
           if (families.isEmpty)
             Text('Nenhum firmware guardado.',
                 style: TextStyle(color: context.textSecondary, fontSize: 13)),
@@ -1386,6 +1652,7 @@ class _LibrarySheet extends ConsumerWidget {
               _LibraryRow(
                 entry: e,
                 newest: identical(e, lib.newest(f)),
+                published: releases.publishedAs(e),
                 onRemove: busy ? null : () => _remove(context, ref, e),
               ),
               const SizedBox(height: 8),
@@ -1445,11 +1712,15 @@ class _LibraryRow extends StatelessWidget {
   const _LibraryRow({
     required this.entry,
     required this.newest,
+    required this.published,
     required this.onRemove,
   });
 
   final FirmwareLibraryEntry entry;
   final bool newest;
+
+  /// The published version this file is, byte for byte; null = imported.
+  final FirmwareRelease? published;
   final VoidCallback? onRemove;
 
   @override
@@ -1478,20 +1749,27 @@ class _LibraryRow extends StatelessWidget {
                         color: context.textSecondary,
                         fontSize: 12,
                         fontFamily: 'monospace')),
-                if (newest)
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                    decoration: BoxDecoration(
-                      color: AppColors.success.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(6),
+                if (newest) const _Tag('MAIS NOVO', AppColors.success),
+                if (published != null)
+                  _Tag(published!.forThisCentral ? 'SÓ ESTA CENTRAL' : 'INTERNET',
+                      AppColors.secondary)
+                else
+                  _Tag('IMPORTADO', context.textSecondary),
+                if (published?.publishedBy != null || published?.published != null)
+                  SizedBox(
+                    width: double.infinity,
+                    child: Text(
+                      _publishedLine(published!),
+                      style: TextStyle(
+                          color: context.textSecondary, fontSize: 12),
                     ),
-                    child: const Text('MAIS NOVO',
+                  ),
+                if (published != null && published!.notes.isNotEmpty)
+                  SizedBox(
+                    width: double.infinity,
+                    child: Text(published!.notes,
                         style: TextStyle(
-                            color: AppColors.success,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.6)),
+                            color: context.textPrimary, fontSize: 12)),
                   ),
               ],
             ),
@@ -1505,6 +1783,66 @@ class _LibraryRow extends StatelessWidget {
                     ? context.textSecondary.withValues(alpha: 0.4)
                     : AppColors.error),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// "Publicado por tallesaugusto · MacBook-Pro · 4706fbb em 05/10/2026 13:15".
+String _publishedLine(FirmwareRelease r) {
+  final by = r.publishedBy;
+  final at = r.published?.toLocal();
+  String two(int n) => n.toString().padLeft(2, '0');
+  final when = at == null
+      ? ''
+      : ' em ${two(at.day)}/${two(at.month)}/${at.year} '
+          '${two(at.hour)}:${two(at.minute)}';
+  return by == null ? 'Publicado$when' : 'Publicado por ${by.label}$when';
+}
+
+class _Tag extends StatelessWidget {
+  const _Tag(this.text, this.color);
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(text,
+            style: TextStyle(
+                color: color,
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.6)),
+      );
+}
+
+/// What the Internet side is doing: downloading, or why it could not.
+class _ReleaseSyncNote extends StatelessWidget {
+  const _ReleaseSyncNote(this.releases);
+  final FirmwareReleasesState releases;
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = <(String, Color)>[
+      for (final k in releases.downloading)
+        ('Baixando ${k.replaceFirst('-', ' ')} da internet…', context.textSecondary),
+      for (final e in releases.failures.entries)
+        ('${e.key.replaceFirst('-', ' ')}: ${e.value}', AppColors.error),
+    ];
+    if (lines.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final (text, color) in lines)
+            Text(text, style: TextStyle(color: color, fontSize: 13)),
         ],
       ),
     );

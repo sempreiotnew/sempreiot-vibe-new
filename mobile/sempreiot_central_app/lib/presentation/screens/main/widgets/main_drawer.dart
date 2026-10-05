@@ -11,6 +11,7 @@ import '../../../../features/access/application/user_access_provider.dart';
 import '../../../../features/access/domain/entities/saved_central.dart';
 import '../../../../features/auth/application/auth_provider.dart';
 import '../../../../features/central/application/central_auth_provider.dart';
+import '../../../../features/central/application/device_update_source.dart';
 import '../../../../features/central/application/device_info_provider.dart';
 import '../../../../features/central/presentation/screens/device_access_screen.dart';
 import '../../../../features/central/presentation/screens/central_installation_screen.dart';
@@ -128,9 +129,7 @@ class MainDrawer extends ConsumerWidget {
                   if (restricted) ...[
                     // The update that runs on the tablet, and its history:
                     // view only (central mirror).
-                    _DrawerItem(
-                      icon: Icons.system_update_rounded,
-                      label: 'Atualizar dispositivos',
+                    _UpdateDevicesDrawerItem(
                       onTap: () {
                         Navigator.pop(context);
                         Navigator.of(context).push(
@@ -200,9 +199,7 @@ class MainDrawer extends ConsumerWidget {
                       }),
                       // The firmware update on the Rede map: choose units,
                       // or update everything (board, nodes, detectors).
-                      _DrawerItem(
-                        icon: Icons.system_update_rounded,
-                        label: 'Atualizar dispositivos',
+                      _UpdateDevicesDrawerItem(
                         onTap: () {
                           Navigator.pop(context);
                           Navigator.of(context).push(
@@ -510,11 +507,20 @@ class _ThemeToggleItem extends ConsumerWidget {
 }
 
 class _DrawerItem extends StatelessWidget {
-  const _DrawerItem({required this.icon, required this.label, this.onTap});
+  const _DrawerItem({
+    super.key,
+    required this.icon,
+    required this.label,
+    this.onTap,
+    this.badge = 0,
+  });
 
   final IconData icon;
   final String label;
   final VoidCallback? onTap;
+
+  /// A round count at the end of the row; 0 = none.
+  final int badge;
 
   @override
   Widget build(BuildContext context) {
@@ -532,13 +538,34 @@ class _DrawerItem extends StatelessWidget {
               children: [
                 Icon(icon, size: 19, color: context.textSecondary),
                 const SizedBox(width: 14),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: context.textSecondary,
-                    fontSize: 14,
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: context.textSecondary,
+                      fontSize: 14,
+                    ),
                   ),
                 ),
+                if (badge > 0)
+                  Container(
+                    constraints:
+                        const BoxConstraints(minWidth: 22, minHeight: 22),
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: AppColors.secondary,
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                    child: Text(
+                      '$badge',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -546,6 +573,22 @@ class _DrawerItem extends StatelessWidget {
       ),
     );
   }
+}
+
+/// "Atualizar dispositivos" with the round count of units a published
+/// firmware would update (docs/ota/ota-internet-plan.md §5.2).
+class _UpdateDevicesDrawerItem extends ConsumerWidget {
+  const _UpdateDevicesDrawerItem({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => _DrawerItem(
+        key: const ValueKey('drawer-update-devices'),
+        icon: Icons.system_update_rounded,
+        label: 'Atualizar dispositivos',
+        onTap: onTap,
+        badge: ref.watch(updatesAvailableProvider).count,
+      );
 }
 
 /// Acessos item with a live pending-request badge for central mode.

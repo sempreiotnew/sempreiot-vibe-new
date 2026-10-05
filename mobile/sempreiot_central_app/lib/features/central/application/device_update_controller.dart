@@ -14,6 +14,7 @@ import 'device_update_history.dart';
 import 'device_update_state.dart';
 import 'device_update_words.dart';
 import 'firmware_library_provider.dart';
+import 'firmware_release_provider.dart';
 import 'ota_push_controller.dart';
 import 'ota_push_report.dart' show unitFamily;
 import 'ota_push_state.dart';
@@ -124,11 +125,17 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
     required FirmwareLibraryEntry image,
     bool reinstall = false,
     String by = 'system',
+    DeviceUpdateSource source = DeviceUpdateSource.manual,
   }) async {
     final blocker = _startBlocker();
     if (blocker != null) return blocker;
     if (image.family != family) {
       return 'Este firmware não é para estes dispositivos.';
+    }
+    // Internet: only the published image, byte for byte (plan §7 rule 1).
+    final published = _ref.read(firmwareReleasesProvider).publishedAs(image);
+    if (source == DeviceUpdateSource.internet && published == null) {
+      return 'O firmware no tablet não confere com o publicado na internet.';
     }
     final queue = family == SafrProductFamily.board
         ? const [deviceUpdateBoardKey]
@@ -142,6 +149,7 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
       'version': image.version,
       'units': queue,
       if (reinstall) 'reinstall': true,
+      'source': source.name,
     });
     _begin(
       all: false,
@@ -150,19 +158,28 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
       queues: {family: queue},
       reinstall: reinstall,
       by: by,
+      source: source,
+      publishedBy: source == DeviceUpdateSource.internet
+          ? published?.publishedBy?.label
+          : null,
     );
     return null;
   }
 
   /// "Atualizar tudo": the board, then every node, then every detector the
   /// tablet hears — each family to the NEWEST image of it the tablet has
-  /// (the three need not share a version number). A unit that already runs
-  /// that version or a newer one is left alone. Returns why not, or null
-  /// when it started.
-  Future<String?> startAll({String by = 'system'}) async {
-    final blocker = _startBlocker();
+  /// (Manual) or to the HIGHEST published version of it (Internet: the
+  /// image is downloaded first when the tablet does not hold it yet). The
+  /// three need not share a version number. A unit that already runs that
+  /// version or a newer one is left alone. Returns why not, or null when it
+  /// started.
+  Future<String?> startAll({
+    String by = 'system',
+    DeviceUpdateSource source = DeviceUpdateSource.manual,
+  }) async {
+    var blocker = _startBlocker();
     if (blocker != null) return blocker;
-    final library = _ref.read(firmwareLibraryProvider);
+    final internet = source == DeviceUpdateSource.internet;
     final nodes = _online(SafrProductFamily.node);
     final leafs = _online(SafrProductFamily.leaf);
     final queues = <SafrProductFamily, List<String>>{
@@ -172,23 +189,50 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
     };
     final images = <SafrProductFamily, FirmwareLibraryEntry>{};
     final missing = <SafrProductFamily>[];
+    final publishers = <String>{};
     for (final f in queues.keys) {
-      final image = library.newest(f);
-      if (image == null) {
-        missing.add(f);
-      } else {
+      if (internet) {
+        final release = _ref.read(firmwareReleasesProvider).highest(f);
+        if (release == null) {
+          missing.add(f);
+          continue;
+        }
+        final failed = await _ref
+            .read(firmwareReleasesProvider.notifier)
+            .ensureImage(f, release.version);
+        if (failed != null) return '${_capital(otaFirmwareWord(f))}: $failed';
+        final image =
+            _ref.read(firmwareLibraryProvider).image(f, release.version);
+        if (image == null) return 'O firmware baixado não está no tablet.';
         images[f] = image;
+        final who = release.publishedBy?.label;
+        if (who != null) publishers.add(who);
+      } else {
+        final image = _ref.read(firmwareLibraryProvider).newest(f);
+        if (image == null) {
+          missing.add(f);
+        } else {
+          images[f] = image;
+        }
       }
     }
     if (missing.isNotEmpty) {
-      return 'Falta no tablet: ${missing.map(otaFirmwareWord).join(', ')}. '
-          'Toque em "Procurar no tablet" e escolha o arquivo .bin.';
+      return internet
+          ? 'Nada publicado na internet para: '
+              '${missing.map(otaFirmwareWord).join(', ')}.'
+          : 'Falta no tablet: ${missing.map(otaFirmwareWord).join(', ')}. '
+              'Toque em "Procurar no tablet" e escolha o arquivo .bin.';
     }
+    // The downloads take seconds: the panel may have changed meanwhile.
+    blocker = _startBlocker();
+    if (blocker != null) return blocker;
     final targets = {for (final e in images.entries) e.key: e.value.version};
     final anything = queues.entries.any((q) =>
         q.value.any((key) => !_runsAtLeast(key, targets[q.key]!)));
     if (!anything) {
-      return 'Tudo já roda a versão mais nova que o tablet tem.';
+      return internet
+          ? 'Tudo já roda a versão mais nova publicada.'
+          : 'Tudo já roda a versão mais nova que o tablet tem.';
     }
     _images
       ..clear()
@@ -196,6 +240,7 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
     _audit(by, 'ota_update_started', {
       'all': true,
       'versions': {for (final e in targets.entries) e.key.name: e.value},
+      'source': source.name,
     });
     _begin(
       all: true,
@@ -204,6 +249,8 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
       targets: targets,
       queues: queues,
       by: by,
+      source: source,
+      publishedBy: publishers.isEmpty ? null : publishers.join(' / '),
     );
     return null;
   }
@@ -237,6 +284,8 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
     required Map<SafrProductFamily, List<String>> queues,
     bool reinstall = false,
     String by = 'system',
+    DeviceUpdateSource source = DeviceUpdateSource.manual,
+    String? publishedBy,
   }) {
     _listen();
     _generation++;
@@ -281,6 +330,8 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
       boardRestartedAt: _boardRestartedAt,
       runId: _newRunId(),
       startedBy: by,
+      source: source,
+      publishedBy: publishedBy,
     );
     unawaited(_runPhase(_generation));
   }
@@ -948,3 +999,6 @@ final deviceUpdateProvider =
   (ref) => DeviceUpdateController(ref,
       timings: ref.read(deviceUpdateTimingsProvider)),
 );
+
+String _capital(String s) =>
+    s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);

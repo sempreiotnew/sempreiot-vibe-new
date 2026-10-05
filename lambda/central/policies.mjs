@@ -42,6 +42,9 @@ function buildPolicyDocument() {
         Resource: [
           `${base}:topicfilter/${sub}`,
           `${base}:topicfilter/${sub}/*`,
+          // Firmware releases (docs/ota/ota-internet-plan.md): the catalog,
+          // retained, published by tools/ota_release.sh — one per channel.
+          `${base}:topicfilter/sempreiot/releases/*`,
         ],
       },
       {
@@ -50,6 +53,7 @@ function buildPolicyDocument() {
         Resource: [
           `${base}:topic/${sub}`,
           `${base}:topic/${sub}/*`,
+          `${base}:topic/sempreiot/releases/*`,
         ],
       },
       {

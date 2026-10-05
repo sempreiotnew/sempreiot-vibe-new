@@ -5,6 +5,7 @@ import '../../../../core/theme/theme_ext.dart';
 import '../../application/central_mirror_viewer.dart';
 import '../../application/device_update_controller.dart';
 import '../../application/device_update_selection.dart';
+import '../../application/device_update_source.dart';
 import '../../application/device_update_state.dart';
 import '../../application/firmware_library_provider.dart';
 import '../../application/ota_push_report.dart';
@@ -58,8 +59,11 @@ class _DeviceUpdateScreenState extends ConsumerState<DeviceUpdateScreen> {
     final allNodes = ref.watch(topologyProvider);
     final election = ref.watch(rootElectionProvider);
     final viewOnly = ref.watch(mirrorViewOnlyProvider);
+    // A phone whose user is an Administrador of this central chooses units
+    // for an Internet update (docs/ota/ota-internet-plan.md §6).
+    final remoteAdmin = viewOnly && ref.watch(mirrorCanUpdateProvider);
     final run = ref.watch(deviceUpdateRunProvider);
-    final sel = viewOnly
+    final sel = viewOnly && !remoteAdmin
         ? const DeviceUpdateSelection()
         : ref.watch(deviceUpdateSelectionProvider);
     final push = ref.watch(otaPushViewProvider);
@@ -76,11 +80,12 @@ class _DeviceUpdateScreenState extends ConsumerState<DeviceUpdateScreen> {
       }
     }
 
-    final selecting = run == null && !viewOnly;
+    final selecting = run == null && (!viewOnly || remoteAdmin);
     final family = sel.family;
-    final newest =
-        lib == null || family == null || family == SafrProductFamily.board
-            ? null
+    final newest = family == null || family == SafrProductFamily.board
+        ? null
+        : lib == null
+            ? ref.watch(firmwareReleasesViewProvider).highest(family)?.version
             : lib.of(family).firstOrNull?.version;
 
     return Scaffold(

@@ -8,11 +8,15 @@ import '../../../core/utils/mqtt_log.dart';
 import '../../iot/domain/entities/mqtt_message_entity.dart';
 import 'alarm_latch_provider.dart';
 import 'central_iot_provider.dart';
+import '../domain/ota/firmware_release.dart';
 import '../domain/safr/safr_v2_payloads.dart';
 import 'central_mirror_codec.dart';
 import 'device_led_provider.dart';
 import 'device_update_controller.dart';
 import 'device_update_history.dart';
+import 'device_update_source.dart';
+import 'firmware_release_provider.dart';
+import 'remote_ota.dart';
 import 'device_update_state.dart';
 import 'ota_push_report.dart';
 import 'ota_push_state.dart';
@@ -90,6 +94,10 @@ class CentralMirrorPublisher {
     ({DeviceUpdateRun? run, OtaPushState? push}) Function()? ota,
     Future<List<MirrorOtaHistoryRun>> Function()? otaHistory,
     Future<bool> Function(String mac, int seconds, String by)? identify,
+    ({List<FirmwareRelease>? releases, UpdatesAvailable updates}) Function()?
+        otaOffer,
+    Future<String?> Function(String userIdentityId, MirrorRemoteOta command)?
+        remoteOta,
     void Function(List<MirrorWatcher> watchers)? onWatchers,
     DateTime Function()? clock,
   })  : _identityId = identityId,
@@ -99,6 +107,8 @@ class CentralMirrorPublisher {
         _ota = ota,
         _otaHistory = otaHistory,
         _identify = identify,
+        _otaOffer = otaOffer,
+        _remoteOta = remoteOta,
         _onWatchers = onWatchers,
         _clock = clock ?? DateTime.now;
 
@@ -124,6 +134,15 @@ class CentralMirrorPublisher {
   /// Sends IDENTIFY to a unit and tells whether the root confirmed it; on
   /// a confirmation it starts the blink, which comes back as [onIdentify].
   final Future<bool> Function(String mac, int seconds, String by)? _identify;
+
+  /// The published versions and what the badge counts (Internet updates).
+  final ({List<FirmwareRelease>? releases, UpdatesAvailable updates})
+      Function()? _otaOffer;
+
+  /// Carries out a phone's `ota_start` / `ota_cancel`: null = done, else
+  /// why not (for the phone). The topic already proved who asked.
+  final Future<String?> Function(String userIdentityId, MirrorRemoteOta command)?
+      _remoteOta;
   final void Function(List<MirrorWatcher> watchers)? _onWatchers;
   final DateTime Function() _clock;
 
@@ -209,6 +228,36 @@ class CentralMirrorPublisher {
     if (arriving) _onWatchers?.call(watchers);
   }
 
+  /// A message on a user's own command topic (`{id}/cmd/<user's Identity
+  /// ID>`): AWS lets only that user publish there, so [userIdentityId] is
+  /// who asked. Today: an Internet update, or cancelling it
+  /// (docs/ota/ota-internet-plan.md §5.4).
+  void onUserCommand(String userIdentityId, String payload) {
+    final command = decodeMirrorRemoteOta(payload);
+    final handle = _remoteOta;
+    if (command == null || handle == null) return;
+    // Heard: the phone now waits for the outcome, which may take a download.
+    _answer(command.id, MirrorOtaAnswer.working, null);
+    unawaited(() async {
+      String? refused;
+      try {
+        refused = await handle(userIdentityId, command);
+      } catch (e) {
+        refused = 'A central não conseguiu: $e';
+      }
+      _answer(command.id,
+          refused == null ? MirrorOtaAnswer.started : MirrorOtaAnswer.refused,
+          refused);
+      // The run (or its end) goes out at once, not at the next look.
+      _otaHelloPending = true;
+    }());
+  }
+
+  void _answer(String id, int arg, String? text) {
+    if (!watched) return;
+    _events.add((kind: MirrorEventKind.otaAnswer, mac: id, arg: arg, text: text));
+  }
+
   /// One frame movement on the mesh.
   void onTick(SafrTrafficTick tick) {
     if (!watched) return;
@@ -228,7 +277,7 @@ class CentralMirrorPublisher {
   /// the phones' LEDs blink too.
   void onIdentify(String mac, int seconds) {
     if (!watched) return;
-    _events.add((kind: MirrorEventKind.identify, mac: mac, arg: seconds));
+    _events.add((kind: MirrorEventKind.identify, mac: mac, arg: seconds, text: null));
   }
 
   /// A phone asked for IDENTIFY. Only from a phone that is watching, only
@@ -238,10 +287,10 @@ class CentralMirrorPublisher {
     if (send == null || !watched || _identifying.contains(mac)) return;
     // Heard: the phone can now tell a central that does not answer (off
     // line, or a build without this) from a root that does not confirm.
-    _events.add((kind: MirrorEventKind.identifySending, mac: mac, arg: 0));
+    _events.add((kind: MirrorEventKind.identifySending, mac: mac, arg: 0, text: null));
     final known = _nodes().any((n) => n.mac == mac && n.online && !n.isLeaf);
     if (!known) {
-      _events.add((kind: MirrorEventKind.identifyFailed, mac: mac, arg: 0));
+      _events.add((kind: MirrorEventKind.identifyFailed, mac: mac, arg: 0, text: null));
       return;
     }
     _identifying.add(mac);
@@ -254,7 +303,7 @@ class CentralMirrorPublisher {
       _identifying.remove(mac);
     }
     if (!ok && watched) {
-      _events.add((kind: MirrorEventKind.identifyFailed, mac: mac, arg: 0));
+      _events.add((kind: MirrorEventKind.identifyFailed, mac: mac, arg: 0, text: null));
     }
   }
 
@@ -294,13 +343,22 @@ class CentralMirrorPublisher {
     _lastOtaLookAt = now;
 
     final ota = source();
-    final body = mirrorOtaBody(ota.run, ota.push);
+    final offer = _otaOffer?.call();
+    final body = mirrorOtaBody(ota.run, ota.push,
+        releases: offer?.releases,
+        updates: offer?.updates ?? UpdatesAvailable.none);
     if (!_otaHelloPending && body == _lastOtaBody) return;
     final id = _identityId();
     if (id == null) return;
     final sent = _publish(
       mirrorOtaTopic(id),
-      encodeMirrorOta(seq: ++_otaSeq, run: ota.run, push: ota.push),
+      encodeMirrorOta(
+        seq: ++_otaSeq,
+        run: ota.run,
+        push: ota.push,
+        releases: offer?.releases,
+        updates: offer?.updates ?? UpdatesAvailable.none,
+      ),
       retain: false,
       qos: 1,
     );
@@ -459,6 +517,16 @@ final centralMirrorPublisherProvider = Provider<void>((ref) {
       push: ref.read(otaPushViewProvider),
     ),
     otaHistory: () => ref.read(deviceUpdateHistoryProvider).recent(limit: 20),
+    // What is published, and what the badge counts: the phone shows both.
+    otaOffer: () {
+      final releases = ref.read(firmwareReleasesProvider);
+      return (
+        releases: releases.known ? releases.releases : null,
+        updates: ref.read(updatesAvailableProvider),
+      );
+    },
+    remoteOta: (user, command) =>
+        ref.read(remoteOtaProvider).handle(user, command),
     // The same path as the tablet's own menu (device_menu.dart): the
     // command goes down, and the blink starts only on the root's ACK.
     identify: (mac, seconds, by) async {
@@ -488,9 +556,13 @@ final centralMirrorPublisherProvider = Provider<void>((ref) {
       .messages
       .listen((MqttMessageEntity msg) {
     final id = ref.read(centralMqttRepositoryProvider).identityId;
-    if (id != null && msg.topic == mirrorCommandTopic(id)) {
+    if (id == null) return;
+    if (msg.topic == mirrorCommandTopic(id)) {
       publisher.onCommand(msg.payload);
+      return;
     }
+    final user = mirrorCommandUser(id, msg.topic);
+    if (user != null) publisher.onUserCommand(user, msg.payload);
   });
   final traffic = ref.read(safrTrafficProvider).stream.listen(publisher.onTick);
   // read, not watch: the engine notifies on every frame, and on the tablet

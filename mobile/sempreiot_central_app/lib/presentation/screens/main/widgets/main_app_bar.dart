@@ -10,6 +10,7 @@ import '../../../../features/access/presentation/sheets/rename_central_sheet.dar
 import '../../../../features/auth/application/auth_provider.dart';
 import '../../../../features/central/application/central_auth_provider.dart';
 import '../../../../features/central/application/device_info_provider.dart';
+import '../../../../features/central/application/device_update_source.dart';
 import '../../../../features/central/presentation/widgets/mirror_watchers_button.dart';
 
 class MainAppBar extends ConsumerWidget implements PreferredSizeWidget {
@@ -37,6 +38,8 @@ class MainAppBar extends ConsumerWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final topPad = MediaQuery.of(context).padding.top;
+    // A firmware update is waiting in "Atualizar dispositivos".
+    final updateDot = ref.watch(updatesAvailableProvider).any;
 
     return Container(
       height: preferredSize.height + topPad,
@@ -70,6 +73,7 @@ class MainAppBar extends ConsumerWidget implements PreferredSizeWidget {
                         icon: Icons.menu_rounded,
                         onTap: onMenuTap ?? () {},
                         tooltip: 'Menu',
+                        dot: updateDot,
                       ),
               ),
             ),
@@ -122,6 +126,7 @@ class MainAppBar extends ConsumerWidget implements PreferredSizeWidget {
                 icon: Icons.menu_rounded,
                 onTap: onMenuTap ?? () {},
                 tooltip: 'Menu',
+                dot: updateDot,
               ),
             const SizedBox(width: 10),
             AnimatedOpacity(
@@ -265,16 +270,21 @@ class _BarIconButton extends StatelessWidget {
     required this.icon,
     required this.onTap,
     required this.tooltip,
+    this.dot = false,
   });
 
   final IconData icon;
   final VoidCallback onTap;
   final String tooltip;
 
+  /// A small round mark on the icon: something in the menu wants a look
+  /// (a firmware update, docs/ota/ota-internet-plan.md §5.2).
+  final bool dot;
+
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: tooltip,
+      message: dot ? '$tooltip · atualização disponível' : tooltip,
       child: Material(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(8),
@@ -284,8 +294,27 @@ class _BarIconButton extends StatelessWidget {
           child: SizedBox(
             width: 44,
             height: 44,
-            child: Center(
-              child: Icon(icon, color: context.textSecondary, size: 22),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Icon(icon, color: context.textSecondary, size: 22),
+                if (dot)
+                  Positioned(
+                    key: const ValueKey('menu-update-dot'),
+                    top: 9,
+                    right: 8,
+                    child: Container(
+                      width: 9,
+                      height: 9,
+                      decoration: BoxDecoration(
+                        color: AppColors.secondary,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                            color: context.surfaceColor, width: 1.5),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ),

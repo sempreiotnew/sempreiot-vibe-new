@@ -1,3 +1,4 @@
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -16,6 +17,7 @@ class FirmwareLibraryEntry {
     required this.version,
     required this.size,
     required this.addedAt,
+    this.sha256 = '',
   });
 
   /// Name inside the library (`node-0.1.1.bin`).
@@ -24,6 +26,11 @@ class FirmwareLibraryEntry {
   final String version;
   final int size;
   final DateTime addedAt;
+
+  /// Lower-case hex SHA-256 of the file: an image downloaded from the
+  /// Internet is the published one only while this matches the catalog
+  /// (firmware_release_provider.dart).
+  final String sha256;
 
   /// Library file name of an image of [family] at [version].
   static String fileNameFor(SafrProductFamily family, String version) =>
@@ -93,13 +100,15 @@ class FirmwareLibraryController extends StateNotifier<FirmwareLibraryState> {
     try {
       for (final f in await _store.list()) {
         try {
-          final header = FirmwareImageHeader.parse(await _store.read(f.name));
+          final bytes = await _store.read(f.name);
+          final header = FirmwareImageHeader.parse(bytes);
           entries.add(FirmwareLibraryEntry(
             fileName: f.name,
             family: header.family,
             version: header.version,
             size: f.size,
             addedAt: f.modified,
+            sha256: crypto.sha256.convert(bytes).toString(),
           ));
         } on FirmwareImageException {
           continue;
@@ -155,6 +164,14 @@ class FirmwareLibraryController extends StateNotifier<FirmwareLibraryState> {
         '${refused.join(', ')}: não é um firmware SempreIoT',
     ];
     return parts.join(' · ');
+  }
+
+  /// Keeps an image downloaded from the Internet, already checked against
+  /// the catalog (hash, family, version) by the caller.
+  Future<void> savePublished(
+      SafrProductFamily family, String version, Uint8List bytes) async {
+    await _store.save(FirmwareLibraryEntry.fileNameFor(family, version), bytes);
+    await load();
   }
 
   Future<Uint8List> read(FirmwareLibraryEntry entry) =>

@@ -128,6 +128,7 @@ void main() {
       target: '0.2.0',
       families: 'node',
       outcome: 'partial',
+      source: 'manual',
     ),
     [
       OtaRunUnit(
@@ -393,14 +394,14 @@ void main() {
         t0: DateTime.utc(2026, 10, 3, 21),
         ticks: const [],
         events: const [
-          (kind: MirrorEventKind.identify, mac: rootMac, arg: 10),
-          (kind: MirrorEventKind.identifyFailed, mac: leafMac, arg: 0),
+          (kind: MirrorEventKind.identify, mac: rootMac, arg: 10, text: null),
+          (kind: MirrorEventKind.identifyFailed, mac: leafMac, arg: 0, text: null),
         ],
       ))!;
       expect(frames.ticks, isEmpty);
       expect(frames.events, const [
-        (kind: MirrorEventKind.identify, mac: rootMac, arg: 10),
-        (kind: MirrorEventKind.identifyFailed, mac: leafMac, arg: 0),
+        (kind: MirrorEventKind.identify, mac: rootMac, arg: 10, text: null),
+        (kind: MirrorEventKind.identifyFailed, mac: leafMac, arg: 0, text: null),
       ]);
       // A batch without events says nothing about them.
       expect(
@@ -780,12 +781,13 @@ void main() {
       publisher.pump();
       expect(eventsSent(), [
         // "heard you", so the phone knows the central is answering …
-        (kind: MirrorEventKind.identifySending, mac: rootMac, arg: 0),
+        (kind: MirrorEventKind.identifySending, mac: rootMac, arg: 0, text: null),
         // … then the blink itself, on the root's confirmation.
         (
           kind: MirrorEventKind.identify,
           mac: rootMac,
           arg: CentralMirrorPublisher.identifySeconds,
+          text: null,
         ),
       ]);
       // An event is not repeated by a later batch: it is acknowledged.
@@ -801,7 +803,7 @@ void main() {
       advance(CentralMirrorPublisher.pumpEvery);
       publisher.pump();
       expect(eventsSent().single,
-          (kind: MirrorEventKind.identify, mac: rootMac, arg: 10));
+          (kind: MirrorEventKind.identify, mac: rootMac, arg: 10, text: null));
       expect(identifySent, isEmpty);
     });
 
@@ -1115,7 +1117,7 @@ void main() {
       expect(blinks, isEmpty); // not before the root confirms
 
       repo.deliver(mirrorFramesTopic(id), events(1, const [
-        (kind: MirrorEventKind.identify, mac: rootMac, arg: 10),
+        (kind: MirrorEventKind.identify, mac: rootMac, arg: 10, text: null),
       ]));
       expect(await outcome, MirrorIdentifyOutcome.confirmed);
       expect(blinks, [(mac: rootMac, seconds: 10)]);
@@ -1124,7 +1126,7 @@ void main() {
     test('an Identificar started on the tablet blinks here too', () async {
       viewer.onConnected();
       repo.deliver(mirrorFramesTopic(id), events(1, const [
-        (kind: MirrorEventKind.identify, mac: rootMac, arg: 10),
+        (kind: MirrorEventKind.identify, mac: rootMac, arg: 10, text: null),
       ]));
       await pumpEventQueue();
       expect(blinks, [(mac: rootMac, seconds: 10)]);
@@ -1134,7 +1136,7 @@ void main() {
       viewer.onConnected();
       final outcome = viewer.sendIdentify(rootMac);
       repo.deliver(mirrorFramesTopic(id), events(1, const [
-        (kind: MirrorEventKind.identifyFailed, mac: rootMac, arg: 0),
+        (kind: MirrorEventKind.identifyFailed, mac: rootMac, arg: 0, text: null),
       ]));
       expect(await outcome, MirrorIdentifyOutcome.notConfirmed);
       expect(blinks, isEmpty);
@@ -1159,7 +1161,7 @@ void main() {
       MirrorIdentifyOutcome? result;
       viewer.sendIdentify(rootMac).then((o) => result = o);
       repo.deliver(mirrorFramesTopic(id), events(1, const [
-        (kind: MirrorEventKind.identifySending, mac: rootMac, arg: 0),
+        (kind: MirrorEventKind.identifySending, mac: rootMac, arg: 0, text: null),
       ]));
       await tester.pump(const Duration(seconds: 14));
       expect(result, isNull); // heard: the short wait no longer applies

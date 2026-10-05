@@ -2602,6 +2602,19 @@ class $OtaRunsTable extends OtaRuns with TableInfo<$OtaRunsTable, OtaRun> {
   late final GeneratedColumn<String> startedBy = GeneratedColumn<String>(
       'started_by', aliasedName, false,
       type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _sourceMeta = const VerificationMeta('source');
+  @override
+  late final GeneratedColumn<String> source = GeneratedColumn<String>(
+      'source', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultValue: const Constant('manual'));
+  static const VerificationMeta _publishedByMeta =
+      const VerificationMeta('publishedBy');
+  @override
+  late final GeneratedColumn<String> publishedBy = GeneratedColumn<String>(
+      'published_by', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _allPhasesMeta =
       const VerificationMeta('allPhases');
   @override
@@ -2646,6 +2659,8 @@ class $OtaRunsTable extends OtaRuns with TableInfo<$OtaRunsTable, OtaRun> {
         startedAt,
         endedAt,
         startedBy,
+        source,
+        publishedBy,
         allPhases,
         target,
         families,
@@ -2684,6 +2699,16 @@ class $OtaRunsTable extends OtaRuns with TableInfo<$OtaRunsTable, OtaRun> {
           startedBy.isAcceptableOrUnknown(data['started_by']!, _startedByMeta));
     } else if (isInserting) {
       context.missing(_startedByMeta);
+    }
+    if (data.containsKey('source')) {
+      context.handle(_sourceMeta,
+          source.isAcceptableOrUnknown(data['source']!, _sourceMeta));
+    }
+    if (data.containsKey('published_by')) {
+      context.handle(
+          _publishedByMeta,
+          publishedBy.isAcceptableOrUnknown(
+              data['published_by']!, _publishedByMeta));
     }
     if (data.containsKey('all_phases')) {
       context.handle(_allPhasesMeta,
@@ -2732,6 +2757,10 @@ class $OtaRunsTable extends OtaRuns with TableInfo<$OtaRunsTable, OtaRun> {
           .read(DriftSqlType.dateTime, data['${effectivePrefix}ended_at']),
       startedBy: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}started_by'])!,
+      source: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}source'])!,
+      publishedBy: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}published_by']),
       allPhases: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}all_phases'])!,
       target: attachedDatabase.typeMapping
@@ -2759,8 +2788,17 @@ class OtaRun extends DataClass implements Insertable<OtaRun> {
   final DateTime startedAt;
   final DateTime? endedAt;
 
-  /// Audit actor who started it: 'master' | 'admin' | 'system'.
+  /// Audit actor who started it: 'master' | 'admin' | 'system', or
+  /// 'remote:<name>' for a user's phone (docs/ota/ota-internet-plan.md §5.4).
   final String startedBy;
+
+  /// Where the image came from: 'manual' (a file chosen on the tablet) or
+  /// 'internet' (a published release, docs/ota/ota-internet-plan.md).
+  final String source;
+
+  /// Who published the release ("tallesaugusto · MacBook-Pro · 4706fbb");
+  /// null for a manual image.
+  final String? publishedBy;
 
   /// "Atualizar tudo" (board → nodes → detectors).
   final bool allPhases;
@@ -2776,6 +2814,8 @@ class OtaRun extends DataClass implements Insertable<OtaRun> {
       required this.startedAt,
       this.endedAt,
       required this.startedBy,
+      required this.source,
+      this.publishedBy,
       required this.allPhases,
       required this.target,
       required this.families,
@@ -2791,6 +2831,10 @@ class OtaRun extends DataClass implements Insertable<OtaRun> {
       map['ended_at'] = Variable<DateTime>(endedAt);
     }
     map['started_by'] = Variable<String>(startedBy);
+    map['source'] = Variable<String>(source);
+    if (!nullToAbsent || publishedBy != null) {
+      map['published_by'] = Variable<String>(publishedBy);
+    }
     map['all_phases'] = Variable<bool>(allPhases);
     map['target'] = Variable<String>(target);
     map['families'] = Variable<String>(families);
@@ -2814,6 +2858,10 @@ class OtaRun extends DataClass implements Insertable<OtaRun> {
           ? const Value.absent()
           : Value(endedAt),
       startedBy: Value(startedBy),
+      source: Value(source),
+      publishedBy: publishedBy == null && nullToAbsent
+          ? const Value.absent()
+          : Value(publishedBy),
       allPhases: Value(allPhases),
       target: Value(target),
       families: Value(families),
@@ -2837,6 +2885,8 @@ class OtaRun extends DataClass implements Insertable<OtaRun> {
       startedAt: serializer.fromJson<DateTime>(json['startedAt']),
       endedAt: serializer.fromJson<DateTime?>(json['endedAt']),
       startedBy: serializer.fromJson<String>(json['startedBy']),
+      source: serializer.fromJson<String>(json['source']),
+      publishedBy: serializer.fromJson<String?>(json['publishedBy']),
       allPhases: serializer.fromJson<bool>(json['allPhases']),
       target: serializer.fromJson<String>(json['target']),
       families: serializer.fromJson<String>(json['families']),
@@ -2853,6 +2903,8 @@ class OtaRun extends DataClass implements Insertable<OtaRun> {
       'startedAt': serializer.toJson<DateTime>(startedAt),
       'endedAt': serializer.toJson<DateTime?>(endedAt),
       'startedBy': serializer.toJson<String>(startedBy),
+      'source': serializer.toJson<String>(source),
+      'publishedBy': serializer.toJson<String?>(publishedBy),
       'allPhases': serializer.toJson<bool>(allPhases),
       'target': serializer.toJson<String>(target),
       'families': serializer.toJson<String>(families),
@@ -2867,6 +2919,8 @@ class OtaRun extends DataClass implements Insertable<OtaRun> {
           DateTime? startedAt,
           Value<DateTime?> endedAt = const Value.absent(),
           String? startedBy,
+          String? source,
+          Value<String?> publishedBy = const Value.absent(),
           bool? allPhases,
           String? target,
           String? families,
@@ -2878,6 +2932,8 @@ class OtaRun extends DataClass implements Insertable<OtaRun> {
         startedAt: startedAt ?? this.startedAt,
         endedAt: endedAt.present ? endedAt.value : this.endedAt,
         startedBy: startedBy ?? this.startedBy,
+        source: source ?? this.source,
+        publishedBy: publishedBy.present ? publishedBy.value : this.publishedBy,
         allPhases: allPhases ?? this.allPhases,
         target: target ?? this.target,
         families: families ?? this.families,
@@ -2891,6 +2947,9 @@ class OtaRun extends DataClass implements Insertable<OtaRun> {
       startedAt: data.startedAt.present ? data.startedAt.value : this.startedAt,
       endedAt: data.endedAt.present ? data.endedAt.value : this.endedAt,
       startedBy: data.startedBy.present ? data.startedBy.value : this.startedBy,
+      source: data.source.present ? data.source.value : this.source,
+      publishedBy:
+          data.publishedBy.present ? data.publishedBy.value : this.publishedBy,
       allPhases: data.allPhases.present ? data.allPhases.value : this.allPhases,
       target: data.target.present ? data.target.value : this.target,
       families: data.families.present ? data.families.value : this.families,
@@ -2907,6 +2966,8 @@ class OtaRun extends DataClass implements Insertable<OtaRun> {
           ..write('startedAt: $startedAt, ')
           ..write('endedAt: $endedAt, ')
           ..write('startedBy: $startedBy, ')
+          ..write('source: $source, ')
+          ..write('publishedBy: $publishedBy, ')
           ..write('allPhases: $allPhases, ')
           ..write('target: $target, ')
           ..write('families: $families, ')
@@ -2918,8 +2979,8 @@ class OtaRun extends DataClass implements Insertable<OtaRun> {
   }
 
   @override
-  int get hashCode => Object.hash(runId, startedAt, endedAt, startedBy,
-      allPhases, target, families, outcome, message, syncedAt);
+  int get hashCode => Object.hash(runId, startedAt, endedAt, startedBy, source,
+      publishedBy, allPhases, target, families, outcome, message, syncedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -2928,6 +2989,8 @@ class OtaRun extends DataClass implements Insertable<OtaRun> {
           other.startedAt == this.startedAt &&
           other.endedAt == this.endedAt &&
           other.startedBy == this.startedBy &&
+          other.source == this.source &&
+          other.publishedBy == this.publishedBy &&
           other.allPhases == this.allPhases &&
           other.target == this.target &&
           other.families == this.families &&
@@ -2941,6 +3004,8 @@ class OtaRunsCompanion extends UpdateCompanion<OtaRun> {
   final Value<DateTime> startedAt;
   final Value<DateTime?> endedAt;
   final Value<String> startedBy;
+  final Value<String> source;
+  final Value<String?> publishedBy;
   final Value<bool> allPhases;
   final Value<String> target;
   final Value<String> families;
@@ -2953,6 +3018,8 @@ class OtaRunsCompanion extends UpdateCompanion<OtaRun> {
     this.startedAt = const Value.absent(),
     this.endedAt = const Value.absent(),
     this.startedBy = const Value.absent(),
+    this.source = const Value.absent(),
+    this.publishedBy = const Value.absent(),
     this.allPhases = const Value.absent(),
     this.target = const Value.absent(),
     this.families = const Value.absent(),
@@ -2966,6 +3033,8 @@ class OtaRunsCompanion extends UpdateCompanion<OtaRun> {
     required DateTime startedAt,
     this.endedAt = const Value.absent(),
     required String startedBy,
+    this.source = const Value.absent(),
+    this.publishedBy = const Value.absent(),
     required bool allPhases,
     required String target,
     required String families,
@@ -2984,6 +3053,8 @@ class OtaRunsCompanion extends UpdateCompanion<OtaRun> {
     Expression<DateTime>? startedAt,
     Expression<DateTime>? endedAt,
     Expression<String>? startedBy,
+    Expression<String>? source,
+    Expression<String>? publishedBy,
     Expression<bool>? allPhases,
     Expression<String>? target,
     Expression<String>? families,
@@ -2997,6 +3068,8 @@ class OtaRunsCompanion extends UpdateCompanion<OtaRun> {
       if (startedAt != null) 'started_at': startedAt,
       if (endedAt != null) 'ended_at': endedAt,
       if (startedBy != null) 'started_by': startedBy,
+      if (source != null) 'source': source,
+      if (publishedBy != null) 'published_by': publishedBy,
       if (allPhases != null) 'all_phases': allPhases,
       if (target != null) 'target': target,
       if (families != null) 'families': families,
@@ -3012,6 +3085,8 @@ class OtaRunsCompanion extends UpdateCompanion<OtaRun> {
       Value<DateTime>? startedAt,
       Value<DateTime?>? endedAt,
       Value<String>? startedBy,
+      Value<String>? source,
+      Value<String?>? publishedBy,
       Value<bool>? allPhases,
       Value<String>? target,
       Value<String>? families,
@@ -3024,6 +3099,8 @@ class OtaRunsCompanion extends UpdateCompanion<OtaRun> {
       startedAt: startedAt ?? this.startedAt,
       endedAt: endedAt ?? this.endedAt,
       startedBy: startedBy ?? this.startedBy,
+      source: source ?? this.source,
+      publishedBy: publishedBy ?? this.publishedBy,
       allPhases: allPhases ?? this.allPhases,
       target: target ?? this.target,
       families: families ?? this.families,
@@ -3048,6 +3125,12 @@ class OtaRunsCompanion extends UpdateCompanion<OtaRun> {
     }
     if (startedBy.present) {
       map['started_by'] = Variable<String>(startedBy.value);
+    }
+    if (source.present) {
+      map['source'] = Variable<String>(source.value);
+    }
+    if (publishedBy.present) {
+      map['published_by'] = Variable<String>(publishedBy.value);
     }
     if (allPhases.present) {
       map['all_phases'] = Variable<bool>(allPhases.value);
@@ -3080,6 +3163,8 @@ class OtaRunsCompanion extends UpdateCompanion<OtaRun> {
           ..write('startedAt: $startedAt, ')
           ..write('endedAt: $endedAt, ')
           ..write('startedBy: $startedBy, ')
+          ..write('source: $source, ')
+          ..write('publishedBy: $publishedBy, ')
           ..write('allPhases: $allPhases, ')
           ..write('target: $target, ')
           ..write('families: $families, ')
@@ -4895,6 +4980,8 @@ typedef $$OtaRunsTableCreateCompanionBuilder = OtaRunsCompanion Function({
   required DateTime startedAt,
   Value<DateTime?> endedAt,
   required String startedBy,
+  Value<String> source,
+  Value<String?> publishedBy,
   required bool allPhases,
   required String target,
   required String families,
@@ -4908,6 +4995,8 @@ typedef $$OtaRunsTableUpdateCompanionBuilder = OtaRunsCompanion Function({
   Value<DateTime> startedAt,
   Value<DateTime?> endedAt,
   Value<String> startedBy,
+  Value<String> source,
+  Value<String?> publishedBy,
   Value<bool> allPhases,
   Value<String> target,
   Value<String> families,
@@ -4937,6 +5026,12 @@ class $$OtaRunsTableFilterComposer
 
   ColumnFilters<String> get startedBy => $composableBuilder(
       column: $table.startedBy, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get source => $composableBuilder(
+      column: $table.source, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get publishedBy => $composableBuilder(
+      column: $table.publishedBy, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<bool> get allPhases => $composableBuilder(
       column: $table.allPhases, builder: (column) => ColumnFilters(column));
@@ -4978,6 +5073,12 @@ class $$OtaRunsTableOrderingComposer
   ColumnOrderings<String> get startedBy => $composableBuilder(
       column: $table.startedBy, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get source => $composableBuilder(
+      column: $table.source, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get publishedBy => $composableBuilder(
+      column: $table.publishedBy, builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<bool> get allPhases => $composableBuilder(
       column: $table.allPhases, builder: (column) => ColumnOrderings(column));
 
@@ -5017,6 +5118,12 @@ class $$OtaRunsTableAnnotationComposer
 
   GeneratedColumn<String> get startedBy =>
       $composableBuilder(column: $table.startedBy, builder: (column) => column);
+
+  GeneratedColumn<String> get source =>
+      $composableBuilder(column: $table.source, builder: (column) => column);
+
+  GeneratedColumn<String> get publishedBy => $composableBuilder(
+      column: $table.publishedBy, builder: (column) => column);
 
   GeneratedColumn<bool> get allPhases =>
       $composableBuilder(column: $table.allPhases, builder: (column) => column);
@@ -5064,6 +5171,8 @@ class $$OtaRunsTableTableManager extends RootTableManager<
             Value<DateTime> startedAt = const Value.absent(),
             Value<DateTime?> endedAt = const Value.absent(),
             Value<String> startedBy = const Value.absent(),
+            Value<String> source = const Value.absent(),
+            Value<String?> publishedBy = const Value.absent(),
             Value<bool> allPhases = const Value.absent(),
             Value<String> target = const Value.absent(),
             Value<String> families = const Value.absent(),
@@ -5077,6 +5186,8 @@ class $$OtaRunsTableTableManager extends RootTableManager<
             startedAt: startedAt,
             endedAt: endedAt,
             startedBy: startedBy,
+            source: source,
+            publishedBy: publishedBy,
             allPhases: allPhases,
             target: target,
             families: families,
@@ -5090,6 +5201,8 @@ class $$OtaRunsTableTableManager extends RootTableManager<
             required DateTime startedAt,
             Value<DateTime?> endedAt = const Value.absent(),
             required String startedBy,
+            Value<String> source = const Value.absent(),
+            Value<String?> publishedBy = const Value.absent(),
             required bool allPhases,
             required String target,
             required String families,
@@ -5103,6 +5216,8 @@ class $$OtaRunsTableTableManager extends RootTableManager<
             startedAt: startedAt,
             endedAt: endedAt,
             startedBy: startedBy,
+            source: source,
+            publishedBy: publishedBy,
             allPhases: allPhases,
             target: target,
             families: families,

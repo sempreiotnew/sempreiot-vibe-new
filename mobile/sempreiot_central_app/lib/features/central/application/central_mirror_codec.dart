@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../../../core/database/app_database.dart' show OtaRun, OtaRunUnit;
+import '../domain/ota/firmware_release.dart';
 import '../domain/safr/safr_product.dart';
 import '../domain/safr/safr_v2_frame.dart';
 import '../domain/safr/safr_v2_payloads.dart';
@@ -34,6 +35,115 @@ String mirrorOtaTopic(String identityId) => '$identityId/ota';
 
 /// Central → cloud, when a phone asks: the updates kept on the tablet.
 String mirrorOtaHistoryTopic(String identityId) => '$identityId/ota/history';
+
+/// Phone → central: a command that needs to know WHO asks — today an
+/// Internet update (docs/ota/ota-internet-plan.md §5.4). The last level is
+/// the phone's own Identity ID, and AWS lets a user publish only under its
+/// own (`SempreIoTCognitoPolicy`: `*/cmd/${cognito-identity.amazonaws.com:sub}`):
+/// the central knows who asked from the topic, not from the payload.
+String mirrorUserCommandTopic(String identityId, String userIdentityId) =>
+    '$identityId/cmd/$userIdentityId';
+
+/// What the central subscribes to: every user's command topic.
+String mirrorUserCommandFilter(String identityId) => '$identityId/cmd/+';
+
+/// The user's Identity ID of a command [topic] under [identityId]; null
+/// when [topic] is not one.
+String? mirrorCommandUser(String identityId, String topic) {
+  final prefix = '$identityId/cmd/';
+  if (!topic.startsWith(prefix)) return null;
+  final user = topic.substring(prefix.length);
+  return user.isEmpty || user.contains('/') ? null : user;
+}
+
+// ── remote update ───────────────────────────────────────────────────────────
+
+/// A phone asks for an Internet update ([all] = "Atualizar tudo", else
+/// [family] at [version] on [units]), or to cancel the one running. [id]
+/// pairs the central's answer with the request; [name] is the label the
+/// tablet shows ("Atualização iniciada remotamente por …").
+class MirrorRemoteOta {
+  const MirrorRemoteOta({
+    required this.id,
+    this.cancel = false,
+    this.all = false,
+    this.family,
+    this.version,
+    this.units = const [],
+    this.name,
+  });
+
+  final String id;
+  final bool cancel;
+  final bool all;
+  final SafrProductFamily? family;
+  final String? version;
+  final List<String> units;
+  final String? name;
+}
+
+String encodeMirrorOtaStart({
+  required String id,
+  bool all = false,
+  SafrProductFamily? family,
+  String? version,
+  List<String> units = const [],
+  String? name,
+}) =>
+    jsonEncode({
+      'v': mirrorVersion,
+      'type': 'ota_start',
+      'id': id,
+      if (all) 'all': true,
+      if (family != null) 'family': family.name,
+      if (version != null) 'version': version,
+      if (units.isNotEmpty) 'units': units,
+      if (name != null && name.isNotEmpty) 'name': name,
+    });
+
+String encodeMirrorOtaCancel({required String id, String? name}) =>
+    jsonEncode({
+      'v': mirrorVersion,
+      'type': 'ota_cancel',
+      'id': id,
+      if (name != null && name.isNotEmpty) 'name': name,
+    });
+
+/// An `ota_start` or `ota_cancel`; null = neither, or malformed.
+MirrorRemoteOta? decodeMirrorRemoteOta(String payload) {
+  try {
+    final map = jsonDecode(payload);
+    if (map is! Map || map['id'] is! String) return null;
+    final name = map['name'] is String ? map['name'] as String : null;
+    switch (map['type']) {
+      case 'ota_cancel':
+        return MirrorRemoteOta(id: map['id'] as String, cancel: true, name: name);
+      case 'ota_start':
+        final all = map['all'] == true;
+        final family = _byName(SafrProductFamily.values, map['family']);
+        final version = map['version'];
+        if (!all && (family == null || version is! String || version.isEmpty)) {
+          return null;
+        }
+        final units = map['units'];
+        return MirrorRemoteOta(
+          id: map['id'] as String,
+          all: all,
+          family: family,
+          version: version is String ? version : null,
+          units: [
+            if (units is List)
+              for (final u in units)
+                if (u is String) u,
+          ],
+          name: name,
+        );
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
 
 // ── watch ───────────────────────────────────────────────────────────────────
 
@@ -270,13 +380,26 @@ typedef MirrorTick = ({int offsetMs, SafrTrafficTick tick});
 ///   [arg] seconds;
 /// - [identifySending]: the central took a phone's request and is sending
 ///   the IDENTIFY — the phone knows the central heard it;
-/// - [identifyFailed]: an IDENTIFY a phone asked for got no confirmation.
-typedef MirrorEvent = ({String kind, String mac, int arg});
+/// - [identifyFailed]: an IDENTIFY a phone asked for got no confirmation;
+/// - [otaAnswer]: the central's answer to a phone's `ota_start` /
+///   `ota_cancel` — [mac] carries the request's id, [arg] is
+///   [MirrorOtaAnswer], [text] why it was refused.
+typedef MirrorEvent = ({String kind, String mac, int arg, String? text});
 
 abstract final class MirrorEventKind {
   static const identify = 'identify';
   static const identifySending = 'identify_sending';
   static const identifyFailed = 'identify_failed';
+  static const otaAnswer = 'ota_answer';
+}
+
+/// [MirrorEventKind.otaAnswer]'s `arg`.
+abstract final class MirrorOtaAnswer {
+  static const refused = 0;
+  static const started = 1;
+
+  /// Heard and being worked on (the image may have to be downloaded first).
+  static const working = 2;
 }
 
 class MirrorFrames {
@@ -305,7 +428,8 @@ String encodeMirrorFrames({
       't0': t0.millisecondsSinceEpoch,
       if (events.isNotEmpty)
         'events': [
-          for (final e in events) [e.kind, e.mac, e.arg],
+          for (final e in events)
+            [e.kind, e.mac, e.arg, if (e.text != null) e.text],
         ],
       'ticks': [
         for (final t in ticks)
@@ -362,6 +486,7 @@ MirrorFrames? decodeMirrorFrames(String payload) {
                 kind: e[0] as String,
                 mac: e[1] as String,
                 arg: (e[2] as num?)?.toInt() ?? 0,
+                text: e.length > 3 && e[3] is String ? e[3] as String : null,
               ),
       ],
     );
@@ -445,9 +570,23 @@ MirrorAlarms? decodeMirrorAlarms(String payload) {
 
 /// The firmware update as the tablet's "Atualizar dispositivos" has it.
 class MirrorOta {
-  const MirrorOta({required this.seq, this.run, this.push});
+  const MirrorOta({
+    required this.seq,
+    this.run,
+    this.push,
+    this.releases,
+    this.updates = UpdatesAvailable.none,
+  });
 
   final int seq;
+
+  /// The versions the central may install from the Internet, newest first
+  /// (its two catalogs merged); null = it has heard no catalog (or is an
+  /// app from before the Internet updates).
+  final List<FirmwareRelease>? releases;
+
+  /// What the central's badge counts.
+  final UpdatesAvailable updates;
 
   /// The update on screen: running, or ended and not dismissed. Null = none.
   final DeviceUpdateRun? run;
@@ -498,6 +637,8 @@ Map<String, dynamic> _runToJson(DeviceUpdateRun r) => {
       if (r.boardRestartedAt != null)
         'boardRestartedAt': _iso(r.boardRestartedAt),
       'startedBy': r.startedBy,
+      'source': r.source.name,
+      if (r.publishedBy != null) 'publishedBy': r.publishedBy,
     };
 
 DeviceUpdateRun? _runFromJson(Object? raw) {
@@ -554,6 +695,9 @@ DeviceUpdateRun? _runFromJson(Object? raw) {
     endedAt: _time(raw['endedAt']),
     boardRestartedAt: _time(raw['boardRestartedAt']),
     startedBy: raw['startedBy'] as String? ?? 'system',
+    source: _byName(DeviceUpdateSource.values, raw['source']) ??
+        DeviceUpdateSource.manual,
+    publishedBy: raw['publishedBy'] as String?,
   );
 }
 
@@ -587,22 +731,105 @@ OtaPushState? _pushFromJson(Object? raw) {
   );
 }
 
+/// The published versions as the phone needs them: what, when, by whom,
+/// for which families and their sizes. Keys and hashes stay on the tablet
+/// (the phone never downloads an image).
+List<Map<String, dynamic>> _releasesToJson(List<FirmwareRelease> releases) => [
+      for (final r in releases)
+        {
+          'version': r.version,
+          if (r.published != null) 'published': _iso(r.published),
+          if (r.publishedBy != null) 'by': r.publishedBy!.who,
+          if (r.notes.isNotEmpty) 'notes': r.notes,
+          if (r.forThisCentral) 'mine': true,
+          'sizes': {for (final e in r.images.entries) e.key.name: e.value.size},
+        },
+    ];
+
+List<FirmwareRelease>? _releasesFromJson(Object? raw) {
+  if (raw is! List) return null;
+  final out = <FirmwareRelease>[];
+  for (final r in raw) {
+    if (r is! Map || r['version'] is! String) continue;
+    final sizes = r['sizes'];
+    final images = <SafrProductFamily, FirmwareReleaseImage>{
+      if (sizes is Map)
+        for (final e in sizes.entries)
+          if (_byName(SafrProductFamily.values, e.key) case final f?)
+            f: FirmwareReleaseImage(
+                key: '',
+                size: (e.value as num?)?.toInt() ?? 0,
+                sha256: '',
+                project: 'sempreiot-${f.name}'),
+    };
+    if (images.isEmpty) continue;
+    final by = r['by'];
+    out.add(FirmwareRelease(
+      version: r['version'] as String,
+      images: images,
+      bucket: '',
+      region: '',
+      published: _time(r['published']),
+      publishedBy: by is String ? FirmwarePublisher(who: by) : null,
+      notes: r['notes'] is String ? r['notes'] as String : '',
+      forThisCentral: r['mine'] == true,
+    ));
+  }
+  return out;
+}
+
+Map<String, dynamic> _updatesToJson(UpdatesAvailable u) => {
+      'units': {for (final e in u.units.entries) e.key.name: e.value},
+      'versions': {for (final e in u.versions.entries) e.key.name: e.value},
+    };
+
+UpdatesAvailable _updatesFromJson(Object? raw) {
+  if (raw is! Map) return UpdatesAvailable.none;
+  final units = raw['units'], versions = raw['versions'];
+  return UpdatesAvailable(
+    units: {
+      if (units is Map)
+        for (final e in units.entries)
+          if (_byName(SafrProductFamily.values, e.key) case final f?)
+            if (e.value is List) f: [for (final k in e.value as List) '$k'],
+    },
+    versions: {
+      if (versions is Map)
+        for (final e in versions.entries)
+          if (_byName(SafrProductFamily.values, e.key) case final f?)
+            f: '${e.value}',
+    },
+  );
+}
+
 /// The update without its number: the same body = nothing new to publish.
-String mirrorOtaBody(DeviceUpdateRun? run, OtaPushState? push) => jsonEncode({
+String mirrorOtaBody(
+  DeviceUpdateRun? run,
+  OtaPushState? push, {
+  List<FirmwareRelease>? releases,
+  UpdatesAvailable updates = UpdatesAvailable.none,
+}) =>
+    jsonEncode({
       'run': run == null ? null : _runToJson(run),
       'push': _pushToJson(push),
+      if (releases != null) 'releases': _releasesToJson(releases),
+      'updates': _updatesToJson(updates),
     });
 
 String encodeMirrorOta({
   required int seq,
   required DeviceUpdateRun? run,
   required OtaPushState? push,
+  List<FirmwareRelease>? releases,
+  UpdatesAvailable updates = UpdatesAvailable.none,
 }) =>
     jsonEncode({
       'v': mirrorVersion,
       'seq': seq,
       'run': run == null ? null : _runToJson(run),
       'push': _pushToJson(push),
+      if (releases != null) 'releases': _releasesToJson(releases),
+      'updates': _updatesToJson(updates),
     });
 
 MirrorOta? decodeMirrorOta(String payload) {
@@ -615,6 +842,8 @@ MirrorOta? decodeMirrorOta(String payload) {
       seq: (map['seq'] as num?)?.toInt() ?? 0,
       run: _runFromJson(map['run']),
       push: _pushFromJson(map['push']),
+      releases: _releasesFromJson(map['releases']),
+      updates: _updatesFromJson(map['updates']),
     );
   } catch (_) {
     return null;
@@ -655,7 +884,11 @@ List<MirrorOtaHistoryRun>? decodeMirrorOtaHistory(String payload) {
       for (final r in runs)
         if (r is Map && r['run'] is Map && r['units'] is List)
           (
-            OtaRun.fromJson((r['run'] as Map).cast<String, dynamic>()),
+            // A central from before the Internet updates sends no source.
+            OtaRun.fromJson({
+              'source': 'manual',
+              ...(r['run'] as Map).cast<String, dynamic>(),
+            }),
             [
               for (final u in r['units'] as List)
                 if (u is Map) OtaRunUnit.fromJson(u.cast<String, dynamic>()),

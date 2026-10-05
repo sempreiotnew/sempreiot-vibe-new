@@ -9,6 +9,7 @@ import '../../../features/access/domain/entities/saved_central.dart';
 import '../../../features/auth/application/auth_provider.dart';
 import '../../../features/central/application/central_auth_provider.dart';
 import '../../../features/central/application/central_mirror_publisher.dart';
+import '../../../features/central/application/firmware_release_provider.dart';
 import '../../../features/central/application/central_mirror_viewer.dart';
 import '../../../features/central/application/central_status_publisher.dart';
 import '../../../features/central/application/device_led_provider.dart';
@@ -105,6 +106,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       // The mirror: the held alarms always, the live map while a user's
       // phone is watching (docs/cloud/central-mirror.md).
       ref.watch(centralMirrorPublisherProvider);
+      // Firmware published on the Internet: the catalogs, and the newest
+      // images downloaded into "Firmwares no tablet" (ota-internet-plan.md).
+      ref.watch(firmwareReleaseSyncProvider);
       // The on-screen LEDs must hear every frame from the start, whatever
       // tab is open (read, not watch: its ticks must not rebuild this screen).
       ref.read(deviceLedProvider);

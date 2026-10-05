@@ -65,6 +65,8 @@ class DeviceUpdateHistory {
         families: r.phases.map((f) => f.name).join(','),
         outcome: Value(r.running ? null : r.end?.name),
         message: Value(r.message),
+        source: Value(r.source.name),
+        publishedBy: Value(r.publishedBy),
       );
 
   /// The last updates, newest first, each with its units.

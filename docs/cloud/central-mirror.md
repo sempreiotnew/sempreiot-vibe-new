@@ -3,7 +3,9 @@
 **Status, 2026-10-03: the live map, the alarms, the firmware update (view only), the "who is
 watching" eye and Identificar from the phone are in code, with tests. All but Identificar were seen
 working on a tablet and a phone; Identificar has not run on devices yet. The cloud permissions of
-§7 are applied. Not built: release announcements (§4.4).**
+§7 are applied. **2026-10-05:** release announcements (§4.4) and the Internet update started from
+an Administrador's phone (rule 2, §4.6) are in code — design in `docs/ota/ota-internet-plan.md`;
+not run on devices yet.**
 
 A user who has access to a central opens it on the phone and sees what the tablet shows: the Rede
 map with every unit, the LEDs blinking, the packets going up and down, a firmware update running.
@@ -22,10 +24,13 @@ alarms held on the panel, always** (decided 2026-10-03).
    **Alarms are the exception:** the list of held alarms is published on every change, watched or
    not, and retained — a user who opens the app after an alarm started gets it at once, even if
    the central has gone offline since.
-2. **A mirror, not a second panel.** The phone shows; it does not command. A firmware update is
-   never started from the cloud (on site, PIN level 4), and nothing is reset, silenced, renamed or
-   retired from a phone. **The one exception (decided 2026-10-03): Identificar** — it lights a
-   unit's LED and changes nothing else (§3.3).
+2. **A mirror, not a second panel.** The phone shows; it does not command. Nothing is reset,
+   silenced, renamed or retired from a phone. **Two exceptions:**
+   - **Identificar** (decided 2026-10-03): it lights a unit's LED and changes nothing else (§3.3).
+   - **An Internet update** (decided 2026-10-05, replacing "a firmware update is never started from
+     the cloud"): an **Administrador** may start one from the phone and cancel it (§4.6). Only a
+     version **published** for that central, never a file chosen on the tablet. Never over a held
+     alarm. The tablet shows who started it and can pause or cancel it at any moment.
 3. **Never in the fire path.** Publishing runs beside the SAFR pipeline and never delays an ACK, a
    latch or a siren. If publishing fails, the tablet carries on.
 4. **Never stale as live.** Every message carries a sequence number and a time. The phone shows the
@@ -53,7 +58,9 @@ alarms held on the panel, always** (decided 2026-10-03).
 | `{id}/frames` | central → cloud | no | watched: every 250 ms if anything moved | frame movements (§4.2) |
 | `{id}/ota` | central → cloud | no | watched: on hello, then on change (≤ 1/s) | the update run and the push to the board (§4.3) |
 | `{id}/ota/history` | central → cloud | no | watched: when the phone asks | past runs (§4.3) |
-| `{id}/release` | cloud → central | yes | when a firmware is released | release announcement (§4.4) — not built |
+| `sempreiot/releases/{channel}` | cloud → every central | **yes** | when `ota_release.sh` publishes | the catalog of published firmware (§4.4) |
+| `{id}/release` | cloud → this central | **yes** | when `ota_release.sh --central` publishes | this central's own catalog (§4.4) |
+| `{id}/cmd/{user}` | phone → central | no | an Administrador taps Atualizar / Cancelar | `ota_start` / `ota_cancel` (§4.6); `{user}` = the phone's Identity ID, which AWS lets only that user publish under |
 
 Why the ping rides the bare `{id}` topic: a user's `Access_…` policy already allows publishing
 there and nowhere else under the central, so no lambda and no per-user policy changes.
@@ -206,6 +213,10 @@ next snapshot repairs what it changed.
  "push":{"phase":"sending","chunksDone":30,"chunksTotal":120,"bytesDone":30000,"bytesTotal":120000}}
 ```
 
+Since 2026-10-05 it also carries `releases` (the published versions the central may install:
+version, date, who published, notes, `mine` for one-central releases, sizes — no keys or hashes) and
+`updates` (what the central's badge counts: the units per family below the highest version).
+
 `run` is the tablet's `DeviceUpdateRun` (`device_update_state.dart`), every field; `null` = no
 update on screen. `push` is the image on its way from the tablet to the board — only its phase and
 how far it is; `null` = none. The image itself, the steps of the push, its log lines and the
@@ -222,17 +233,54 @@ its "Atualizar dispositivos" opens and when a run ends. Nothing is stored in the
 
 On the phone "Atualizar dispositivos" is the tablet's screen, view only: the map with the ring and
 the phase on the unit being updated, the pill, the bar with the same words, a unit's details and
-its past updates, Registro → Histórico. No choosing, no "Atualizar", no Pausar / Retomar /
-Cancelar / Concluir, no "Firmwares no tablet". The line on Rede ("Atualização de firmware em
+its past updates, Registro → Histórico. No Pausar / Retomar / Concluir, no "Firmwares no
+tablet"; choosing, "Atualizar" and Cancelar only for an Administrador, Internet only (§4.6). The line on Rede ("Atualização de firmware em
 andamento · Abrir") is there too.
 
 ### 4.4 `release` — a new firmware exists
 
-Retained, one per family, published by the cloud (never by a phone, never by polling). It names the
-family, the version, where the signed image is and its hash. The central downloads it into
-"Firmwares no tablet" and shows it; the update itself is still started on site. Format and delivery
-are not built — to be written with `docs/ota/ota-and-production-blueprint-v1.md`; it needs a
-decision on where the signed images are stored and who publishes the announcement.
+**Built 2026-10-05** — `docs/ota/ota-internet-plan.md` (design), `docs/ota/ota-tools.md` (the
+script).
+
+- **What it is:** the catalog of every published version — one retained message per channel for
+  every central, plus one on `{id}/release` for a single central. It is published by
+  `firmware/tools/ota_release.sh`, never by a phone or a central, and nothing polls.
+- **Where the images are:** the private bucket `sempreiot-releases`, organised by version.
+- **What the central does with it:**
+  - It downloads the highest version of each family into "Firmwares no tablet".
+  - It checks hash, family and version.
+  - It counts the units below that version for the badge on "Atualizar dispositivos".
+- **What the phone gets:** the published versions and the count, inside `ota` (§4.3).
+
+### 4.6 An Internet update from a phone (`{id}/cmd/{user}`)
+
+```json
+{"v":1,"type":"ota_start","id":"muvia60t-1","all":true,"name":"…"}
+{"v":1,"type":"ota_start","id":"…","family":"node","version":"0.3.4","units":["AA:BB:…"],"name":"…"}
+{"v":1,"type":"ota_cancel","id":"…","name":"…"}
+```
+
+- **Who is asking.** The topic's last level is the phone's Identity ID. `SempreIoTCognitoPolicy`
+  allows `topic/*/cmd/${cognito-identity.amazonaws.com:sub}`: a user can publish there only under
+  its own ID. The central reads who asked from the topic, never from the payload (`name` is only
+  the label it shows).
+- **Who may.** The central looks that Identity ID up in its access relations. It must be an
+  accepted Administrador (`LEVEL_4`) or Master; anyone else is refused.
+- **The checks after that.** The version must be published for this central. The controller's own
+  blockers apply (a run, a push, a rollout, a held alarm). The units must be ones the central knows.
+- **The run itself.** The same `DeviceUpdateController.start/startAll` as the tablet's, with
+  `source = internet` and `startedBy = remote:<name>`. The tablet shows "Atualização iniciada
+  remotamente por …" over the run.
+- **The answer.** It goes back as an `ota_answer` event on `frames`: `working` at once, then
+  `started` or `refused` plus the reason. The phone waits up to 8 s for `working`, then up to
+  3 min, because the central may have to download the images first.
+- **Audit.** Every start, cancel and refusal is in the audit trail, with the user's Identity ID.
+- **On the phone.** An Administrador sees the Internet bar (no Manual, no "Firmwares no tablet")
+  and the same update sheet, without a PIN, plus **Cancelar** while a run goes. Everyone else sees
+  what is available and "Só um Administrador desta central pode iniciar uma atualização pela
+  internet." Code: `remote_ota.dart` (the central), `central_mirror_viewer.dart` `sendOtaStart` /
+  `sendOtaCancel` (the phone). Tests: `test/central/remote_ota_test.dart`, the "from a phone" group
+  of `test/ota/device_update_controller_test.dart`, `test/central/central_mirror_screen_test.dart`.
 
 ### 4.5 `alarm` — the alarms held on the panel
 
@@ -338,8 +386,13 @@ the new version is created.
 Not needed: any change to the user policies (`Access_…`, `SempreIoTCognitoPolicy`) or to the access
 lambdas.
 
-Left for later: an IAM user with limited rights for cloud administration (today the root user);
-who publishes `release` (step 3).
+Left for later: an IAM user with limited rights for cloud administration (today the root user).
+
+**2026-10-05 (OTA through the Internet), applied with `firmware/tools/ota_cloud_setup.sh`:**
+- `Central_*`: Subscribe + Receive on `sempreiot/releases/*`. Also in `lambda/central/policies.mjs`.
+- `SempreIoTCognitoPolicy`: Publish on `topic/*/cmd/${cognito-identity.amazonaws.com:sub}` (§4.6).
+- The identity pool's role: read the release images (each central only its own private folder).
+- The release script publishes as the person who runs it (`aws login`).
 
 ---
 
@@ -369,4 +422,5 @@ who publishes `release` (step 3).
 4. **Identificar from the phone**, and the IDENTIFY blink mirrored (§3.3). **In code 2026-10-03,
    not run on devices yet.**
 
-Left: `release` (§4.4).
+5. **Releases and the Internet update from a phone** (§4.4, §4.6). **In code 2026-10-05**, not run
+   on devices yet.

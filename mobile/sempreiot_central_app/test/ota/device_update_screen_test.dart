@@ -1,4 +1,7 @@
+import 'dart:convert';
 import 'dart:typed_data';
+
+import 'package:crypto/crypto.dart' as crypto;
 
 import 'package:drift/drift.dart' show driftRuntimeOptions;
 import 'package:drift/native.dart';
@@ -9,8 +12,10 @@ import 'package:sempreiot_central_app/core/database/app_database.dart';
 import 'package:sempreiot_central_app/features/central/application/alarm_latch_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/credentials_admin_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/device_update_controller.dart';
+import 'package:sempreiot_central_app/features/central/application/device_update_source.dart';
 import 'package:sempreiot_central_app/features/central/application/device_update_state.dart';
 import 'package:sempreiot_central_app/features/central/application/firmware_library_provider.dart';
+import 'package:sempreiot_central_app/features/central/application/firmware_release_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_board_events_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_pin_policy.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_controller.dart';
@@ -22,9 +27,11 @@ import 'package:sempreiot_central_app/features/central/application/safr_traffic_
 import 'package:sempreiot_central_app/features/central/application/serial_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/topology_provider.dart';
 import 'package:sempreiot_central_app/features/central/data/services/firmware_library_store.dart';
+import 'package:sempreiot_central_app/features/central/data/services/release_downloader.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_product.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
 import 'package:sempreiot_central_app/features/central/presentation/screens/device_update_screen.dart';
+import 'package:sempreiot_central_app/features/iot/domain/entities/mqtt_message_entity.dart';
 
 import 'fake_firmware.dart';
 
@@ -58,6 +65,9 @@ class _Update extends DeviceUpdateController {
   /// Who started what: (family, version, by).
   final starts = <(SafrProductFamily, String, String)>[];
 
+  /// Where each start's image came from.
+  final sources = <DeviceUpdateSource>[];
+
   @override
   Future<String?> start({
     required SafrProductFamily family,
@@ -65,11 +75,27 @@ class _Update extends DeviceUpdateController {
     required FirmwareLibraryEntry image,
     bool reinstall = false,
     String by = 'system',
+    DeviceUpdateSource source = DeviceUpdateSource.manual,
   }) async {
     starts.add((family, image.version, by));
+    sources.add(source);
     return null;
   }
 }
+
+/// The published images, by S3 key.
+class _S3 implements ReleaseDownloader {
+  final objects = <String, Uint8List>{};
+
+  @override
+  Future<Uint8List> download(
+          {required String bucket,
+          required String region,
+          required String key}) async =>
+      objects[key] ?? (throw const ReleaseDownloadException('404'));
+}
+
+late _S3 _s3;
 
 /// The controller the screen got.
 late _Update _update;
@@ -149,9 +175,14 @@ void main() {
   };
 
   Future<void> pump(WidgetTester tester, Size size,
-      {DeviceUpdateRun? run, EditorRole? pinGranted}) async {
+      {DeviceUpdateRun? run,
+      EditorRole? pinGranted,
+      DeviceUpdateSource source = DeviceUpdateSource.manual}) async {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
+    // The choice the tablet remembers (Internet | Manual).
+    await tester.runAsync(() => db.setMeta('ota_update_source', source.name));
+    _s3 = _S3();
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -176,6 +207,8 @@ void main() {
           otaRolloutProvider.overrideWith((ref) => _Rollout(ref)),
           otaHeldOnBoardProvider.overrideWithValue(const {}),
           firmwareLibraryStoreProvider.overrideWithValue(store),
+          releaseDownloaderProvider.overrideWithValue(_s3),
+          appIsCentralProvider.overrideWithValue(true),
           deviceUpdateProvider
               .overrideWith((ref) => _update = _Update(ref, run)),
           if (pinGranted != null)
@@ -324,6 +357,95 @@ void main() {
     await tester.tap(find.text('Atualizar'));
     await settle(tester);
   }
+
+  /// The catalog ota_release.sh would announce: [version] of the three
+  /// families, published (its images in the fake S3).
+  Future<void> publish(WidgetTester tester, String version) async {
+    final images = <String, Object?>{};
+    for (final f in const ['board', 'node', 'leaf']) {
+      final bytes = image(f, version);
+      final key = 'bench/$version/$f-$version.bin';
+      _s3.objects[key] = bytes;
+      images[f] = {
+        'key': key,
+        'size': bytes.length,
+        'sha256': crypto.sha256.convert(bytes).toString(),
+        'project': 'sempreiot-$f',
+      };
+    }
+    final container = ProviderScope.containerOf(
+        tester.element(find.byType(DeviceUpdateScreen)));
+    await tester.runAsync(() async {
+      container.read(firmwareReleasesProvider.notifier).onMessage(
+          MqttMessageEntity(
+            topic: firmwareCatalogTopic(otaReleaseChannel),
+            payload: jsonEncode({
+              'v': 1,
+              'channel': 'bench',
+              'bucket': 'sempreiot-releases',
+              'region': 'us-east-1',
+              'releases': [
+                {
+                  'version': version,
+                  'published': '2026-10-05T16:00:00Z',
+                  'published_by': {'who': 'tallesaugusto'},
+                  'notes': 'Leaf: new parent on the same wake',
+                  'images': images,
+                }
+              ],
+            }),
+          ),
+          null);
+      await container.read(firmwareReleasesProvider.notifier).syncNewest();
+    });
+    await settle(tester);
+  }
+
+  for (final s in sizes.entries) {
+    testWidgets('Internet: the switch and what is published — ${s.key}',
+        (tester) async {
+      await pump(tester, s.value, source: DeviceUpdateSource.internet);
+      await settle(tester);
+      expect(find.byKey(const ValueKey('update-source')), findsOneWidget);
+      expect(find.text('Aguardando a lista de versões da internet…'),
+          findsOneWidget);
+      await publish(tester, '0.3.4');
+      expect(find.text('5 dispositivos com atualização para v0.3.4'),
+          findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('Internet: the published versions, no file to choose',
+      (tester) async {
+    await pump(tester, const Size(1280, 800),
+        source: DeviceUpdateSource.internet, pinGranted: EditorRole.admin);
+    await settle(tester);
+    await publish(tester, '0.3.4');
+    await openUpdateSheet(tester);
+
+    expect(find.text('VERSÕES PUBLICADAS NA INTERNET'), findsOneWidget);
+    expect(find.text('MAIS NOVO'), findsOneWidget);
+    expect(find.text('Procurar no tablet'), findsNothing);
+    expect(find.textContaining('publicado por tallesaugusto'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('update-confirm')));
+    await settle(tester);
+    expect(_update.starts, [(SafrProductFamily.node, '0.3.4', 'admin')]);
+    expect(_update.sources, [DeviceUpdateSource.internet]);
+  });
+
+  testWidgets('Manual: today\'s files, chosen on the tablet', (tester) async {
+    await pump(tester, const Size(1280, 800),
+        source: DeviceUpdateSource.internet);
+    await settle(tester);
+    await tester.tap(find.text('Manual'));
+    await settle(tester);
+    expect(find.text('Aguardando a lista de versões da internet…'),
+        findsNothing);
+    await openUpdateSheet(tester);
+    expect(find.text('FIRMWARE NO TABLET'), findsOneWidget);
+    expect(find.text('Procurar no tablet'), findsOneWidget);
+  });
 
   testWidgets('an update starts only after the PIN', (tester) async {
     await pump(tester, const Size(1280, 800));

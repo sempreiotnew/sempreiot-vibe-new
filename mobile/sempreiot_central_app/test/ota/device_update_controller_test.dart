@@ -1,16 +1,25 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
+
+import 'package:crypto/crypto.dart' as crypto;
 
 import 'package:drift/drift.dart' show driftRuntimeOptions;
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sempreiot_central_app/core/database/app_database.dart';
+import 'package:sempreiot_central_app/features/access/application/central_access_provider.dart';
+import 'package:sempreiot_central_app/features/access/domain/entities/access_level.dart';
+import 'package:sempreiot_central_app/features/access/domain/entities/access_relation.dart';
+import 'package:sempreiot_central_app/features/central/application/central_mirror_codec.dart';
+import 'package:sempreiot_central_app/features/central/application/remote_ota.dart';
 import 'package:sempreiot_central_app/features/central/application/central_installation_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/device_update_controller.dart';
 import 'package:sempreiot_central_app/features/central/application/device_update_history.dart';
 import 'package:sempreiot_central_app/features/central/application/device_update_state.dart';
 import 'package:sempreiot_central_app/features/central/application/firmware_library_provider.dart';
+import 'package:sempreiot_central_app/features/central/application/firmware_release_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_controller.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_state.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_rollout_controller.dart';
@@ -21,9 +30,11 @@ import 'package:sempreiot_central_app/features/central/application/serial_provid
 import 'package:sempreiot_central_app/features/central/application/topology_provider.dart';
 import 'package:sempreiot_central_app/features/central/data/services/firmware_file_picker.dart';
 import 'package:sempreiot_central_app/features/central/data/services/firmware_library_store.dart';
+import 'package:sempreiot_central_app/features/central/data/services/release_downloader.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_identity.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_product.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
+import 'package:sempreiot_central_app/features/iot/domain/entities/mqtt_message_entity.dart';
 
 import 'fake_board.dart';
 import 'fake_firmware.dart';
@@ -52,6 +63,42 @@ class _MemoryStore implements FirmwareLibraryStore {
   @override
   Future<void> delete(String name) async => files.remove(name);
 }
+
+/// The published images, by S3 key (docs/ota/ota-internet-plan.md).
+class _FakeS3 implements ReleaseDownloader {
+  final objects = <String, Uint8List>{};
+  final asked = <String>[];
+
+  @override
+  Future<Uint8List> download(
+      {required String bucket,
+      required String region,
+      required String key}) async {
+    asked.add(key);
+    final b = objects[key];
+    if (b == null) throw const ReleaseDownloadException('404');
+    return b;
+  }
+}
+
+/// The central's list of users, without the backend.
+class _Relations extends CentralAccessRelationsNotifier {
+  _Relations(super.ref, List<AccessRelation> relations) {
+    state = relations;
+  }
+}
+
+AccessRelation _user(String identityId, AccessLevel level) => AccessRelation(
+      centralIdentityId: 'us-east-1:central',
+      userSubId: 'sub-$identityId',
+      userIdentityId: identityId,
+      status: 'ACCEPTED',
+      level: level,
+      requestId: 'r',
+      requestedAt: DateTime(2026),
+      resolvedAt: DateTime(2026),
+      updatedAt: DateTime(2026),
+    );
 
 /// "Atualizar dispositivos" against a board that plays the push and the
 /// rollout byte for byte (fake_board.dart + fake_rollout.dart), through the
@@ -118,6 +165,8 @@ void main() {
   late FakeBoard board;
   late ProviderContainer container;
   late _MemoryStore store;
+  late _FakeS3 s3;
+  var relations = <AccessRelation>[];
 
   FakeRollout threeUnits({
     List<(FakePlay, SafrOtaReason)>? sirenPlays,
@@ -143,6 +192,7 @@ void main() {
     db = AppDatabase.forTesting(NativeDatabase.memory());
     mesh = m;
     store = _MemoryStore();
+    s3 = _FakeS3();
     for (final name in library) {
       final dash = name.indexOf('-');
       final family = name.substring(0, dash);
@@ -159,6 +209,9 @@ void main() {
       otaPushTimingsProvider.overrideWithValue(pushTimings),
       deviceUpdateTimingsProvider.overrideWithValue(updateTimings),
       firmwareLibraryStoreProvider.overrideWithValue(store),
+      releaseDownloaderProvider.overrideWithValue(s3),
+      centralAccessRelationsProvider
+          .overrideWith((ref) => _Relations(ref, relations)),
     ]);
     container.read(safrIngestProvider);
     container.read(otaRolloutProvider);
@@ -568,6 +621,196 @@ void main() {
     expect(store.files.keys, ['leaf-0.3.0.bin']);
     final lib = container.read(firmwareLibraryProvider);
     expect(lib.of(SafrProductFamily.leaf).single.version, '0.3.0');
+  });
+
+  group('Internet', () {
+    /// Publishes [versions] of [families] (as ota_release.sh would) and
+    /// lets the tablet hear the catalog.
+    Future<void> publish(Map<String, List<String>> versions) async {
+      final releases = <Map<String, Object?>>[];
+      for (final v in versions.entries) {
+        final images = <String, Object?>{};
+        for (final f in v.value) {
+          final bytes = fakeFirmware(
+              project: 'sempreiot-$f', version: v.key, size: 6 * 4096);
+          final key = 'bench/${v.key}/$f-${v.key}.bin';
+          s3.objects[key] = bytes;
+          images[f] = {
+            'key': key,
+            'size': bytes.length,
+            'sha256': crypto.sha256.convert(bytes).toString(),
+            'project': 'sempreiot-$f',
+          };
+        }
+        releases.add({
+          'version': v.key,
+          'published': '2026-10-05T16:00:00Z',
+          'published_by': {'who': 'tallesaugusto', 'host': 'MacBook-Pro', 'commit': 'abc1234'},
+          'images': images,
+        });
+      }
+      container.read(firmwareReleasesProvider.notifier).onMessage(
+          MqttMessageEntity(
+            topic: firmwareCatalogTopic(otaReleaseChannel),
+            payload: jsonEncode({
+              'v': 1,
+              'channel': 'bench',
+              'bucket': 'sempreiot-releases',
+              'region': 'us-east-1',
+              'releases': releases,
+            }),
+          ),
+          null);
+    }
+
+    test('"Atualizar tudo" takes the highest published version, downloaded',
+        () async {
+      final m = threeUnits()..stored.clear();
+      await boot(m);
+      await publish({
+        '0.2.0': ['board', 'node', 'leaf'],
+        '0.1.9': ['board', 'node', 'leaf'],
+      });
+
+      meshRejoins();
+      expect(await update().startAll(source: DeviceUpdateSource.internet),
+          isNull);
+      expect(run().source, DeviceUpdateSource.internet);
+      expect(run().publishedBy, 'tallesaugusto · MacBook-Pro · abc1234');
+      expect(run().targetOf(node), '0.2.0', reason: 'the highest, never 0.1.9');
+      await ended();
+
+      expect(board.runningVersion, '0.2.0');
+      expect(run().end, DeviceUpdateEnd.done);
+      expect(store.files.keys, containsAll(['board-0.2.0.bin', 'node-0.2.0.bin']));
+      expect(s3.asked, isNot(contains('bench/0.1.9/node-0.1.9.bin')));
+      await update().written;
+      final row = (await container.read(deviceUpdateHistoryProvider).recent())
+          .first
+          .$1;
+      expect(row.source, 'internet');
+      expect(row.publishedBy, 'tallesaugusto · MacBook-Pro · abc1234');
+    });
+
+    test('nothing published: refused, nothing downloaded or pushed', () async {
+      await boot(threeUnits(), library: ['board-0.2.0.bin', 'node-0.2.0.bin']);
+      final said =
+          await update().startAll(source: DeviceUpdateSource.internet);
+      expect(said, startsWith('Nada publicado na internet'));
+      expect(container.read(deviceUpdateProvider), isNull);
+      expect(board.images, isEmpty);
+    });
+
+    test('a file imported by hand is never sent as the published one',
+        () async {
+      // Same version on the tablet, different bytes (size) from the release.
+      await boot(threeUnits(), library: ['node-0.2.0.bin']);
+      store.files['node-0.2.0.bin'] =
+          fakeFirmware(project: 'sempreiot-node', version: '0.2.0', size: 4096);
+      await container.read(firmwareLibraryProvider.notifier).load();
+      await publish({
+        '0.2.0': ['node'],
+      });
+      // The automatic download is not run here: the file on the tablet is
+      // still the hand-imported one.
+      final said = await update().start(
+          family: node,
+          keys: [siren],
+          image: image(node, '0.2.0'),
+          source: DeviceUpdateSource.internet);
+      expect(said, 'O firmware no tablet não confere com o publicado na internet.');
+      expect(container.read(deviceUpdateProvider), isNull);
+    });
+
+    group('from a phone', () {
+      const admin = 'us-east-1:aaaaaaaa-0000-0000-0000-00000000000a';
+      const operator = 'us-east-1:bbbbbbbb-0000-0000-0000-00000000000b';
+      RemoteOta remote() => container.read(remoteOtaProvider);
+      MirrorRemoteOta startNode(String version) => MirrorRemoteOta(
+          id: 'r',
+          family: node,
+          version: version,
+          units: const [siren],
+          name: 'Ana');
+
+      setUp(() => relations = [
+            _user(admin, AccessLevel.level4),
+            _user(operator, AccessLevel.level2),
+          ]);
+      tearDown(() => relations = []);
+
+      test('an Administrador starts it: the same run, who in the history',
+          () async {
+        await boot(threeUnits());
+        await publish({
+          '0.2.0': ['node'],
+        });
+        expect(await remote().handle(admin, startNode('0.2.0')), isNull);
+        expect(run().startedBy, 'remote:Ana');
+        expect(run().source, DeviceUpdateSource.internet);
+        await ended();
+        expect(run().units[siren]!.state, SafrOtaUnitState.done);
+        final audit = await db.select(db.auditEvents).get();
+        expect(audit.map((a) => a.action), contains('ota_remote_started'));
+      });
+
+      test('anyone below Administrador is refused, and it is written down',
+          () async {
+        await boot(threeUnits());
+        await publish({
+          '0.2.0': ['node'],
+        });
+        expect(await remote().handle(operator, startNode('0.2.0')),
+            contains('Administrador'));
+        expect(await remote().handle('us-east-1:stranger', startNode('0.2.0')),
+            contains('Administrador'));
+        expect(container.read(deviceUpdateProvider), isNull);
+        final audit = await db.select(db.auditEvents).get();
+        expect(audit.where((a) => a.action == 'ota_remote_refused'), hasLength(2));
+      });
+
+      test('only a published version, never a file on the tablet', () async {
+        await boot(threeUnits(), library: ['node-0.2.0.bin']);
+        expect(await remote().handle(admin, startNode('0.2.0')),
+            'A versão 0.2.0 não está publicada para esta central.');
+        expect(container.read(deviceUpdateProvider), isNull);
+      });
+
+      test('a unit the central does not know is refused', () async {
+        await boot(threeUnits());
+        await publish({
+          '0.2.0': ['node'],
+        });
+        final said = await remote().handle(
+            admin,
+            const MirrorRemoteOta(
+                id: 'r', family: node, version: '0.2.0', units: ['00:00']));
+        expect(said, contains('não conhece'));
+      });
+
+      test('an Administrador cancels the run', () async {
+        await boot(threeUnits(), library: ['node-0.2.0.bin']);
+        await update().start(
+            family: node, keys: [siren, button], image: image(node, '0.2.0'));
+        expect(
+            await remote().handle(admin, const MirrorRemoteOta(id: 'c', cancel: true)),
+            isNull);
+        await ended();
+        expect(run().end, isNot(DeviceUpdateEnd.done));
+        expect(
+            await remote().handle(admin, const MirrorRemoteOta(id: 'c', cancel: true)),
+            'Nenhuma atualização em andamento.');
+      });
+    });
+
+    test('Manual runs are recorded as manual', () async {
+      await boot(threeUnits(), library: ['node-0.2.0.bin']);
+      await update()
+          .start(family: node, keys: [siren], image: image(node, '0.2.0'));
+      expect(run().source, DeviceUpdateSource.manual);
+      expect(run().publishedBy, isNull);
+      await ended();
+    });
   });
 
   test('a run is refused while another runs', () async {

@@ -65,7 +65,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 11);
+    expect(version, 12);
   });
 
   test('schema v10 -> v11 adds the firmware update history, rows kept',
@@ -116,6 +116,52 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 11);
+    expect(version, 12);
+  });
+
+  test('schema v11 -> v12 adds where the image came from, rows kept',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('siot_migr_');
+    addTearDown(() => dir.delete(recursive: true));
+    final file = File('${dir.path}/sempreiot.sqlite');
+
+    final fresh = AppDatabase.forTesting(NativeDatabase(file));
+    await fresh.into(fresh.otaRuns).insert(OtaRunsCompanion.insert(
+          runId: '0011223344556677',
+          startedAt: DateTime.utc(2026, 10, 2, 15),
+          startedBy: 'admin',
+          allPhases: true,
+          target: '0.2.6',
+          families: 'board,node',
+        ));
+    await fresh.close();
+
+    final upgraded = AppDatabase.forTesting(NativeDatabase(file, setup: (raw) {
+      raw.execute('ALTER TABLE ota_runs DROP COLUMN source');
+      raw.execute('ALTER TABLE ota_runs DROP COLUMN published_by');
+      raw.execute('PRAGMA user_version = 11');
+    }));
+    addTearDown(upgraded.close);
+
+    final old = await upgraded.select(upgraded.otaRuns).getSingle();
+    expect(old.startedBy, 'admin');
+    expect(old.source, 'manual'); // a run from before was a manual one
+    expect(old.publishedBy, isNull);
+    await upgraded.into(upgraded.otaRuns).insert(OtaRunsCompanion.insert(
+          runId: '8899aabbccddeeff',
+          startedAt: DateTime.utc(2026, 10, 5, 15),
+          startedBy: 'remote:Talles',
+          allPhases: false,
+          target: '0.3.4',
+          families: 'node',
+          source: const Value('internet'),
+          publishedBy: const Value('tallesaugusto · MacBook-Pro · 4706fbb'),
+        ));
+    expect(await upgraded.select(upgraded.otaRuns).get(), hasLength(2));
+    final version = await upgraded
+        .customSelect('PRAGMA user_version')
+        .map((row) => row.read<int>('user_version'))
+        .getSingle();
+    expect(version, 12);
   });
 }

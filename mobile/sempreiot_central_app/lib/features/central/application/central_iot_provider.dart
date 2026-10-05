@@ -10,14 +10,21 @@ import '../../iot/domain/entities/mqtt_message_entity.dart';
 import '../../iot/domain/repositories/i_iot_mqtt_repository.dart';
 import '../data/services/central_credentials_service.dart';
 import 'central_mirror_codec.dart';
+import 'firmware_release_provider.dart'
+    show firmwareCatalogTopic, centralFirmwareCatalogTopic, otaReleaseChannel;
 
 export '../../../core/connectivity/connectivity_provider.dart'
     show NetworkStatus;
 
+/// The central's machine identity: one instance, so the MQTT session and the
+/// firmware downloads (release_downloader.dart) share its cached credentials.
+final centralCredentialsServiceProvider = Provider<CentralCredentialsService>(
+  (ref) => CentralCredentialsService(db: ref.read(appDatabaseProvider)),
+);
+
 final centralMqttRepositoryProvider = Provider<IIotMqttRepository>((ref) {
-  final db = ref.read(appDatabaseProvider);
   return IotMqttRepositoryImpl.forCentral(
-    credentialsService: CentralCredentialsService(db: db),
+    credentialsService: ref.read(centralCredentialsServiceProvider),
   );
 });
 
@@ -107,8 +114,19 @@ class CentralIotConnectionNotifier extends AsyncNotifier<bool> {
         // would also bring back everything the central itself publishes
         // (the mirror's frame batches, several a second):
         //  · `$id/access` — a user asks for access;
-        //  · `$id`        — a user's phone is watching (central mirror).
-        for (final topic in ['$id/access', mirrorCommandTopic(id)]) {
+        //  · `$id`        — a user's phone is watching (central mirror);
+        //  · the firmware catalogs, retained (docs/ota/ota-internet-plan.md):
+        //    the one for every central and the one for this central only.
+        for (final topic in [
+          '$id/access',
+          mirrorCommandTopic(id),
+          //  · `$id/cmd/+` — a user's command that must say who asks (an
+          //    Internet update from a phone): the last level is the user's
+          //    Identity ID, which AWS lets only that user publish under.
+          mirrorUserCommandFilter(id),
+          firmwareCatalogTopic(otaReleaseChannel),
+          centralFirmwareCatalogTopic(id),
+        ]) {
           _topicSubs.add(repo.subscribe(topic).listen(
             (msg) {
               if (!_messagesCtrl.isClosed) _messagesCtrl.add(msg);
