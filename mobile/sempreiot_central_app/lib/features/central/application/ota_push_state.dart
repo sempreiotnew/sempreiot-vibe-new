@@ -203,6 +203,7 @@ class OtaPushState {
     this.storedOnBoard = const {},
     this.startedAt,
     this.endedAt,
+    this.totals,
   });
 
   final OtaPushPhase phase;
@@ -268,8 +269,12 @@ class OtaPushState {
   final DateTime? startedAt;
   final DateTime? endedAt;
 
-  int get chunksTotal => file?.chunkCount ?? 0;
-  int get bytesTotal => file?.size ?? 0;
+  /// The size of the image when there is no [file]: a push seen through
+  /// the central mirror on a user's phone, which never holds the image.
+  final ({int chunks, int bytes})? totals;
+
+  int get chunksTotal => file?.chunkCount ?? totals?.chunks ?? 0;
+  int get bytesTotal => file?.size ?? totals?.bytes ?? 0;
 
   /// 0…1.
   double get progress => bytesTotal == 0 ? 0 : bytesDone / bytesTotal;
@@ -381,5 +386,6 @@ class OtaPushState {
             : startedAt as DateTime?,
         endedAt:
             identical(endedAt, _keep) ? this.endedAt : endedAt as DateTime?,
+        totals: totals,
       );
 }

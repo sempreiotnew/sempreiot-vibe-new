@@ -1,3 +1,5 @@
+flutter run -d chrome --web-port 52901
+
 flutter run -d chrome --web-port 52901 --dart-define=APP_MODE=central
 
 
@@ -27,11 +29,11 @@ flutter run -d 98cc396d \
   --dart-define=APP_MODE=central \
   --dart-define='FACTORY={"info":{"name":"Central Nome","firmware_version":"1.0.0","hash":"a1b2c3","old_hash":"","created_at":"2026-06-25","updated_at":"2026-06-25"},"credentials":{"pin":"428412","root":"admin","password":"Teste@123"},"access":[{"subId":"sub-9f3a21bc","role":"OWNER","pin":"123123"},{"subId":"sub-8f3a21bc","role":"ADMIN","pin":"123123"}],"iot":{"iot_client_id":"central@sempreiot.com","iot_password":"Teste@123"}}'
 
+## S3024C508203905
 
-
-  flutter run -d S3024C508203905 \
+  flutter run -d S3024C508200790 \
   --dart-define=APP_MODE=central \
-  --dart-define='FACTORY={"info":{"name":"Central Nome","firmware_version":"1.0.0","hash":"a1b2c3","old_hash":"","created_at":"2026-06-25","updated_at":"2026-06-25"},"credentials":{"pin":"428412","root":"admin","password":"Teste@123"},"access":[{"subId":"sub-9f3a21bc","role":"OWNER","pin":"123123"},{"subId":"sub-8f3a21bc","role":"ADMIN","pin":"123123"}],"iot":{"iot_client_id":"central-002@sempreiot.com","iot_password":"$y3XYZv8H)Dw@O+(7+Sy"}}'
+  --dart-define='FACTORY={"info":{"name":"Central Nome","firmware_version":"1.0.0","hash":"a1b2c3","old_hash":"","created_at":"2026-06-25","updated_at":"2026-06-25"},"credentials":{"pin":"428412","root":"admin","password":"Teste@123"},"access":[{"subId":"sub-9f3a21bc","role":"OWNER","pin":"123123"},{"subId":"sub-8f3a21bc","role":"ADMIN","pin":"123123"}],"iot":{"iot_client_id":"central-003@sempreiot.com","iot_password":"$y3XYZv8H)Dw@O+(7+Sy"}}'
 
 
 flutter run -d 98cc396d \

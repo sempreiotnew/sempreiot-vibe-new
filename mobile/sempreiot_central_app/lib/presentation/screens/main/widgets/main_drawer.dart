@@ -33,8 +33,10 @@ class MainDrawer extends ConsumerWidget {
   final ValueChanged<MainTab> onTabSelected;
 
   /// USER mode only: when non-null, the drawer is the restricted menu shown
-  /// while viewing that central — reduced navigation, Armazenamento only,
-  /// no admin items and no footer.
+  /// while viewing that central — the tablet's tabs, Armazenamento,
+  /// Atualizar dispositivos (view only), theme and Sobre. Nothing that
+  /// belongs on site: no Instalação, Acessos or Logs seriais
+  /// (docs/cloud/central-mirror.md §5), and no footer.
   final String? centralId;
 
   @override
@@ -122,8 +124,28 @@ class MainDrawer extends ConsumerWidget {
                           ),
                         );
                       },
-                    )
-                  else ...[
+                    ),
+                  if (restricted) ...[
+                    // The update that runs on the tablet, and its history:
+                    // view only (central mirror).
+                    _DrawerItem(
+                      icon: Icons.system_update_rounded,
+                      label: 'Atualizar dispositivos',
+                      onTap: () {
+                        Navigator.pop(context);
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const DeviceUpdateScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    const _ThemeToggleItem(),
+                    const _DrawerItem(
+                      icon: Icons.info_outline_rounded,
+                      label: 'Sobre',
+                    ),
+                  ] else ...[
                     if (AppConfig.isCentral) ...[
                       // Which installation this central belongs to: imports
                       // SYSTEM_ID + SAFR key from the installer phone's QR.

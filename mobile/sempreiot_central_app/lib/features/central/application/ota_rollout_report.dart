@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/safr/safr_product.dart';
 import '../domain/safr/safr_v2_payloads.dart';
+import 'central_mirror_viewer.dart';
 import 'ota_push_report.dart';
 import 'ota_rollout_controller.dart';
 import 'ota_rollout_state.dart';
@@ -20,8 +21,14 @@ import 'topology_provider.dart';
 
 /// The rollout as every screen reads it. A provider of its own so a widget
 /// test can hand a state over without a serial port or a database behind it.
-final otaRolloutViewProvider =
-    Provider<OtaRolloutState>((ref) => ref.watch(otaRolloutProvider));
+///
+/// On a user's phone viewing a central: nothing — the board's rollout table
+/// is not mirrored (the update's run is, `deviceUpdateRunProvider`), and
+/// the phone's own rollout controller is never started.
+final otaRolloutViewProvider = Provider<OtaRolloutState>((ref) {
+  if (ref.watch(viewedCentralProvider) != null) return const OtaRolloutState();
+  return ref.watch(otaRolloutProvider);
+});
 
 // ── Who is being updated ────────────────────────────────────────────────────
 

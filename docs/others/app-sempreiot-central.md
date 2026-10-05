@@ -70,7 +70,7 @@ The `CLAUDE.md` rules say AppSync/GraphQL; the code does **not** use AppSync at 
 | `loginNotifierProvider`, `registerNotifierProvider` | auth/application | form state machines (sealed states) |
 | `appInitProvider` | app/application/app_init_provider.dart | APP startup: auth → `POST /user` → MQTT connect; false = show login |
 | `iotMqttRepositoryProvider`, `iotConnectionProvider`, `iotMessageStreamProvider(topic)` | iot/application/iot_provider.dart | user MQTT session (singleton `IotMqttRepositoryImpl`), reconnect loop (5 s), per-topic streams |
-| `centralMqttRepositoryProvider`, `centralIotConnectionProvider`, `centralMqttMessagesProvider` | central/application/central_iot_provider.dart | central's machine MQTT session, subscribes `{identityId}/#`, publishes retained presence |
+| `centralMqttRepositoryProvider`, `centralIotConnectionProvider`, `centralMqttMessagesProvider` | central/application/central_iot_provider.dart | central's machine MQTT session, subscribes `{identityId}/access` and `{identityId}` (not `{identityId}/#`: that would echo back everything it publishes), publishes retained presence |
 | `presenceStatusProvider(id)`, `centralLiveStatusProvider(id)` | iot/application/presence_provider.dart | decoded retained `{id}/will` payload |
 | `savedCentralsProvider` | access/application/user_access_provider.dart | APP-mode list of centrals (SharedPreferences cache keyed by user, backend sync, MQTT `access-response` listener) |
 | `requestAccessProvider`, `lookupProvider(subId)` | same | publish access request; `GET /lookup` |
@@ -100,6 +100,8 @@ The `CLAUDE.md` rules say AppSync/GraphQL; the code does **not** use AppSync at 
 | `centralAuthProvider` | central_auth_provider.dart | unlock-PIN lock state |
 | `deviceInfoProvider`, `deviceCredentialsProvider` | device_info_provider.dart, device_metadata_providers.dart | `info` / `credentials` metadata rows |
 | `centralStatusPublisherProvider`, `centralStoragePublisherProvider` | central_status_publisher.dart, central_storage_publisher.dart | retained MQTT presence/storage payloads (watched by `MainScreen`) |
+| `centralMirrorPublisherProvider`, `mirrorWatchersProvider` | central_mirror_publisher.dart | CENTRAL: the mirror — held alarms always (retained); units, frame movements and the firmware update only while a user's phone pings `watch` (watched by `MainScreen`). `mirrorWatchersProvider` = who is watching now (the eye on the top bar, `MirrorWatchersButton`). Format in central_mirror_codec.dart |
+| `viewedCentralProvider`, `centralMirrorProvider`, `mirrorTopologyProvider`, `mirrorViewOnlyProvider`, `centralAlarmsProvider` | central_mirror_viewer.dart | APP: the central a user has open; pings `watch` from the moment the central is opened (any tab) and says `unwatch` on leaving — `MainScreen` keeps a listener on `centralMirrorProvider` in USER mode so it follows `viewedCentralProvider` at once; takes its snapshots, replays its frames into `safrTrafficProvider`. While set, `topologyProvider`, `boardLinkUpProvider`, `rootElectionProvider`, `deviceLedProvider`, `deviceUpdateRunProvider`, `otaPushViewProvider`, `otaRolloutViewProvider` and `deviceUpdateHistoryProvider` serve that central, the screens are view only, and none of the phone's own serial / supervision / update controllers is started |
 | `storageProvider`, `remoteStorageProvider(id)` | storage/application | Android free-space poll (30 s) / remote snapshot |
 | `provisioningWizardProvider` (autoDispose) | provisioning/application | wizard state machine |
 | `themeProvider`, `statusPanelArcadeProvider`, `sharedPreferencesProvider` | core/theme, presentation/screens/main | per-user prefs |
@@ -124,7 +126,9 @@ APP mode:   SplashScreen → LoginScreen (modal login / Google / Apple / Registe
             → MainScreen(home) ─ tab Principal (_AppDashboard, placeholder counts)
                                 ─ tab Centrais → CentralsListScreen ─ FAB AddCentralSheet (+QrScannerScreen)
                                                                      ─ MyQrScreen
-                                                                     ─ ACCEPTED → MainScreen(centralId) ─ drawer: Armazenamento (remote)
+                                                                     ─ ACCEPTED → MainScreen(centralId): the tablet's shell, fed by the mirror —
+                                                                         bottom bar Principal / Dispositivos / Rede (view only), drawer: Armazenamento (remote),
+                                                                         Atualizar dispositivos (view only), theme, Sobre
                                                                      ─ else → CentralStatusScreen (auto-hands off on ACCEPTED)
                                 ─ drawer: Configurar Dispositivo → ProvisioningWizardScreen
 CENTRAL:    Splash → MainScreen (locked, _PinOverlay) → Principal (_CentralDashboard) / Rede (TopologyScreen embedded) / Eventos (EventsScreen)
@@ -175,7 +179,7 @@ Navigation is plain `Navigator.push` with `MaterialPageRoute` — no router, no 
 **Flow.**
 1. Central shows its QR (`MyQrScreen`, data = subId; also `DeviceInfoScreen` shows `info.subId`). User scans (`QrScannerScreen`, `mobile_scanner`) or types it in `AddCentralSheet` → `GET /lookup` → card with live `PresenceIndicator`.
 2. "Solicitar Acesso" → `RequestAccessNotifier.request`: first re-reads `GET /access/requests?userSubId` and refuses locally if BLOCKED/PENDING/ACCEPTED; then publishes `{requestId(uuid v4), userSubId, userIdentityId}` to `{centralIdentityId}/access` and adds a PENDING `SavedCentral`.
-3. Central (`CentralAccessRelationsNotifier`) sees any `/access` publish on its `{id}/#` subscription and, debounced 900 ms (+1 retry), re-syncs from `GET /access/requests?centralIdentityId`. Pending cards appear in `DeviceAccessScreen` (drawer badge count).
+3. Central (`CentralAccessRelationsNotifier`) sees any `/access` publish on its `{id}/access` subscription and, debounced 900 ms (+1 retry), re-syncs from `GET /access/requests?centralIdentityId`. Pending cards appear in `DeviceAccessScreen` (drawer badge count).
 4. Operator accepts/rejects → `POST /access/resolve RESOLVE` → Lambda sets ACCEPTED+LEVEL_1, creates and attaches IoT policy granting subscribe/receive on `{centralIdentityId}` and `{centralIdentityId}/*` and publish on `{centralIdentityId}`, then publishes to `{userIdentityId}/access-response`. The user app updates the card live and `CentralStatusScreen` hands off to the dashboard.
 5. Level change / block / unblock — same POST with other actions; BLOCK detaches the policy immediately; UNBLOCK flips to REJECTED (user may request again).
 
@@ -394,9 +398,15 @@ Drawer → **Atualizar dispositivos** (CENTRAL mode only) — the one screen of 
 | `{centralIdentityId}/storage` | central → retained | `{"label","totalBytes","availableBytes","updated_at"}` | `centralStoragePublisherProvider`, only when the displayed numbers change |
 | `{centralIdentityId}/access` | user → | `{"requestId","userSubId","userIdentityId"}` | IoT Rule → `access-request` Lambda; the central only uses it as a "go re-sync" signal |
 | `{userIdentityId}/access-response` | Lambda → | `{"decision":ACCEPTED\|REJECTED\|LEVEL_CHANGED\|BLOCKED,"centralIdentityId","level"?,"resolvedAt"}` | `SavedCentralsNotifier` updates the card |
-| `{ownIdentityId}/#` | both subscribe | — | user: debug log only; central: feeds `centralMqttMessagesProvider` |
+| `{userIdentityId}/#` | user subscribes | — | debug log only |
+| `{centralIdentityId}` | user → central | `{"v":1,"type":"watch","hello"?,"sub"?,"name"?}` · `{"v":1,"type":"ota_history"}` | Central mirror: the phone has this central open (every 30 s; `hello` asks for the snapshots; `sub`/`name` say who, for the eye on the tablet) · `{"v":1,"type":"unwatch","sub"?,"name"?}` the user left the central (or the app went to the background): the central drops that phone at once · asks for the update history · `{"v":1,"type":"identify","mac","sub"?,"name"?}` asks the central to send IDENTIFY to a unit (the one command of a phone). The central subscribes to it and to `/access` by name |
+| `{centralIdentityId}/alarm` | central → retained | `{"v":1,"at","alarms":[{"mac","name"?,"zone"?,"since"?}]}` | Always, on every change of the held alarms and on every new MQTT session; empty list after the reset |
+| `{centralIdentityId}/state` | central → | `{"v":1,"seq","at","link","units":[…]}` | Only while watched: on `hello`, on a change of the map (≤ 1/s), every 30 s for last-seen / dBm |
+| `{centralIdentityId}/frames` | central → (QoS 0) | `{"v":1,"seq","t0","ticks":[[ms,mac,dir,sev,ack,parent,type,code,uptime]…],"events"?:[[kind,mac,arg]…]}` | Only while watched: one batch per 250 ms that had frames, ≤ 50 ticks. `events`: `identify_sending` (the central heard a phone's request), `identify` (the IDENTIFY blink started — from the tablet's menu or a phone's request) and `identify_failed`; such a batch goes QoS 1 |
+| `{centralIdentityId}/ota` | central → | `{"v":1,"seq","run":{…}\|null,"push":{…}\|null}` | Only while watched: on `hello` and when the update changed, looked at once a second |
+| `{centralIdentityId}/ota/history` | central → | `{"v":1,"runs":[{"run":{…},"units":[…]}]}` | Only when a watching phone asks: last 20 updates, ≤ 100 KB |
 
-**What a VIEWER actually receives:** presence + comm status (Wi-Fi/USB/mesh/cloud tiles mirror the central's own gadget through the same tile builders in `comm_status_gadget.dart`), storage snapshot, and access decisions. **No SAFR events, alarms, device registry or topology are published to the cloud** — the viewer dashboard's device/event counters are hard-coded zeros (`_CentralDashboard._total*`), the Rede/Eventos tabs are not offered in the restricted tab set, and the granted IoT policy's publish right on `{centralIdentityId}` has no consumer on the central. The "real-time following" today is limited to the central being online and its link health.
+**What a VIEWER receives (central mirror, 2026-10-03 — `docs/cloud/central-mirror.md`):** presence + comm status, storage snapshot, access decisions, the central's **held alarms** (retained: on the Centrais card and on Principal, whenever the app is opened) and, while the central is open on the phone, its **units and frame movements** — Dispositivos, Rede, Rede 3D and Atualizar dispositivos are the tablet's own screens with the LEDs, the packets and the running update, view only (no rename, no reset, no start / pause / cancel of an update; the one command is Identificar, asked to the central). With nobody watching the central publishes none of the map. Not mirrored: the steps and log lines of a push, the firmware library, Informações, the event history, the counters of Principal (placeholders on the tablet too). Every MQTT message is counted and summed up once a minute on the console (`core/utils/mqtt_stats.dart`).
 
 ---
 

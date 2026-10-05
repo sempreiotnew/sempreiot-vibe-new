@@ -20,7 +20,7 @@ class DeviceUpdateRedeLine extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final run = ref.watch(deviceUpdateProvider);
+    final run = ref.watch(deviceUpdateRunProvider);
     final pushing = ref.watch(otaPushViewProvider.select((s) => s.running));
     final rolling =
         ref.watch(otaRolloutViewProvider.select((s) => s.running)) != null;

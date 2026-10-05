@@ -8,6 +8,8 @@ import '../../../features/access/application/user_access_provider.dart';
 import '../../../features/access/domain/entities/saved_central.dart';
 import '../../../features/auth/application/auth_provider.dart';
 import '../../../features/central/application/central_auth_provider.dart';
+import '../../../features/central/application/central_mirror_publisher.dart';
+import '../../../features/central/application/central_mirror_viewer.dart';
 import '../../../features/central/application/central_status_publisher.dart';
 import '../../../features/central/application/device_led_provider.dart';
 import '../../../features/central/application/central_storage_publisher.dart';
@@ -19,6 +21,8 @@ import '../auth/login_screen.dart';
 import '../../../features/central/presentation/screens/devices_screen.dart';
 import '../../../features/central/presentation/screens/topology_screen.dart';
 import '../../../features/central/presentation/widgets/latched_alarm_banner.dart';
+import '../../../features/central/presentation/widgets/mirror_status_strip.dart';
+import '../../../features/central/presentation/widgets/remote_alarm_banner.dart';
 import 'main_tab.dart';
 import 'status_panel_style_provider.dart';
 import 'widgets/comm_status_gadget.dart';
@@ -46,6 +50,37 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   bool _pinOverlayVisible = AppConfig.isCentral;
   bool _kickedOut = false;
 
+  /// USER mode inside a central: which central the mirror follows. Held
+  /// here because `ref` is gone by the time [dispose] runs.
+  StateController<String?>? _viewed;
+
+  @override
+  void initState() {
+    super.initState();
+    final id = widget.centralId;
+    if (AppConfig.isCentral || id == null) return;
+    final viewed = ref.read(viewedCentralProvider.notifier);
+    _viewed = viewed;
+    // Deferred: a provider cannot change while widgets build.
+    Future.microtask(() {
+      if (mounted) viewed.state = id;
+    });
+  }
+
+  @override
+  void dispose() {
+    final viewed = _viewed;
+    final id = widget.centralId;
+    if (viewed != null) {
+      // Leaving the central: the mirror stops pinging and unsubscribes, and
+      // the central stops streaming once nobody else watches.
+      Future.microtask(() {
+        if (viewed.state == id) viewed.state = null;
+      });
+    }
+    super.dispose();
+  }
+
   void _handleTabChange(MainTab tab) {
     // In USER mode, "Centrais" tab opens the list screen instead of switching tabs.
     if (!AppConfig.isCentral && tab == MainTab.centrais) {
@@ -67,6 +102,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     if (AppConfig.isCentral) {
       ref.watch(centralStatusPublisherProvider);
       ref.watch(centralStoragePublisherProvider);
+      // The mirror: the held alarms always, the live map while a user's
+      // phone is watching (docs/cloud/central-mirror.md).
+      ref.watch(centralMirrorPublisherProvider);
       // The on-screen LEDs must hear every frame from the start, whatever
       // tab is open (read, not watch: its ticks must not rebuild this screen).
       ref.read(deviceLedProvider);
@@ -115,6 +153,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     }
 
     if (!AppConfig.isCentral) {
+      // Keeps the mirror alive and following [viewedCentralProvider]: it
+      // starts watching the moment a central is opened, whatever the tab,
+      // and stops the moment the user leaves it (see centralMirrorProvider).
+      ref.listen(centralMirrorProvider.select((v) => v.connected), (_, __) {});
       ref.listen(authNotifierProvider, (_, next) {
         if (next is AsyncData && next.value == null) {
           Navigator.of(context).pushAndRemoveUntil(
@@ -168,11 +210,13 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                 ),
               );
             },
-            // Hide nav when locked or when viewing a specific central's detail.
-            child: (isLocked || isCentralDetail)
+            // Hidden while locked. Inside a central (USER mode) it is the
+            // tablet's own bar: Principal · Dispositivos · Rede.
+            child: isLocked
                 ? const SizedBox.shrink(key: ValueKey('nav_hidden'))
                 : MainBottomNav(
                     key: const ValueKey('nav_unlocked'),
+                    tabs: isCentralDetail ? MainTab.centralDetailTabs : null,
                     currentTab: _currentTab,
                     onTabChanged: _handleTabChange,
                   ),
@@ -248,18 +292,49 @@ class _TabBody extends StatelessWidget {
               title: 'Centrais',
               subtitle: 'Lista de centrais cadastradas.',
             ),
-          // The device registry lives on the central tablet; a USER viewing
-          // a central remotely has no such list yet.
+          // On the tablet: its own registry. On a user's phone inside a
+          // central: the same screens, fed by that central's mirror.
           MainTab.devices => AppConfig.isCentral
               ? const DevicesScreen()
-              : const _PlaceholderTab(
-                  icon: Icons.devices_rounded,
-                  title: 'Dispositivos',
-                  subtitle: 'Nenhum dispositivo conectado ainda.',
+              : centralId != null
+                  ? _Mirrored(
+                      centralId: centralId!, child: const DevicesScreen())
+                  : const _PlaceholderTab(
+                      icon: Icons.devices_rounded,
+                      title: 'Dispositivos',
+                      subtitle: 'Nenhum dispositivo conectado ainda.',
+                    ),
+          MainTab.rede => AppConfig.isCentral || centralId == null
+              ? const TopologyScreen(embedded: true)
+              : _Mirrored(
+                  centralId: centralId!,
+                  child: const TopologyScreen(embedded: true),
                 ),
-          MainTab.rede => const TopologyScreen(embedded: true),
         },
       ),
+    );
+  }
+}
+
+/// A tablet screen on a user's phone, drawn from the viewed central's
+/// mirror. Nothing is built until the mirror follows this central, so the
+/// screen never reads this phone's own (empty) registry or serial port.
+class _Mirrored extends ConsumerWidget {
+  const _Mirrored({required this.centralId, required this.child});
+
+  final String centralId;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (ref.watch(viewedCentralProvider) != centralId) {
+      return const SizedBox.shrink();
+    }
+    return Column(
+      children: [
+        const MirrorStatusStrip(),
+        Expanded(child: child),
+      ],
     );
   }
 }
@@ -328,9 +403,12 @@ class _CentralDashboard extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Local registry only: a viewer's phone has no copy of the
-          // central's latches (row 6.7 of the system reference is open).
-          if (centralId == null) const LatchedAlarmBanner(),
+          // The tablet reads its own latches; a user's phone reads the
+          // central's retained alarm list (no reset from a phone).
+          if (centralId == null)
+            const LatchedAlarmBanner()
+          else
+            RemoteAlarmBanner(identityId: centralId!),
           if (centralId == null) const _ForeignSystemBanner(),
           _CentralStatusSection(color: statusColor, label: statusLabel),
           const SizedBox(height: 10),

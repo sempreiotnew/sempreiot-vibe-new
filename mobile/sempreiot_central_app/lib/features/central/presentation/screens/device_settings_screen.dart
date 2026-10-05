@@ -8,6 +8,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/signal_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../../../core/utils/relative_time.dart';
+import '../../application/central_mirror_viewer.dart';
 import '../../application/credentials_admin_provider.dart';
 import '../../application/safr_downlink_provider.dart';
 import '../../application/topology_provider.dart';
@@ -94,12 +95,15 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
       return mac;
     }
 
-    final canManage = node.layer > 0 || node.boardState != null;
+    // A user's phone viewing a central: the facts, nothing to edit.
+    final viewOnly = ref.watch(mirrorViewOnlyProvider);
+    final canManage =
+        !viewOnly && (node.layer > 0 || node.boardState != null);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
       children: [
-        _Hero(node: node, onRename: () => _rename(node)),
+        _Hero(node: node, onRename: viewOnly ? null : () => _rename(node)),
         const SizedBox(height: 24),
         const InfoSectionHeader('IDENTIFICAÇÃO'),
         const SizedBox(height: 10),
@@ -108,14 +112,16 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
             icon: Icons.label_rounded,
             label: 'Nome',
             value: node.name ?? '',
-            trailing: _EditButton(onTap: () => _rename(node)),
+            trailing:
+                viewOnly ? null : _EditButton(onTap: () => _rename(node)),
           ),
           const InfoRowDivider(),
           _Fact(
             icon: Icons.place_rounded,
             label: 'Zona',
             value: node.zone ?? '',
-            trailing: _EditButton(onTap: () => _rename(node)),
+            trailing:
+                viewOnly ? null : _EditButton(onTap: () => _rename(node)),
           ),
           const InfoRowDivider(),
           _Fact(
@@ -516,7 +522,9 @@ class _Hero extends StatelessWidget {
   const _Hero({required this.node, required this.onRename});
 
   final TopologyNode node;
-  final VoidCallback onRename;
+
+  /// Null = view only: no edit button.
+  final VoidCallback? onRename;
 
   @override
   Widget build(BuildContext context) {
@@ -579,11 +587,12 @@ class _Hero extends StatelessWidget {
             ],
           ),
         ),
-        IconButton(
-          tooltip: 'Nome e zona',
-          onPressed: onRename,
-          icon: Icon(Icons.edit_rounded, color: context.textSecondary),
-        ),
+        if (onRename != null)
+          IconButton(
+            tooltip: 'Nome e zona',
+            onPressed: onRename,
+            icon: Icon(Icons.edit_rounded, color: context.textSecondary),
+          ),
       ],
     );
   }

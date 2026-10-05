@@ -10,6 +10,7 @@ import '../../../../features/access/presentation/sheets/rename_central_sheet.dar
 import '../../../../features/auth/application/auth_provider.dart';
 import '../../../../features/central/application/central_auth_provider.dart';
 import '../../../../features/central/application/device_info_provider.dart';
+import '../../../../features/central/presentation/widgets/mirror_watchers_button.dart';
 
 class MainAppBar extends ConsumerWidget implements PreferredSizeWidget {
   const MainAppBar({
@@ -75,6 +76,9 @@ class MainAppBar extends ConsumerWidget implements PreferredSizeWidget {
             const SizedBox(width: 6),
             Expanded(child: _Branding(centralId: centralId)),
             if (AppConfig.isCentral) ...[
+              // Who is watching this central from the app — and so whether
+              // the live map is being sent to the cloud right now.
+              const MirrorWatchersButton(),
               const SizedBox(width: 2),
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 300),

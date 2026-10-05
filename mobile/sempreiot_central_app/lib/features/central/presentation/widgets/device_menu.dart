@@ -5,6 +5,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/signal_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../../../core/utils/relative_time.dart';
+import '../../application/central_mirror_viewer.dart';
 import '../../application/device_led_provider.dart';
 import '../../application/device_sound_provider.dart';
 import '../../application/safr_downlink_provider.dart';
@@ -26,6 +27,11 @@ Rect deviceAnchorOf(BuildContext context) {
 /// header with the live basics (last seen, signal, parent), the device's
 /// settings screen, a sound on/off switch and — not on a leaf — Identificar
 /// and Testar. RESET joins them only while the device holds a latched alarm.
+///
+/// On a user's phone viewing a central (the mirror) there is the header,
+/// Dispositivo and Identificar — asked to the central, which sends it; the
+/// LED on screen blinks with the unit's once the root confirms. Nothing
+/// else is commanded from a phone.
 Future<void> showDeviceMenu({
   required BuildContext context,
   required WidgetRef ref,
@@ -35,8 +41,10 @@ Future<void> showDeviceMenu({
   final overlay = Overlay.of(context).context.findRenderObject()! as RenderBox;
   final messenger = ScaffoldMessenger.maybeOf(context);
   final navigator = Navigator.of(context);
+  final viewOnly = ref.read(mirrorViewOnlyProvider);
   final commandsOn = node.online;
-  final silenced = ref.read(deviceSoundProvider).contains(node.mac);
+  final silenced =
+      !viewOnly && ref.read(deviceSoundProvider).contains(node.mac);
 
   // Drops from just below the device; the route keeps it on screen in
   // either orientation.
@@ -65,13 +73,14 @@ Future<void> showDeviceMenu({
         _item(context, _DeviceAction.identify, 'Identificar',
             Icons.lightbulb_outline_rounded,
             enabled: commandsOn),
-      _soundItem(context, silenced: silenced, enabled: commandsOn),
-      if (!node.isLeaf)
+      if (!viewOnly)
+        _soundItem(context, silenced: silenced, enabled: commandsOn),
+      if (!viewOnly && !node.isLeaf)
         _item(context, _DeviceAction.test, 'Testar', Icons.quiz_outlined,
             enabled: commandsOn),
       // The root's ACK is what clears the latch, so this stays available
       // even while the sensor itself is unreachable.
-      if (node.alarmLatched)
+      if (!viewOnly && node.alarmLatched)
         _item(
             context, _DeviceAction.reset, 'Rearmar', Icons.restart_alt_rounded,
             enabled: true, color: AppColors.error),
@@ -83,6 +92,38 @@ Future<void> showDeviceMenu({
     navigator.push(MaterialPageRoute(
       builder: (_) => DeviceSettingsScreen(mac: node.mac),
     ));
+    return;
+  }
+
+  // A user's phone: the central sends the IDENTIFY and tells the outcome;
+  // the blink on screen arrives with its confirmation.
+  if (viewOnly) {
+    final name = deviceDisplayName(node);
+    messenger?.showSnackBar(SnackBar(
+      content: Text('Identificar → $name: enviando pela central…'),
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 2),
+    ));
+    final outcome =
+        await ref.read(centralMirrorProvider.notifier).sendIdentify(node.mac);
+    final ok = outcome == MirrorIdentifyOutcome.confirmed;
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(switch (outcome) {
+          MirrorIdentifyOutcome.confirmed =>
+            'Identificar → $name: confirmado pelo root (ACK ✓✓)',
+          MirrorIdentifyOutcome.notConfirmed =>
+            'Identificar → $name: sem confirmação do root, tente novamente',
+          // Not "try again": the same thing would happen.
+          MirrorIdentifyOutcome.noAnswer =>
+            'Identificar → $name: a central não respondeu. Ela precisa '
+                'estar conectada e com o aplicativo atualizado.',
+        }),
+        backgroundColor: ok ? AppColors.success : AppColors.trouble,
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: ok ? 4 : 7),
+      ));
     return;
   }
 

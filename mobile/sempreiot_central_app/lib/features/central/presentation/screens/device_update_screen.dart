@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/theme_ext.dart';
+import '../../application/central_mirror_viewer.dart';
 import '../../application/device_update_controller.dart';
 import '../../application/device_update_selection.dart';
 import '../../application/device_update_state.dart';
@@ -17,6 +18,7 @@ import '../widgets/device_avatar.dart' show deviceDisplayName;
 import '../widgets/device_update_widgets.dart';
 import '../widgets/mesh_map.dart';
 import '../widgets/mesh_status_bar.dart';
+import '../widgets/mirror_status_strip.dart';
 
 /// "Atualizar dispositivos": the Rede map, and on it the firmware update —
 /// choose units with a tap (or Placa / Todos os nós / Todos os detectores),
@@ -24,6 +26,10 @@ import '../widgets/mesh_status_bar.dart';
 /// detectors, in that order). Everything is watched on the same map: the
 /// tablet and its cable while the image goes to the board, a ring and the
 /// phase on the unit being updated, the image's packets along the tree.
+///
+/// On a user's phone viewing a central it is the same map, view only: the
+/// update that runs on the tablet, each unit's details and the history.
+/// Nothing is chosen, started, paused or cancelled from a phone.
 class DeviceUpdateScreen extends ConsumerStatefulWidget {
   const DeviceUpdateScreen({super.key});
 
@@ -38,6 +44,10 @@ class _DeviceUpdateScreenState extends ConsumerState<DeviceUpdateScreen> {
     // What the board holds decides whether an image must be sent first.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      if (ref.read(mirrorViewOnlyProvider)) {
+        ref.read(centralMirrorProvider.notifier).requestOtaHistory();
+        return;
+      }
       ref.read(otaRolloutProvider.notifier).refresh();
       ref.read(firmwareLibraryProvider.notifier).load();
     });
@@ -47,10 +57,14 @@ class _DeviceUpdateScreenState extends ConsumerState<DeviceUpdateScreen> {
   Widget build(BuildContext context) {
     final allNodes = ref.watch(topologyProvider);
     final election = ref.watch(rootElectionProvider);
-    final run = ref.watch(deviceUpdateProvider);
-    final sel = ref.watch(deviceUpdateSelectionProvider);
+    final viewOnly = ref.watch(mirrorViewOnlyProvider);
+    final run = ref.watch(deviceUpdateRunProvider);
+    final sel = viewOnly
+        ? const DeviceUpdateSelection()
+        : ref.watch(deviceUpdateSelectionProvider);
     final push = ref.watch(otaPushViewProvider);
-    final lib = ref.watch(firmwareLibraryProvider);
+    // The images are files on the tablet: a phone has none to choose from.
+    final lib = viewOnly ? null : ref.watch(firmwareLibraryProvider);
 
     TopologyNode? board;
     final nodes = <TopologyNode>[];
@@ -62,11 +76,12 @@ class _DeviceUpdateScreenState extends ConsumerState<DeviceUpdateScreen> {
       }
     }
 
-    final selecting = run == null;
+    final selecting = run == null && !viewOnly;
     final family = sel.family;
-    final newest = family == null || family == SafrProductFamily.board
-        ? null
-        : lib.of(family).firstOrNull?.version;
+    final newest =
+        lib == null || family == null || family == SafrProductFamily.board
+            ? null
+            : lib.of(family).firstOrNull?.version;
 
     return Scaffold(
       backgroundColor: context.bgColor,
@@ -75,12 +90,13 @@ class _DeviceUpdateScreenState extends ConsumerState<DeviceUpdateScreen> {
         backgroundColor: context.bgColor,
         elevation: 0,
         actions: [
-          IconButton(
-            key: const ValueKey('firmware-library'),
-            tooltip: 'Firmwares no tablet',
-            icon: const Icon(Icons.inventory_2_outlined),
-            onPressed: () => showFirmwareLibrarySheet(context),
-          ),
+          if (!viewOnly)
+            IconButton(
+              key: const ValueKey('firmware-library'),
+              tooltip: 'Firmwares no tablet',
+              icon: const Icon(Icons.inventory_2_outlined),
+              onPressed: () => showFirmwareLibrarySheet(context),
+            ),
           IconButton(
             tooltip: 'Registro',
             icon: const Icon(Icons.receipt_long_rounded),
@@ -92,6 +108,7 @@ class _DeviceUpdateScreenState extends ConsumerState<DeviceUpdateScreen> {
         top: false,
         child: Column(
           children: [
+            if (viewOnly) const MirrorStatusStrip(),
             MeshStatusBar(
               nodes: nodes,
               election: election,
@@ -116,7 +133,7 @@ class _DeviceUpdateScreenState extends ConsumerState<DeviceUpdateScreen> {
                     ? ref
                         .read(deviceUpdateSelectionProvider.notifier)
                         .tapUnit(node, name: deviceDisplayName(node))
-                    : (run.units.containsKey(node.mac)
+                    : (run != null && run.units.containsKey(node.mac)
                         ? showDeviceUpdateUnitSheet(context, node.mac)
                         : null),
                 onCentralTap: selecting

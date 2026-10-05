@@ -60,11 +60,28 @@ function buildPolicyDocument() {
         // authorized to publish (retained) to its own Will topic.
         // /storage carries the retained disk-usage snapshot viewers read;
         // an unauthorized publish there gets the connection dropped.
+        // /alarm carries the retained list of held alarms (the mirror,
+        // docs/cloud/central-mirror.md §4.5): published always, so a user
+        // who opens the app after an alarm started still gets it.
         Effect: "Allow",
         Action: ["iot:Publish", "iot:RetainPublish"],
         Resource: [
           `${base}:topic/${sub}/will`,
           `${base}:topic/${sub}/storage`,
+          `${base}:topic/${sub}/alarm`,
+        ],
+      },
+      {
+        // The mirror (docs/cloud/central-mirror.md): the units, the frame
+        // movements and the update run, published only while a user is
+        // watching. Never retained, so no iot:RetainPublish here.
+        Effect: "Allow",
+        Action: "iot:Publish",
+        Resource: [
+          `${base}:topic/${sub}/state`,
+          `${base}:topic/${sub}/frames`,
+          `${base}:topic/${sub}/ota`,
+          `${base}:topic/${sub}/ota/*`,
         ],
       },
     ],

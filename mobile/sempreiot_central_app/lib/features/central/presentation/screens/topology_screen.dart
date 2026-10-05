@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/database/app_database.dart';
 import '../../../../core/theme/theme_ext.dart';
+import '../../application/central_mirror_viewer.dart';
 import '../../application/root_election_provider.dart';
 import '../../application/safr_downlink_provider.dart';
 import '../../application/topology_provider.dart';
@@ -31,6 +32,8 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
     final allNodes = ref.watch(topologyProvider);
     // Who is root — or that the mesh is still deciding (root_election_provider).
     final election = ref.watch(rootElectionProvider);
+    // A user's phone viewing a central: the map and nothing that commands.
+    final viewOnly = ref.watch(mirrorViewOnlyProvider);
     TopologyNode? board;
     final nodes = <TopologyNode>[];
     for (final n in allNodes) {
@@ -45,7 +48,11 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
       children: [
         const DeviceUpdateRedeLine(),
         MeshStatusBar(
-            nodes: nodes, election: election, onClear: _clearRegistry),
+          nodes: nodes,
+          election: election,
+          onClear: viewOnly ? null : _clearRegistry,
+          show3d: true,
+        ),
         Expanded(
           child: MeshMap(
             nodes: nodes,

@@ -28,9 +28,16 @@ class SavedCentralsNotifier extends StateNotifier<List<SavedCentral>> {
   ProviderSubscription<AsyncValue<dynamic>>? _sub;
   String? _prefsKey; // per-user; null until load() resolves the signed-in user
 
+  void _loaded() {
+    if (mounted) _ref.read(savedCentralsLoadingProvider.notifier).state = false;
+  }
+
   Future<void> load() async {
     final user = await _ref.read(authNotifierProvider.future);
-    if (user == null || !mounted) return;
+    if (user == null || !mounted) {
+      _loaded();
+      return;
+    }
     _prefsKey = 'saved_centrals_${user.userId}';
 
     final prefs = await SharedPreferences.getInstance();
@@ -143,6 +150,8 @@ class SavedCentralsNotifier extends StateNotifier<List<SavedCentral>> {
       }
     } catch (e) {
       debugPrint('[UserAccess] backend sync failed: $e');
+    } finally {
+      _loaded();
     }
   }
 
@@ -215,6 +224,15 @@ class SavedCentralsNotifier extends StateNotifier<List<SavedCentral>> {
     super.dispose();
   }
 }
+
+/// True until the user's centrals were read from this device and checked
+/// with the backend (or the check failed): the Centrais list shows it is
+/// still loading instead of "Nenhuma central". Starts over on every
+/// login / account switch, like the list itself.
+final savedCentralsLoadingProvider = StateProvider<bool>((ref) {
+  ref.watch(authNotifierProvider.select((s) => s.valueOrNull?.userId));
+  return true;
+});
 
 final savedCentralsProvider =
     StateNotifierProvider<SavedCentralsNotifier, List<SavedCentral>>((ref) {

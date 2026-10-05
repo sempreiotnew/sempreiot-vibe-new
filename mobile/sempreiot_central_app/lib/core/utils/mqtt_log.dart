@@ -27,6 +27,10 @@ class MqttLog {
       ? payload
       : '${payload.substring(0, _maxPayload)}… (+${payload.length - _maxPayload} chars)';
 
+  /// Topics that carry several messages a second (the mirror's frame
+  /// batches): left out of the log, which they would drown.
+  static bool isNoisy(String topic) => topic.endsWith('/frames');
+
   static void pub(String topic, String payload,
           {bool retained = false, String tag = 'IoT'}) =>
       debugPrint(

@@ -9,6 +9,7 @@ import '../../../../features/access/domain/entities/saved_central.dart';
 import '../../../../features/access/presentation/screens/my_qr_screen.dart';
 import '../../../../features/access/presentation/sheets/add_central_sheet.dart';
 import '../../../../features/central/presentation/screens/central_status_screen.dart';
+import '../../../../features/central/presentation/widgets/remote_alarm_banner.dart';
 import '../../../../presentation/screens/main/main_screen.dart';
 import '../../../../shared/widgets/app_search_bar.dart';
 import '../../../../shared/widgets/presence_indicator.dart';
@@ -26,12 +27,12 @@ class _CentralsListScreenState extends ConsumerState<CentralsListScreen> {
   @override
   Widget build(BuildContext context) {
     final allCentrals = ref.watch(savedCentralsProvider);
+    // Still reading the list (this device's copy, then the backend).
+    final loading = ref.watch(savedCentralsLoadingProvider);
     final q = _query.toLowerCase().trim();
     final filtered = q.isEmpty
         ? allCentrals
-        : allCentrals
-            .where((c) => c.name.toLowerCase().contains(q))
-            .toList();
+        : allCentrals.where((c) => c.name.toLowerCase().contains(q)).toList();
 
     return Scaffold(
       backgroundColor: context.bgColor,
@@ -56,13 +57,22 @@ class _CentralsListScreenState extends ConsumerState<CentralsListScreen> {
             ),
           ),
         ],
+        // While loading with cards already on screen: a thin bar, so the
+        // list stays usable; with none yet, the body shows the spinner.
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(0.5),
-          child: Divider(
-            height: 0.5,
-            thickness: 0.5,
-            color: context.borderColor.withValues(alpha: 0.5),
-          ),
+          preferredSize: const Size.fromHeight(2),
+          child: loading && allCentrals.isNotEmpty
+              ? const LinearProgressIndicator(
+                  key: ValueKey('centrais-loading-bar'),
+                  minHeight: 2,
+                  backgroundColor: Colors.transparent,
+                  color: AppColors.secondary,
+                )
+              : Divider(
+                  height: 0.5,
+                  thickness: 0.5,
+                  color: context.borderColor.withValues(alpha: 0.5),
+                ),
         ),
       ),
       body: Column(
@@ -83,7 +93,7 @@ class _CentralsListScreenState extends ConsumerState<CentralsListScreen> {
               children: [
                 Text(
                   filtered.isEmpty
-                      ? 'Nenhuma central'
+                      ? (loading ? 'Carregando…' : 'Nenhuma central')
                       : '${filtered.length} central${filtered.length == 1 ? '' : 'is'}',
                   style: TextStyle(
                     color: context.textSecondary,
@@ -107,39 +117,41 @@ class _CentralsListScreenState extends ConsumerState<CentralsListScreen> {
 
           // ── List ──────────────────────────────────────────────────────
           Expanded(
-            child: filtered.isEmpty
-                ? _EmptyState(hasQuery: _query.isNotEmpty)
-                : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
-                    itemCount: filtered.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (context, i) => _CentralCard(
-                      item: filtered[i],
-                      onTap: () {
-                        final central = filtered[i];
-                        // Accepted → the real central dashboard (no drawer/
-                        // bottom nav, just its data). Anything else (pending/
-                        // rejected/blocked) → the lightweight status screen.
-                        if (central.status == 'ACCEPTED') {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => MainScreen(
-                                centralId: central.identityId,
+            child: loading && allCentrals.isEmpty
+                ? const _Loading()
+                : filtered.isEmpty
+                    ? _EmptyState(hasQuery: _query.isNotEmpty)
+                    : ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+                        itemCount: filtered.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (context, i) => _CentralCard(
+                          item: filtered[i],
+                          onTap: () {
+                            final central = filtered[i];
+                            // Accepted → the real central dashboard (no drawer/
+                            // bottom nav, just its data). Anything else (pending/
+                            // rejected/blocked) → the lightweight status screen.
+                            if (central.status == 'ACCEPTED') {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => MainScreen(
+                                    centralId: central.identityId,
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => CentralStatusScreen(
+                                  identityId: central.identityId,
+                                ),
                               ),
-                            ),
-                          );
-                          return;
-                        }
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => CentralStatusScreen(
-                              identityId: central.identityId,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
+                            );
+                          },
+                        ),
+                      ),
           ),
         ],
       ),
@@ -154,6 +166,39 @@ class _CentralsListScreenState extends ConsumerState<CentralsListScreen> {
 }
 
 // ── Empty state ───────────────────────────────────────────────────────────────
+
+/// The list is still being read: not "Nenhuma central" yet.
+class _Loading extends StatelessWidget {
+  const _Loading();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      key: const ValueKey('centrais-loading'),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: AppColors.secondary,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Carregando suas centrais…',
+              style: TextStyle(color: context.textSecondary, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _EmptyState extends StatelessWidget {
   const _EmptyState({required this.hasQuery});
@@ -330,12 +375,16 @@ class _CentralCard extends StatelessWidget {
                     else
                       _LevelBadge(level: item.level ?? AccessLevel.level1),
                     const SizedBox(height: 4),
-                    PresenceIndicator(identityId: item.identityId, dotSize: 6, fontSize: 11),
+                    PresenceIndicator(
+                        identityId: item.identityId, dotSize: 6, fontSize: 11),
                   ],
                 ),
               ),
 
               // ── Trailing icon ──────────────────────────────────────────
+              // Only an accepted user may read the central's alarm list.
+              if (!isPending && !isRejected && !isBlocked)
+                CentralAlarmBadge(identityId: item.identityId),
               Icon(
                 Icons.chevron_right_rounded,
                 color: context.textSecondary.withValues(alpha: 0.5),

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/database/app_database.dart' show OtaRun, OtaRunUnit;
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
+import '../../application/central_mirror_viewer.dart';
 import '../../application/credentials_admin_provider.dart'
     show EditorRole, EditorRoleLabel;
 import '../../application/device_update_controller.dart';
@@ -195,9 +196,55 @@ class DeviceUpdateBar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final run = ref.watch(deviceUpdateProvider);
+    final run = ref.watch(deviceUpdateRunProvider);
+    // A user's phone viewing a central: where the update is, no controls.
+    if (ref.watch(mirrorViewOnlyProvider)) {
+      return _ViewOnlyBar(run: run, nodes: nodes);
+    }
     if (run != null) return _RunBar(run: run, nodes: nodes);
     return _SelectBar(nodes: nodes);
+  }
+}
+
+/// The bar on a user's phone: the same words as the tablet's, and nothing
+/// to press — an update is started, paused and cancelled at the tablet.
+class _ViewOnlyBar extends ConsumerWidget {
+  const _ViewOnlyBar({required this.run, required this.nodes});
+  final DeviceUpdateRun? run;
+  final List<TopologyNode> nodes;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final run = this.run;
+    if (run == null) {
+      return _BarFrame(
+        border: context.borderColor.withValues(alpha: 0.6),
+        texts: const _BarTexts(
+          title: 'Nenhuma atualização em andamento',
+          sub: 'As atualizações são iniciadas na central.',
+        ),
+        actions: const [],
+      );
+    }
+    final push = ref.watch(otaPushViewProvider);
+    final now =
+        run.running ? ref.watch(deviceUpdateClockProvider) : DateTime.now();
+    final text = deviceUpdateBarText(run, push, now,
+        nameOf: (k) => deviceUpdateNameOf(nodes, k),
+        meshBack: _meshBackCount(run, nodes));
+    final tone = _toneColor(context, text.tone);
+    return _BarFrame(
+      border: text.tone == DeviceUpdateTone.info
+          ? AppColors.secondary.withValues(alpha: 0.35)
+          : tone.withValues(alpha: 0.5),
+      leading: run.all ? _PhaseStepper(run: run) : null,
+      texts: _BarTexts(
+        title: text.title,
+        sub: text.sub,
+        color: text.tone == DeviceUpdateTone.info ? null : tone,
+      ),
+      actions: const [],
+    );
   }
 }
 
@@ -1483,7 +1530,7 @@ class _UnitSheet extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final run = ref.watch(deviceUpdateProvider);
+    final run = ref.watch(deviceUpdateRunProvider);
     final nodes = ref.watch(topologyProvider);
     final u = run?.units[unitKey];
     final name = deviceUpdateNameOf(nodes, unitKey);
@@ -1569,6 +1616,27 @@ class _LogSheet extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // A user's phone: the history the central sent. The steps and the log
+    // lines of a push stay on the tablet.
+    if (ref.watch(mirrorViewOnlyProvider)) {
+      return SingleChildScrollView(
+        key: const ValueKey('device-update-log'),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Registro',
+                style: TextStyle(
+                    color: context.textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w500)),
+            const SizedBox(height: 16),
+            const _HistorySection(),
+          ],
+        ),
+      );
+    }
     final push = ref.watch(otaPushViewProvider);
     final rollout = ref.watch(otaRolloutViewProvider);
     final now = ref.watch(deviceUpdateClockProvider);
@@ -1679,7 +1747,10 @@ class _HistorySection extends ConsumerWidget {
           ],
         ),
         if (runs.isEmpty)
-          Text('Nenhuma atualização registrada neste tablet.',
+          Text(
+              ref.watch(mirrorViewOnlyProvider)
+                  ? 'Nenhuma atualização registrada nesta central.'
+                  : 'Nenhuma atualização registrada neste tablet.',
               style: TextStyle(color: context.textSecondary, fontSize: 12.5)),
         for (final (run, units) in runs) ...[
           const SizedBox(height: 10),

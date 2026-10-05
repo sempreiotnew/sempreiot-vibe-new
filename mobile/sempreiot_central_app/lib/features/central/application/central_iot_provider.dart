@@ -9,6 +9,7 @@ import '../../iot/data/repositories/iot_mqtt_repository_impl.dart';
 import '../../iot/domain/entities/mqtt_message_entity.dart';
 import '../../iot/domain/repositories/i_iot_mqtt_repository.dart';
 import '../data/services/central_credentials_service.dart';
+import 'central_mirror_codec.dart';
 
 export '../../../core/connectivity/connectivity_provider.dart'
     show NetworkStatus;
@@ -25,7 +26,7 @@ final centralIotConnectionProvider =
   CentralIotConnectionNotifier.new,
 );
 
-/// Messages received on [_kCentralTopic] from the Central's MQTT session.
+/// Messages others sent to this central (access requests, watch pings).
 final centralMqttMessagesProvider = StreamProvider<MqttMessageEntity>((ref) {
   return ref.watch(centralIotConnectionProvider.notifier).messages;
 });
@@ -102,22 +103,28 @@ class CentralIotConnectionNotifier extends AsyncNotifier<bool> {
       _cancelSubs();
       final id = repo.identityId;
       if (id != null) {
-        _topicSubs.add(repo.subscribe('$id/#').listen(
-          (msg) {
-            if (!_messagesCtrl.isClosed) _messagesCtrl.add(msg);
-            debugPrint('[Central] ← [${msg.topic}] ${msg.payload}');
-          },
-          onError: (_) {},
-          cancelOnError: false,
-        ));
+        // What others send to this central, by name — not `$id/#`, which
+        // would also bring back everything the central itself publishes
+        // (the mirror's frame batches, several a second):
+        //  · `$id/access` — a user asks for access;
+        //  · `$id`        — a user's phone is watching (central mirror).
+        for (final topic in ['$id/access', mirrorCommandTopic(id)]) {
+          _topicSubs.add(repo.subscribe(topic).listen(
+            (msg) {
+              if (!_messagesCtrl.isClosed) _messagesCtrl.add(msg);
+              debugPrint('[Central] ← [${msg.topic}] ${msg.payload}');
+            },
+            onError: (_) {},
+            cancelOnError: false,
+          ));
+        }
         // Announce presence immediately — retained, so it survives until the
         // will (or a future online/offline publish) replaces it.
         repo.publish(presenceTopicFor(id), '{"status":"online"}', retain: true);
       }
 
       state = const AsyncData(true);
-      debugPrint(
-          '[Central] ✓ MQTT connected, subscribed to ${id ?? "unknown"}/#');
+      debugPrint('[Central] ✓ MQTT connected as ${id ?? "unknown"}');
     } catch (e, st) {
       debugPrint('[Central] ✗ MQTT connection failed: $e');
       if (_disposed) return;

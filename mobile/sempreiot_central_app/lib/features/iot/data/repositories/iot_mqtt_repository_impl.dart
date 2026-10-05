@@ -7,6 +7,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../../../core/services/sigv4_signer.dart';
 import '../../../../core/utils/mqtt_log.dart';
+import '../../../../core/utils/mqtt_stats.dart';
 import '../../domain/entities/mqtt_message_entity.dart';
 import '../../domain/repositories/i_iot_mqtt_repository.dart';
 import '../services/iot_credentials_service.dart';
@@ -194,11 +195,12 @@ class IotMqttRepositoryImpl implements IIotMqttRepository {
   }
 
   @override
-  void publish(String topic, String payload, {bool retain = false}) {
+  void publish(String topic, String payload, {bool retain = false, int qos = 1}) {
     if (!_connected) throw StateError('Not connected');
-    MqttLog.pub(topic, payload, retained: retain);
+    if (!MqttLog.isNoisy(topic)) MqttLog.pub(topic, payload, retained: retain);
+    MqttStats.sent(topic, payload);
     _channel!.sink.add(Uint8List.fromList(
-      _mqttPublish(topic, payload, _pid(), retain: retain),
+      _mqttPublish(topic, payload, _pid(), qos: qos, retain: retain),
     ));
   }
 
@@ -210,6 +212,13 @@ class IotMqttRepositoryImpl implements IIotMqttRepository {
     return _publishCtrl!.stream
         .where((m) => _topicMatches(m.topic, topic))
         .map((m) => MqttMessageEntity(topic: m.topic, payload: m.payload));
+  }
+
+  @override
+  void unsubscribe(String topic) {
+    if (!_connected) throw StateError('Not connected');
+    MqttLog.event('UNSUB  $topic');
+    _channel!.sink.add(Uint8List.fromList(_mqttUnsubscribe(topic, _pid())));
   }
 
   void _sendSubscribe(String topic, {required int attempt}) {
@@ -401,7 +410,8 @@ class IotMqttRepositoryImpl implements IIotMqttRepository {
       _channel?.sink.add(Uint8List.fromList([0x40, 0x02, pidHi, pidLo])); // PUBACK
     }
     final payload = utf8.decode(data.sublist(i, packetEnd));
-    MqttLog.rx(topic, payload);
+    if (!MqttLog.isNoisy(topic)) MqttLog.rx(topic, payload);
+    MqttStats.received(topic, payload);
     _publishCtrl?.add((topic: topic, payload: payload));
   }
 
@@ -461,6 +471,13 @@ class IotMqttRepositoryImpl implements IIotMqttRepository {
     final pl = [(t.length >> 8) & 0xFF, t.length & 0xFF, ...t, qos & 0x03];
     final vh = [(id >> 8) & 0xFF, id & 0xFF];
     return [0x82, ..._remLen(vh.length + pl.length), ...vh, ...pl];
+  }
+
+  static List<int> _mqttUnsubscribe(String topic, int id) {
+    final t = utf8.encode(topic);
+    final pl = [(t.length >> 8) & 0xFF, t.length & 0xFF, ...t];
+    final vh = [(id >> 8) & 0xFF, id & 0xFF];
+    return [0xA2, ..._remLen(vh.length + pl.length), ...vh, ...pl];
   }
 
   static List<int> _remLen(int len) {

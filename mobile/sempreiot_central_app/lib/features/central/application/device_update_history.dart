@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/app_database.dart';
 import '../domain/safr/safr_v2_payloads.dart';
+import 'central_mirror_codec.dart' show MirrorOtaHistoryRun;
+import 'central_mirror_viewer.dart';
 import 'device_update_state.dart';
 import 'device_update_words.dart';
 
@@ -148,6 +150,42 @@ String deviceUpdateHistoryCsv(List<(OtaRun, List<OtaRunUnit>)> runs) {
   return out.toString();
 }
 
-final deviceUpdateHistoryProvider = Provider<DeviceUpdateHistory>(
-  (ref) => DeviceUpdateHistory(ref.watch(appDatabaseProvider)),
-);
+/// The history of a central viewed from a user's phone: what the central
+/// sent when asked (central mirror), read only.
+class MirrorDeviceUpdateHistory implements DeviceUpdateHistory {
+  MirrorDeviceUpdateHistory(this._runs);
+
+  /// Newest first.
+  final List<MirrorOtaHistoryRun> _runs;
+
+  @override
+  AppDatabase get _db => throw UnsupportedError('read only');
+
+  @override
+  Future<void> record(DeviceUpdateRun? before, DeviceUpdateRun next) async {}
+
+  @override
+  OtaRunsCompanion _runRow(DeviceUpdateRun r) =>
+      throw UnsupportedError('read only');
+
+  @override
+  Future<List<(OtaRun, List<OtaRunUnit>)>> recent({int limit = 20}) async =>
+      _runs.take(limit).toList();
+
+  @override
+  Future<List<(OtaRun, OtaRunUnit)>> ofUnit(String key,
+          {int limit = 5}) async =>
+      [
+        for (final (run, units) in _runs)
+          for (final u in units)
+            if (u.unitKey == key) (run, u),
+      ].take(limit).toList();
+}
+
+final deviceUpdateHistoryProvider = Provider<DeviceUpdateHistory>((ref) {
+  if (ref.watch(viewedCentralProvider) != null) {
+    return MirrorDeviceUpdateHistory(
+        ref.watch(centralMirrorProvider.select((v) => v.otaHistory)));
+  }
+  return DeviceUpdateHistory(ref.watch(appDatabaseProvider));
+});

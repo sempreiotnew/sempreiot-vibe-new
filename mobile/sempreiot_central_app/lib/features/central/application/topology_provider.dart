@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/safr/safr_product.dart';
 import '../domain/safr/safr_v2_payloads.dart';
+import 'central_mirror_viewer.dart';
 import 'ota_rollout_controller.dart';
 import 'ota_rollout_report.dart';
 import 'serial_link_provider.dart';
@@ -164,7 +165,14 @@ List<({String mac, int rssi})> _decodeCandidates(String? json) {
 /// Every registered device stays on the map, however long it has been silent
 /// (it is only dimmed once `stale`); the manual "Limpar dispositivos" action
 /// is the one way a unit leaves the map.
+///
+/// USER mode with a central open: the units come from that central's mirror
+/// (central_mirror_viewer.dart), and nothing of this device's registry,
+/// serial port or rollout is touched.
 final topologyProvider = Provider<List<TopologyNode>>((ref) {
+  if (ref.watch(viewedCentralProvider) != null) {
+    return ref.watch(mirrorTopologyProvider);
+  }
   final supervision = ref.watch(supervisionProvider);
   final linkUp = ref.watch(serialLinkProvider) == SerialLinkStatus.connected;
   // The rollout moves faster than the supervision rule runs: who is being

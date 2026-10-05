@@ -9,6 +9,7 @@ import '../domain/ota/firmware_version.dart';
 import '../domain/safr/safr_product.dart';
 import '../domain/safr/safr_v2_payloads.dart';
 import 'alarm_latch_provider.dart';
+import 'central_mirror_viewer.dart';
 import 'device_update_history.dart';
 import 'device_update_state.dart';
 import 'device_update_words.dart';
@@ -931,6 +932,16 @@ class _RolloutWait {
 
 final deviceUpdateTimingsProvider =
     Provider<DeviceUpdateTimings>((_) => const DeviceUpdateTimings());
+
+/// The update the screens show: this tablet's own run or — on a user's
+/// phone viewing a central — that central's, from its mirror (view only;
+/// the controller is never started there).
+final deviceUpdateRunProvider = Provider<DeviceUpdateRun?>((ref) {
+  if (ref.watch(viewedCentralProvider) != null) {
+    return ref.watch(centralMirrorProvider.select((v) => v.run));
+  }
+  return ref.watch(deviceUpdateProvider);
+});
 
 final deviceUpdateProvider =
     StateNotifierProvider<DeviceUpdateController, DeviceUpdateRun?>(

@@ -9,8 +9,11 @@ class MainBottomNav extends StatelessWidget {
     super.key,
     required this.currentTab,
     required this.onTabChanged,
+    this.tabs,
   });
 
+  /// The tabs of the bar; null = the app's own ([MainTab.tabs]).
+  final List<MainTab>? tabs;
   final MainTab currentTab;
   final ValueChanged<MainTab> onTabChanged;
 
@@ -31,7 +34,7 @@ class MainBottomNav extends StatelessWidget {
         child: SizedBox(
           height: 62,
           child: Row(
-            children: MainTab.tabs.map((tab) {
+            children: (tabs ?? MainTab.tabs).map((tab) {
               return Expanded(
                 child: _NavItem(
                   tab: tab,

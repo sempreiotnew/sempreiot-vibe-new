@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/safr/safr_product.dart';
 import '../domain/safr/safr_v2_payloads.dart';
+import 'central_mirror_viewer.dart';
 import 'ota_push_controller.dart';
 import 'ota_push_state.dart';
 import 'topology_provider.dart';
@@ -18,8 +19,16 @@ import 'topology_provider.dart';
 /// The push as the screens read it. A
 /// provider of its own so a widget test can hand a state over without a
 /// serial port or a database behind it.
-final otaPushViewProvider =
-    Provider<OtaPushState>((ref) => ref.watch(otaPushProvider));
+///
+/// On a user's phone viewing a central: that central's push, as far as its
+/// mirror tells (phase and progress — the image, steps and log stay on the
+/// tablet). The phone's own push controller is never started.
+final otaPushViewProvider = Provider<OtaPushState>((ref) {
+  if (ref.watch(viewedCentralProvider) != null) {
+    return ref.watch(centralMirrorProvider.select((v) => v.push));
+  }
+  return ref.watch(otaPushProvider);
+});
 
 /// `43 %`.
 String otaPercentText(double progress) =>

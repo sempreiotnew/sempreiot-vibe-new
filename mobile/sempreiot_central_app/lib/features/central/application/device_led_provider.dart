@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../domain/led/led_language.dart';
 import '../domain/safr/safr_v2_frame.dart';
 import '../domain/safr/safr_v2_payloads.dart';
+import 'central_mirror_viewer.dart';
 import 'safr_traffic_provider.dart';
 import 'topology_provider.dart';
 
@@ -41,6 +42,16 @@ import 'topology_provider.dart';
 /// and the white "finding the network" of an offline unit (offline keeps
 /// the app's red look). Pulses reach the screen after the frame's trip
 /// through the mesh and the USB — same order and duration, a little late.
+///
+/// On a user's phone viewing a central (central mirror,
+/// docs/cloud/central-mirror.md) this same engine runs on the ticks the
+/// central publishes: same rules, same colours, later still by the trip
+/// through the cloud. The IDENTIFY blink is mirrored too: it starts on the
+/// root's ACK, which is not a tick, so the tablet's engine announces it on
+/// [identifies] and the mirror carries it to the phones — whether the
+/// command came from the tablet's menu or from a phone. A phone that opens
+/// a central mid-alarm shows the unit red from the latch, as the tablet
+/// does after a restart.
 class DeviceLedEngine extends ChangeNotifier {
   DeviceLedEngine({
     required Stream<SafrTrafficTick> traffic,
@@ -181,9 +192,16 @@ class DeviceLedEngine extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// The tablet's IDENTIFY was confirmed: the unit is blinking now.
+  final _identifies =
+      StreamController<({String mac, int seconds})>.broadcast();
+
+  /// Every IDENTIFY blink this engine started, for the central mirror.
+  Stream<({String mac, int seconds})> get identifies => _identifies.stream;
+
+  /// An IDENTIFY was confirmed by the root: the unit is blinking now.
   void identify(String mac, int seconds) {
     _led(mac).identify(seconds, _clock());
+    if (!_identifies.isClosed) _identifies.add((mac: mac, seconds: seconds));
     notifyListeners();
   }
 
@@ -244,6 +262,7 @@ class DeviceLedEngine extends ChangeNotifier {
       t.cancel();
     }
     _sub.cancel();
+    _identifies.close();
     super.dispose();
   }
 }
@@ -251,6 +270,9 @@ class DeviceLedEngine extends ChangeNotifier {
 /// Started with the main screen in CENTRAL mode (not when the first device
 /// circle is drawn), so no frame goes by unseen.
 final deviceLedProvider = ChangeNotifierProvider<DeviceLedEngine>((ref) {
+  // A new engine for each central a user opens: pulses and alarm memory of
+  // one central never show on another.
+  ref.watch(viewedCentralProvider);
   return DeviceLedEngine(
     traffic: ref.watch(safrTrafficProvider).stream,
     nodes: () => ref.read(topologyProvider),

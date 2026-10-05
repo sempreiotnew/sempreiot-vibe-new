@@ -15,6 +15,7 @@ class MeshStatusBar extends StatelessWidget {
     required this.nodes,
     required this.election,
     this.onClear,
+    this.show3d,
     this.leading = const [],
   });
   final List<TopologyNode> nodes;
@@ -22,8 +23,12 @@ class MeshStatusBar extends StatelessWidget {
 
   /// "Limpar dispositivos" lives here, not floating over the canvas, so it
   /// can never collide with the zoom controls on a short landscape screen.
-  /// Null: no clear button and no 3D button (a screen that is not Rede).
+  /// Null: no clear button — and no 3D button either, unless [show3d].
   final VoidCallback? onClear;
+
+  /// The 3D button; null = shown with the clear button. True with no
+  /// [onClear]: a user's phone viewing a central — it may look, not clear.
+  final bool? show3d;
 
   /// Pills ahead of the counts (an update in progress, say).
   final List<Widget> leading;
@@ -104,7 +109,7 @@ class MeshStatusBar extends StatelessWidget {
                 ),
               ],
             ),
-          if (onClear != null) ...[
+          if (show3d ?? onClear != null) ...[
             const SizedBox(width: 10),
             // PROTOTYPE: the same network as a 3D cloud (network_3d_screen).
             IconButton(
@@ -121,6 +126,8 @@ class MeshStatusBar extends StatelessWidget {
                 MaterialPageRoute(builder: (_) => const Network3dScreen()),
               ),
             ),
+          ],
+          if (onClear != null) ...[
             const SizedBox(width: 6),
             IconButton(
               tooltip: 'Ressincronizar com a placa',

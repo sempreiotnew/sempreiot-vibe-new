@@ -14,9 +14,10 @@ enum MainTab {
   static List<MainTab> get tabs =>
       AppConfig.isCentral ? [principal, devices, rede] : [principal, centrais];
 
-  /// USER mode drilling into a specific central: the reduced set of tabs
-  /// a viewer can navigate inside that central.
-  static List<MainTab> get centralDetailTabs => [principal, devices, central];
+  /// USER mode inside a specific central: the same tabs as the tablet —
+  /// the screens are the tablet's, fed by the central's mirror
+  /// (docs/cloud/central-mirror.md §5).
+  static List<MainTab> get centralDetailTabs => [principal, devices, rede];
 
   String get label => switch (this) {
         MainTab.principal => 'Principal',

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/app_database.dart';
 import '../domain/safr/safr_v2_frame.dart' show safrCentralMac;
+import 'central_mirror_viewer.dart';
 import 'serial_link_provider.dart';
 import 'topology_provider.dart';
 
@@ -101,7 +102,9 @@ RootElectionState stepRootElection(
 class RootElectionNotifier extends StateNotifier<RootElectionState> {
   RootElectionNotifier(this._db) : super(RootElectionState.none);
 
-  final AppDatabase _db;
+  /// Null on a phone viewing a central through the mirror: the event log
+  /// is the central's, written by its own tablet.
+  final AppDatabase? _db;
   Set<String> _candidates = const {};
   bool _linkUp = false;
 
@@ -155,8 +158,10 @@ class RootElectionNotifier extends StateNotifier<RootElectionState> {
     required String description,
     String? deviceMac,
   }) async {
+    final db = _db;
+    if (db == null) return;
     try {
-      await _db.into(_db.deviceEvents).insert(DeviceEventsCompanion.insert(
+      await db.into(db.deviceEvents).insert(DeviceEventsCompanion.insert(
             receivedAt: DateTime.now().toUtc(),
             deviceMac: deviceMac ?? safrCentralMac,
             msgType: 0, // synthetic
@@ -173,16 +178,27 @@ class RootElectionNotifier extends StateNotifier<RootElectionState> {
   }
 }
 
+/// The board link is up: this tablet's serial link, or — on a phone viewing
+/// a central — that central's, as its mirror reports it.
+final boardLinkUpProvider = Provider<bool>((ref) {
+  if (ref.watch(viewedCentralProvider) != null) {
+    return ref.watch(centralMirrorProvider.select((v) => v.linkUp));
+  }
+  return ref.watch(serialLinkProvider) == SerialLinkStatus.connected;
+});
+
 final rootElectionProvider =
     StateNotifierProvider<RootElectionNotifier, RootElectionState>((ref) {
-  final notifier = RootElectionNotifier(ref.watch(appDatabaseProvider));
+  final mirrored = ref.watch(viewedCentralProvider) != null;
+  final notifier =
+      RootElectionNotifier(mirrored ? null : ref.watch(appDatabaseProvider));
   void push() => notifier.update(
         ref.read(topologyProvider),
-        linkUp: ref.read(serialLinkProvider) == SerialLinkStatus.connected,
+        linkUp: ref.read(boardLinkUpProvider),
       );
   ref.listen<List<TopologyNode>>(topologyProvider, (_, __) => push(),
       fireImmediately: true);
-  ref.listen<SerialLinkStatus>(serialLinkProvider, (_, __) => push());
+  ref.listen<bool>(boardLinkUpProvider, (_, __) => push());
   final timer = Timer.periodic(const Duration(seconds: 1), (_) => notifier.tick());
   ref.onDispose(timer.cancel);
   return notifier;
