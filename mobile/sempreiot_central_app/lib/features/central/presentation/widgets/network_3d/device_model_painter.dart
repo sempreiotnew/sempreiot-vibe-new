@@ -62,11 +62,17 @@ class DeviceModelPainter extends CustomPainter {
         ..color = Colors.black.withValues(alpha: isDark ? 0.5 : 0.2)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
     );
-    // The model: frame a, and while it turns frame b blended over it.
-    final fade = online ? 1.0 : 0.7;
+    // The model: frame a, and while it turns frame b blended over it —
+    // both drawn solid. Offline it is faded as ONE picture: fading each
+    // frame made the two see-through frames add up differently at every
+    // step of the turn, and an offline model flickered (2026-10-05).
+    if (!online) {
+      canvas.saveLayer(dst, Paint()..color = Colors.white.withValues(alpha: 0.7));
+    }
     _frames(canvas, pose.image, (w) => Paint()
       ..filterQuality = FilterQuality.medium
-      ..color = Colors.white.withValues(alpha: fade * w), blendOver: true);
+      ..color = Colors.white.withValues(alpha: w), blendOver: true);
+    if (!online) canvas.restore();
 
     final s = alarm;
     if (s == null) return;

@@ -1436,7 +1436,7 @@ class _SelectionRing extends StatelessWidget {
 }
 
 /// The check on a unit chosen for an update (top left: the LED is on top,
-/// the status dot top right, ROOT / ALARME at the bottom).
+/// ROOT / ALARME at the bottom).
 class _SelectionCheck extends StatelessWidget {
   const _SelectionCheck();
 

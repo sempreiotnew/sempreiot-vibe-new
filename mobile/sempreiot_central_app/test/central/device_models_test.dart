@@ -8,6 +8,7 @@ import 'package:sempreiot_central_app/features/central/application/topology_prov
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_product.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/device_avatar.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_3d_chip.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_model_painter.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_model_sprites.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_models.g.dart';
@@ -283,6 +284,66 @@ void main() {
       expect(painter(tester).alarm, isNot(p.alarm), reason: 'animated');
       expect(find.byType(DeviceLedDot), findsOneWidget);
       expect(find.text('ALARME'), findsOneWidget);
+    });
+  });
+
+  group('offline (2026-10-05)', () {
+    TopologyNode unit(int? product, {required bool online}) => TopologyNode(
+          mac: '5A:46:52:00:00:09',
+          role: SafrNodeRole.node,
+          layer: 2,
+          parentMac: '00:00:00:00:00:B0',
+          rssi: -60,
+          batteryPct: null,
+          online: online,
+          lastSeenAt: DateTime.now().toUtc(),
+          alarmLatched: false,
+          productCode: product,
+        );
+
+    Future<void> show(WidgetTester tester, TopologyNode node, Widget w) =>
+        tester.pumpWidget(ProviderScope(
+          overrides: [
+            deviceLedProvider.overrideWith((ref) => DeviceLedEngine(
+                traffic: const Stream.empty(), nodes: () => [node])),
+          ],
+          child: MaterialApp(home: Scaffold(body: Center(child: w))),
+        ));
+
+    Finder modelPaint() => find.byWidgetPredicate(
+        (w) => w is CustomPaint && w.painter is DeviceModelPainter);
+
+    testWidgets(
+        'an offline model is faded as one picture — it no longer flickers '
+        'while it turns', (tester) async {
+      final siren = deviceModelSpecs.firstWhere((s) => s.slug == 'siren');
+      await tester.runAsync(() => DeviceModelSprites.load(siren));
+      final off = unit(0x0201, online: false);
+      await show(tester, off, DeviceModelAvatar(node: off, size: 72, spin: true));
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pump(const Duration(milliseconds: 700));
+      // One layer for the whole model: both frames of the turn are drawn
+      // solid inside it, and the layer fades them together.
+      expect(modelPaint(), paintsExactlyCountTimes(#saveLayer, 1));
+      expect(modelPaint(), paints..drawImageRect());
+
+      final on = unit(0x0201, online: true);
+      await show(tester, on, DeviceModelAvatar(node: on, size: 72, spin: true));
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(modelPaint(), paintsExactlyCountTimes(#saveLayer, 0));
+    });
+
+    testWidgets('Rede 3D: OFFLINE over a unit without communication, no ring',
+        (tester) async {
+      final off = unit(0x0203, online: false); // I/O: no model, the sphere
+      await show(tester, off,
+          Device3dChip(node: off, light: Alignment.topLeft));
+      expect(find.text('OFFLINE'), findsOneWidget);
+      expect(find.byType(DeviceLedDot), findsOneWidget);
+
+      final on = unit(0x0203, online: true);
+      await show(tester, on, Device3dChip(node: on, light: Alignment.topLeft));
+      expect(find.text('OFFLINE'), findsNothing);
     });
   });
 }

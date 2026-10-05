@@ -47,8 +47,9 @@ String _deviceStateLabel(TopologyNode node) => node.online
         ? 'Sem comunicação há muito tempo'
         : 'Sem comunicação';
 
-/// A device drawn as a circle: double ring, role icon (or the animated moon
-/// of a sleeping leaf), status dot, and the ALARME / ROOT / CANDIDATO badges.
+/// A device drawn as a circle: double ring in its status colour, role icon
+/// (or the animated moon of a sleeping leaf), the LED, and the ALARME /
+/// ROOT / CANDIDATO badges.
 /// One widget for the Rede map and the Dispositivos screen, so a device
 /// looks the same everywhere. A unit whose product has a 3D model is drawn
 /// as that model on Dispositivos and Dispositivo ([DeviceModelAvatar]).
@@ -69,11 +70,6 @@ class DeviceAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final k = diameter / 46;
-    final statusColor = !node.online
-        ? AppColors.error
-        : node.sleeping
-            ? context.textSecondary
-            : AppColors.success;
     final icon = switch (node.role) {
       SafrNodeRole.root => Icons.power_rounded,
       SafrNodeRole.node => Icons.cell_tower_rounded,
@@ -140,27 +136,6 @@ class DeviceAvatar extends StatelessWidget {
           left: (diameter - 10 * k) / 2,
           child: DeviceLedDot(node: node, size: 10 * k),
         ),
-        Positioned(
-          right: -1,
-          top: -1,
-          child: Container(
-            width: 12 * k,
-            height: 12 * k,
-            decoration: BoxDecoration(
-              color: statusColor,
-              shape: BoxShape.circle,
-              border: Border.all(color: context.bgColor, width: 1.8),
-              boxShadow: node.online && !node.sleeping
-                  ? [
-                      BoxShadow(
-                        color: statusColor.withValues(alpha: 0.6),
-                        blurRadius: 5,
-                      ),
-                    ]
-                  : null,
-            ),
-          ),
-        ),
         if (node.alarmLatched)
           const Positioned(
             right: -10,
@@ -202,9 +177,9 @@ const deviceLedAwayOpacity = 0.75;
 /// A device drawn as its product's 3D model (system reference §2.1.1 —
 /// the same Blender renders as Rede 3D), as rendered (no outline), with
 /// everything [DeviceAvatar] shows: the LED on the model's LED (always
-/// visible), the status dot, the sleeping moon and the ALARME / ROOT /
-/// CANDIDATO badges. In ALARME a siren lights up red and rings
-/// ([DeviceModelPainter]). A unit whose product has no model — or while its
+/// visible), the sleeping moon and the ALARME / ROOT / CANDIDATO badges (no
+/// status dot: Dispositivos says the state on the card). In ALARME a siren
+/// lights up red and rings ([DeviceModelPainter]). A unit whose product has no model — or while its
 /// model loads — is the [DeviceAvatar] circle, same size, so a list never
 /// jumps.
 ///
@@ -345,11 +320,6 @@ class _DeviceModelAvatarState extends State<DeviceModelAvatar>
         center: Offset(size / 2, size / 2), width: box, height: box);
     final led = pose.led;
     final alarm = node.alarmLatched ? (_reduceMotion ? 0.06 : t) : null;
-    final statusColor = !node.online
-        ? AppColors.error
-        : node.sleeping
-            ? context.textSecondary
-            : AppColors.success;
 
     return SizedBox(
       width: size,
@@ -383,27 +353,6 @@ class _DeviceModelAvatarState extends State<DeviceModelAvatar>
             child: Opacity(
               opacity: led == null || led.visible ? 1 : deviceLedAwayOpacity,
               child: DeviceLedDot(node: node, size: 10 * k),
-            ),
-          ),
-          Positioned(
-            right: -1,
-            top: -1,
-            child: Container(
-              width: 12 * k,
-              height: 12 * k,
-              decoration: BoxDecoration(
-                color: statusColor,
-                shape: BoxShape.circle,
-                border: Border.all(color: context.bgColor, width: 1.8),
-                boxShadow: node.online && !node.sleeping
-                    ? [
-                        BoxShadow(
-                          color: statusColor.withValues(alpha: 0.6),
-                          blurRadius: 5,
-                        ),
-                      ]
-                    : null,
-              ),
             ),
           ),
           if (node.sleeping)

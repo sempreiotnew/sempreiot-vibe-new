@@ -39,7 +39,7 @@ void main() {
   const sirenMac = 'AA:00:00:00:00:02';
 
   TopologyNode node(String mac, SafrNodeRole role, int layer, String? name,
-          {String? parent, bool alarm = false}) =>
+          {String? parent, bool alarm = false, bool online = true}) =>
       TopologyNode(
         mac: mac,
         role: role,
@@ -47,7 +47,7 @@ void main() {
         parentMac: parent,
         rssi: -60,
         batteryPct: null,
-        online: true,
+        online: online,
         lastSeenAt: DateTime.now().toUtc(),
         alarmLatched: alarm,
         name: name,
@@ -234,6 +234,26 @@ void main() {
       expect(find.text('Sirene Corredor'), findsOneWidget);
       expect(find.text('Acionador Recepção'), findsOneWidget);
       expectNothingOfThePhoneStarted();
+      await leave(tester);
+    });
+
+    testWidgets('Dispositivos: a unit without communication says OFFLINE — '
+        '${s.key}', (tester) async {
+      await pump(tester, s.value, const Scaffold(body: DevicesScreen()));
+      expect(find.text('OFFLINE'), findsNothing);
+      repo.deliver(
+        mirrorStateTopic(id),
+        encodeMirrorState(seq: 2, at: DateTime.now(), link: 'connected', nodes: [
+          units[0],
+          units[1],
+          node(sirenMac, SafrNodeRole.node, 2, 'Sirene Corredor',
+              parent: rootMac, online: false),
+        ]),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(tester.takeException(), isNull);
+      expect(find.text('OFFLINE'), findsOneWidget);
       await leave(tester);
     });
 

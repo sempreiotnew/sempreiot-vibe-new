@@ -9,6 +9,7 @@ import '../../application/root_election_provider.dart';
 import '../../application/topology_provider.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
 import '../widgets/device_avatar.dart';
+import '../widgets/network_3d/device_3d_chip.dart' show DeviceOfflineBadge;
 import 'device_settings_screen.dart';
 
 enum _Filter { all, alarm, offline, sleeping }
@@ -367,12 +368,25 @@ class _DeviceCard extends StatelessWidget {
                   // Its product's 3D model, turning on itself, when it has
                   // one (system reference §2.1.1); the circle otherwise.
                   // Tapping opens Dispositivo, where it stands still.
-                  DeviceModelAvatar(
-                    node: node,
-                    isRoot: isRoot,
-                    isCandidate: isCandidate,
-                    size: 64,
-                    spin: true,
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      DeviceModelAvatar(
+                        node: node,
+                        isRoot: isRoot,
+                        isCandidate: isCandidate,
+                        size: 64,
+                        spin: true,
+                      ),
+                      // Without communication: said in words, top right —
+                      // the same tag as on Rede 3D.
+                      if (!node.online)
+                        const Positioned(
+                          right: -22,
+                          top: -8,
+                          child: DeviceOfflineBadge(),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 14),
                   Text(

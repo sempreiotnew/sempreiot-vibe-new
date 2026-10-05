@@ -31,9 +31,9 @@ double _wrap(double a) {
 }
 
 /// A mesh device as a shaded sphere with every feature of the flat
-/// [DeviceAvatar]: status colour (rim light and tint), role icon, status
-/// dot, the LED lens, the sleeping moon, ROOT / CANDIDATO / ALARME badges
-/// and the name.
+/// [DeviceAvatar]: status colour (rim light and tint), role icon, the LED
+/// lens, the sleeping moon, OFFLINE / ROOT / CANDIDATO / ALARME badges and
+/// the name.
 class Device3dChip extends StatelessWidget {
   const Device3dChip({
     super.key,
@@ -73,11 +73,6 @@ class Device3dChip extends StatelessWidget {
             : node.online
                 ? AppColors.secondary
                 : AppColors.error;
-    final statusColor = !node.online
-        ? AppColors.error
-        : node.sleeping
-            ? context.textSecondary
-            : AppColors.success;
     final icon = switch (node.role) {
       SafrNodeRole.root => Icons.power_rounded,
       SafrNodeRole.node => Icons.cell_tower_rounded,
@@ -148,27 +143,12 @@ class Device3dChip extends StatelessWidget {
                   top: cy - r - 3,
                   child: DeviceLedDot(node: node, size: 10),
                 ),
-                Positioned(
-                  left: cx + r * 0.62,
-                  top: cy - r * 0.95,
-                  child: Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: statusColor,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: context.bgColor, width: 1.8),
-                      boxShadow: node.online && !node.sleeping
-                          ? [
-                              BoxShadow(
-                                color: statusColor.withValues(alpha: 0.6),
-                                blurRadius: 5,
-                              ),
-                            ]
-                          : null,
-                    ),
+                if (!node.online)
+                  const Positioned(
+                    left: cx + r * 0.2,
+                    top: cy - r - 7,
+                    child: DeviceOfflineBadge(),
                   ),
-                ),
                 if (node.alarmLatched)
                   const Positioned(
                     left: cx + r - 14,
@@ -351,8 +331,9 @@ class Central3dChip extends StatelessWidget {
 /// A unit drawn as its product's 3D model (system reference §2.1.1): the
 /// atlas frame for the camera's turn and tilt, as rendered (no outline), the
 /// LED lens on the model's LED, the siren's lights and sound waves in
-/// ALARME, and the same status dot, sleeping moon, ALARME / ROOT / CANDIDATO
-/// badges, name and firmware line as every chip.
+/// ALARME, OFFLINE over a unit without communication, and the same
+/// sleeping moon, ALARME / ROOT / CANDIDATO badges, name and firmware line
+/// as every chip.
 class Model3dChip extends StatelessWidget {
   const Model3dChip({
     super.key,
@@ -396,11 +377,6 @@ class Model3dChip extends StatelessWidget {
     final alarm = node.alarmLatched
         ? DateTime.now().microsecondsSinceEpoch / 1e6
         : null;
-    final statusColor = !node.online
-        ? AppColors.error
-        : node.sleeping
-            ? context.textSecondary
-            : AppColors.success;
     final hasName = node.name?.isNotEmpty == true;
 
     return SizedBox(
@@ -445,27 +421,12 @@ class Model3dChip extends StatelessWidget {
                     child: DeviceLedDot(node: node, size: 10),
                   ),
                 ),
-                Positioned(
-                  left: cx + body * 0.34,
-                  top: cy - body * 0.48,
-                  child: Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: statusColor,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: context.bgColor, width: 1.8),
-                      boxShadow: node.online && !node.sleeping
-                          ? [
-                              BoxShadow(
-                                color: statusColor.withValues(alpha: 0.6),
-                                blurRadius: 5,
-                              ),
-                            ]
-                          : null,
-                    ),
+                if (!node.online)
+                  Positioned(
+                    left: cx + body * 0.1,
+                    top: cy - body * 0.5 - 8,
+                    child: const DeviceOfflineBadge(),
                   ),
-                ),
                 if (node.sleeping)
                   Positioned(
                     left: cx - body * 0.5 - 4,
@@ -699,4 +660,18 @@ class _Badge extends StatelessWidget {
       ),
     );
   }
+}
+
+/// OFFLINE over a unit the central does not hear (Rede 3D): the word, not
+/// a colour to decode. The unit itself is drawn faded, its LED dark.
+class DeviceOfflineBadge extends StatelessWidget {
+  const DeviceOfflineBadge({super.key});
+
+  @override
+  Widget build(BuildContext context) => _Badge(
+        label: 'OFFLINE',
+        background: AppColors.error.withValues(alpha: 0.16),
+        foreground: AppColors.error,
+        border: AppColors.error.withValues(alpha: 0.7),
+      );
 }
