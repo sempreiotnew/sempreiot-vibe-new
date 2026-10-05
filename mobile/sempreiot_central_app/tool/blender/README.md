@@ -12,6 +12,7 @@ updates the docs. **No Dart, `pubspec.yaml` or documentation is edited by hand.*
 - [Adding a model for a new product](#adding-a-model-for-a-new-product) ← start here
 - [Moving the LED](#moving-the-led) ← seconds, no re-render
 - [Alarm lights and sound](#alarm-lights-and-sound)
+- [Sizing: equal visual weight](#sizing-equal-visual-weight)
 - [Updating an existing model](#updating-an-existing-model)
 - [The model contract](#the-model-contract-what-the-glb-must-look-like)
 - [`models.json` reference](#modelsjson-reference)
@@ -109,7 +110,7 @@ In the 3D Viewport press **N** → tab **SempreIoT**:
 | **Slug** | file name, lower_snake_case — proposed from the model string (`SIOT-PBS-01` → `pbs`); rename if you like (`push_button`) |
 | **Also for** | normally *This product only*. *Every leaf/node without a model* makes it the stand-in for units of that family that have no model of their own (today the smoke detector is the leaf stand-in) |
 | **Hide in sprites** | object name patterns left out of the renders, comma separated: `Wire_*, Tip_*` |
-| **Size on map (px)** | on-screen size of the model's largest side at zoom 1 — the detector is 52, the siren 56 |
+| **Size adjust** | leave at **1.0**: every model is drawn with the same visual weight automatically ([sizing](#sizing-equal-visual-weight)). Nudge (0.5–1.5) only if one still looks off |
 | **Alarm lights** | objects that light up red in ALARME, e.g. a siren's lens: `SIREN_Lens, SIREN_Lens_Boss`. Empty = none |
 | **Rings in alarm** | sound waves come out of its sides in ALARME (sounders) |
 | **LED** | put the 3D cursor on the unit's status LED (Shift + right-click on the surface) → **Set LED at 3D cursor**. Not sure yet? Put it anywhere — moving it later takes seconds |
@@ -187,6 +188,18 @@ shown lit and still, and the cards do not spin.
 
 ---
 
+## Sizing: equal visual weight
+
+Products differ in size and shape — a tall siren, a round detector, a square push button. The app does not
+draw them at real size, nor by their largest side (that made the square push button look ~30 % heavier):
+**every model gets the same visual weight**. The square root of the area its outline covers on screen is
+`deviceModelVisualWeight` (0.79) × the layout size it is given — the circle's diameter: 46 px on Rede,
+52 px on Rede 3D, 64 px on the Dispositivos cards, 72 px on Dispositivo. The factory measures each model's
+`coverage`; the app computes the frame size from it (`deviceModelBox`). Nothing to set for a new product;
+`scale` in `models.json` (panel: **Size adjust**) nudges one that still looks off.
+
+---
+
 ## Updating an existing model
 
 Change the `.blend`, select the product in the panel (its settings load), press **Export to app**.
@@ -232,7 +245,7 @@ Where the model sits does not matter: the factory frames the bounding box of the
     "yaws": [0, 15, …, 345],         // Rede 3D camera turns, degrees (24)
     "pitches": [-15, 0, …, 75],      // Rede 3D camera tilts, degrees (7) — the app's range is about −14°..69°
     "bodyFraction": 0.79,            // share of the frame the model's largest side fills (less for a boxy model: the frame also fits its diagonal)
-    "displaySize": 52,               // px on the map at zoom 1
+    "scale": 1.0,                    // size nudge on top of the equal visual weight (see Sizing)
     "spin": {"pitch": 15, "step": 5, "cols": 12}   // the Dispositivos turn: tilt, step in degrees, sheet columns
   },
   "models": [
@@ -241,7 +254,7 @@ Where the model sits does not matter: the factory frames the bounding box of the
       "glb": "assets/models/siren.glb",      // required
       "products": ["SIOT-SIREN-01"],         // model strings from §2.1 (one or more)
       "familyFallback": "leaf",              // optional: "leaf" | "node" | "board"
-      "displaySize": 56,                     // optional (default above)
+      "scale": 1.0,                          // optional, default 1.0 — only to nudge a model that still looks off
       "orthoScale": 0.125,                   // optional: fixed frame size in metres instead of largest side / bodyFraction
       "hide": ["SIREN_Wire_*"],              // optional: object name patterns (fnmatch) left out of the renders
       "markers": {
@@ -311,7 +324,8 @@ frame, the lookup order below, and the widgets (spin, still Dispositivo, drag, a
 4. **Pack** each set into one sheet → `<slug>_atlas.png` (one row per tilt), `<slug>_spin.png`
    (12 per row), `<slug>_glow.png`, `<slug>_spin_glow.png`.
 5. **Markers**: for every atlas and spin frame, where each marker falls (0..1 in the frame) and whether
-   its normal faces the camera → `<slug>_frames.json` with sizes, angles, `bodyFraction`, alarm flags and
+   its normal faces the camera, and the model's **coverage** (mean share of the frame its outline covers
+   over the spin turn) → `<slug>_frames.json` with sizes, angles, `bodyFraction`, coverage, alarm flags and
    both fingerprints.
 6. **Generate**, for all models, only writing files that changed: `device_models.g.dart`, the
    `pubspec.yaml` block between `# >>> device-models` / `# <<< device-models`, the system reference §2.1.1

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -80,6 +81,22 @@ void main() {
       }
     });
 
+    test('every model has the same visual weight, whatever its shape', () {
+      for (final spec in deviceModelSpecs) {
+        final frames =
+            DeviceModelFrames.parse(File(spec.frames).readAsStringSync());
+        expect(frames.coverage, inExclusiveRange(0.05, 0.95),
+            reason: '${spec.slug}: coverage not measured');
+        for (final size in [46.0, 52.0, 64.0, 72.0]) {
+          final box = deviceModelBox(spec, frames, size);
+          // sqrt(outline area on screen) / layout size
+          final weight = math.sqrt(frames.coverage) * box / size;
+          expect(weight, closeTo(deviceModelVisualWeight * spec.scale, 1e-9),
+              reason: '${spec.slug} at $size px');
+        }
+      }
+    });
+
     test('the siren lights up and rings in alarm, the detector does not',
         () {
       final siren = deviceModelSpecs.firstWhere((s) => s.slug == 'siren');
@@ -122,7 +139,7 @@ void main() {
 
   group('DeviceModelFrames', () {
     const json = '{"size":10,"yaws":[0,90,180,270],"pitches":[0,45],'
-        '"bodyFraction":0.8,"markers":{"led":[[0.5,0.5,1],[0.6,0.5,1],'
+        '"bodyFraction":0.8,"coverage":0.4,"markers":{"led":[[0.5,0.5,1],[0.6,0.5,1],'
         '[0.5,0.5,0],[0.4,0.5,1],[0.5,0.4,1],[0.6,0.4,1],[0.5,0.4,0],'
         '[0.4,0.4,1]]},"spin":{"pitch":15,"yaws":[0,120,240],"cols":2,'
         '"markers":{"led":[[0.2,0.5,1],[0.6,0.5,1],[0.4,0.5,0]]}}}';

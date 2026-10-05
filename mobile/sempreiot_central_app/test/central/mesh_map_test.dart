@@ -11,7 +11,11 @@ import 'package:sempreiot_central_app/features/central/application/safr_traffic_
 import 'package:sempreiot_central_app/features/central/application/topology_provider.dart';
 import 'package:sempreiot_central_app/features/central/domain/ota/firmware_image.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/device_avatar.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_map.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_model_painter.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_model_sprites.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_models.g.dart';
 
 import '../ota/fake_firmware.dart';
 
@@ -23,7 +27,8 @@ void main() {
   const board = '7C:4F:AD:AE:85:90';
   const root = '5A:46:52:00:00:01';
 
-  TopologyNode node(String mac, int layer, SafrNodeRole role, String? parent) =>
+  TopologyNode node(String mac, int layer, SafrNodeRole role, String? parent,
+          {int? product, bool online = true}) =>
       TopologyNode(
         mac: mac,
         role: role,
@@ -31,9 +36,10 @@ void main() {
         parentMac: parent,
         rssi: layer == 0 ? null : -60,
         batteryPct: null,
-        online: true,
+        online: online,
         lastSeenAt: now,
         alarmLatched: false,
+        productCode: product,
       );
 
   final boardNode = node(board, 0, SafrNodeRole.root, null);
@@ -56,7 +62,9 @@ void main() {
     startedAt: DateTime(2026, 10, 2, 14),
   );
 
-  Future<void> pump(WidgetTester tester, {required bool showOta}) async {
+  Future<void> pump(WidgetTester tester,
+      {required bool showOta, List<TopologyNode>? units}) async {
+    final nodes = units ?? mesh;
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -64,7 +72,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          topologyProvider.overrideWithValue([boardNode, ...mesh]),
+          topologyProvider.overrideWithValue([boardNode, ...nodes]),
           safrTrafficProvider.overrideWithValue(SafrTrafficBus()),
           otaPushViewProvider.overrideWithValue(sending),
           otaRolloutOverlayProvider.overrideWithValue(OtaRolloutOverlay.none),
@@ -73,7 +81,7 @@ void main() {
         child: MaterialApp(
           home: Scaffold(
             body: MeshMap(
-              nodes: mesh,
+              nodes: nodes,
               board: boardNode,
               election: const RootElectionState(rootMac: root),
               onNodeTap: (_, __) {},
@@ -105,5 +113,31 @@ void main() {
     expect(find.byKey(tablet), findsNothing);
     expect(find.text('CENTRAL'), findsOneWidget);
     expect(find.text(root), findsOneWidget);
+  });
+
+  testWidgets(
+      'every unit is drawn as its 3D model; one without communication says '
+      'OFFLINE (2026-10-05)', (tester) async {
+    final siren = deviceModelSpecs.firstWhere((m) => m.slug == 'siren');
+    await tester.runAsync(() => DeviceModelSprites.load(siren));
+    const sirenMac = '5A:46:52:00:00:02';
+    const deadMac = '5A:46:52:00:00:03';
+    await pump(tester, showOta: false, units: [
+      node(root, 1, SafrNodeRole.root, board, product: 0x0201),
+      node(sirenMac, 2, SafrNodeRole.node, root, product: 0x0201),
+      node(deadMac, 2, SafrNodeRole.node, root, product: 0x0201, online: false),
+    ]);
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump();
+    expect(find.byType(DeviceModelAvatar), findsNWidgets(3));
+    expect(
+        find.byWidgetPredicate(
+            (w) => w is CustomPaint && w.painter is DeviceModelPainter),
+        findsNWidgets(3),
+        reason: 'the models, not the circles');
+    expect(find.byType(DeviceLedDot), findsNWidgets(4),
+        reason: 'each unit keeps its LED, and the board has its own');
+    expect(find.text('OFFLINE'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

@@ -20,7 +20,7 @@ class DeviceModelSpec {
     required this.glow,
     required this.spinGlow,
     required this.frames,
-    required this.displaySize,
+    required this.scale,
     required this.alarmSound,
   });
 
@@ -47,8 +47,9 @@ class DeviceModelSpec {
   /// Frame data (`<slug>_frames.json`).
   final String frames;
 
-  /// On-screen size of the model's largest side at chip scale 1, px.
-  final double displaySize;
+  /// Size nudge on top of the equal visual weight every model gets
+  /// ([deviceModelBox]); 1.0 = same weight as every other model.
+  final double scale;
 
   /// In ALARME it rings: sound waves come out of its sides.
   final bool alarmSound;
@@ -81,6 +82,22 @@ DeviceModelSpec? deviceModelIn(List<DeviceModelSpec> specs, int? productCode,
   return null;
 }
 
+/// How big a model looks, the same for every product: the square root of
+/// the area its outline covers is this share of the layout size it is given
+/// (the circle's diameter). A tall siren, a round detector and a square push
+/// button then weigh the same on a card or the map, whatever their real size
+/// or shape. 0.79 = the smoke detector as it was first drawn.
+const deviceModelVisualWeight = 0.79;
+
+/// Side of the frame to draw so the model has [deviceModelVisualWeight] at
+/// layout size [size] (px).
+double deviceModelBox(DeviceModelSpec spec, DeviceModelFrames frames,
+        double size) =>
+    size *
+    deviceModelVisualWeight *
+    spec.scale /
+    math.sqrt(frames.coverage.clamp(0.01, 1.0));
+
 /// Where a marker (e.g. the LED) sits in one frame: 0..1 in the frame, and
 /// whether it faces the camera.
 typedef ModelMarker = ({Offset at, bool visible});
@@ -105,6 +122,7 @@ class DeviceModelFrames {
     required this.yaws,
     required this.pitches,
     required this.bodyFraction,
+    required this.coverage,
     required this.markers,
     required this.spinPitch,
     required this.spinYaws,
@@ -118,6 +136,10 @@ class DeviceModelFrames {
 
   /// Fraction of a frame the model's largest side fills.
   final double bodyFraction;
+
+  /// Mean share of a frame the model's outline covers over a full turn
+  /// (factory); sizes every model to the same visual weight.
+  final double coverage;
 
   /// Per marker name, one entry per atlas frame (pitch-major, yaw-minor).
   final Map<String, List<ModelMarker>> markers;
@@ -138,6 +160,7 @@ class DeviceModelFrames {
       yaws: (j['yaws'] as List).cast<int>(),
       pitches: (j['pitches'] as List).cast<int>(),
       bodyFraction: (j['bodyFraction'] as num).toDouble(),
+      coverage: ((j['coverage'] ?? 0.4) as num).toDouble(),
       markers: _markerMap(j['markers']),
       spinPitch: spin['pitch'] as int,
       spinYaws: (spin['yaws'] as List).cast<int>(),
@@ -223,6 +246,9 @@ class DeviceModelSprites {
   final DeviceModelFrames frames;
 
   bool get hasAlarmLights => glow != null;
+
+  /// Frame side for layout size [size] — see [deviceModelBox].
+  double frameBox(double size) => deviceModelBox(spec, frames, size);
 
   /// The Rede 3D view: the nearest atlas frame for the camera.
   ModelPose mapPose(double yaw, double pitch) {

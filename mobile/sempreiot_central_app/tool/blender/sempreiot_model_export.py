@@ -89,7 +89,7 @@ def on_product(self, context):
         self["slug_edited"] = False
         self.family_fallback = entry.get("familyFallback", "none")
         self["hide"] = ", ".join(entry.get("hide", []))
-        self["display_size"] = float(entry.get("displaySize", man["defaults"].get("displaySize", 52)))
+        self["scale"] = float(entry.get("scale", 1.0))
         alarm = entry.get("alarm", {})
         self["alarm_lights"] = ", ".join(alarm.get("lights", []))
         self["alarm_sound"] = bool(alarm.get("sound", False))
@@ -131,7 +131,8 @@ class SIOT_Props(bpy.types.PropertyGroup):
                ("leaf", "Every leaf without a model", "Battery units with no model of their own"),
                ("node", "Every node without a model", "Mains units with no model of their own")])
     hide: bpy.props.StringProperty(name="Hide in sprites", description="Comma-separated object name patterns, e.g. Wire_*, Cable*")
-    display_size: bpy.props.FloatProperty(name="Size on map (px)", default=52, min=24, max=96)
+    scale: bpy.props.FloatProperty(name="Size adjust", default=1.0, min=0.5, max=1.5,
+                                   description="1.0 = the same visual weight as every other model in the app; nudge only if it still looks off")
     alarm_lights: bpy.props.StringProperty(name="Alarm lights",
                                            description="Objects that light up red in ALARME (comma-separated name patterns), e.g. the siren's lens")
     alarm_sound: bpy.props.BoolProperty(name="Rings in alarm", description="Sound waves come out of its sides in ALARME")
@@ -252,7 +253,11 @@ class SIOT_OT_export(bpy.types.Operator):
             entry["hide"] = hide
         else:
             entry.pop("hide", None)
-        entry["displaySize"] = round(st.display_size, 1)
+        entry.pop("displaySize", None)
+        if abs(st.scale - 1.0) > 1e-3:
+            entry["scale"] = round(st.scale, 3)
+        else:
+            entry.pop("scale", None)
         entry.pop("rim", None)
         entry["alarm"] = {"lights": [h.strip() for h in st.alarm_lights.split(",") if h.strip()],
                           "sound": bool(st.alarm_sound)}
@@ -326,7 +331,7 @@ class SIOT_PT_panel(bpy.types.Panel):
         col.prop(st, "slug")
         col.prop(st, "family_fallback")
         col.prop(st, "hide")
-        col.prop(st, "display_size")
+        col.prop(st, "scale")
         col.prop(st, "alarm_lights")
         col.prop(st, "alarm_sound")
         row = col.row(align=True)

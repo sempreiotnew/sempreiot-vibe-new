@@ -17,6 +17,7 @@ import '../../application/topology_provider.dart';
 import '../../domain/safr/safr_product.dart';
 import 'device_menu.dart' show deviceAnchorOf;
 import 'device_avatar.dart';
+import 'network_3d/device_3d_chip.dart' show DeviceOfflineBadge;
 import 'ota_rede_widgets.dart';
 
 /// The 2D map of the fire-alarm mesh, shared by Rede and "Atualizar
@@ -1520,11 +1521,21 @@ class _NodeChip extends StatelessWidget {
                     clipBehavior: Clip.none,
                     children: [
                       if (selected) const _SelectionRing(diameter: 46),
-                      DeviceAvatar(
+                      // Its product's 3D model, standing still (as on
+                      // Dispositivo); the circle when it has none or while
+                      // the model loads.
+                      DeviceModelAvatar(
                         node: node,
                         isRoot: isRoot,
                         isCandidate: isCandidate,
+                        size: 46,
                       ),
+                      if (!node.online)
+                        const Positioned(
+                          right: -24,
+                          top: -8,
+                          child: DeviceOfflineBadge(),
+                        ),
                       if (selected) const _SelectionCheck(),
                       if (activity?.updating == true)
                         Positioned(

@@ -11,7 +11,7 @@
     "yaws": [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210, 225, 240, 255, 270, 285, 300, 315, 330, 345],
     "pitches": [-15, 0, 15, 30, 45, 60, 75],
     "bodyFraction": 0.79,
-    "displaySize": 52,
+    "scale": 1.0,
     "spin": {
       "pitch": 15,
       "step": 5,
@@ -25,7 +25,6 @@
       "products": ["SIOT-SMOKE-01"],
       "familyFallback": "leaf",
       "orthoScale": 0.125,
-      "displaySize": 52,
       "markers": {
         "led": {
           "object": "LED",
@@ -41,7 +40,6 @@
       "slug": "siren",
       "glb": "assets/models/siren.glb",
       "products": ["SIOT-SIREN-01"],
-      "displaySize": 56,
       "hide": ["SIREN_Wire_*", "SIREN_Tip_*", "SIREN_ZipTie*"],
       "markers": {
         "led": {
@@ -59,7 +57,6 @@
       "glb": "assets/models/push_button.glb",
       "products": ["SIOT-PBS-01"],
       "hide": ["PBS_Glass"],
-      "displaySize": 52.0,
       "alarm": {
         "lights": [],
         "sound": false

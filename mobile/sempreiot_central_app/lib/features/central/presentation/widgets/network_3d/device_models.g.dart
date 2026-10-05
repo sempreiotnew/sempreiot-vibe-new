@@ -16,7 +16,7 @@ const deviceModelSpecs = <DeviceModelSpec>[
     glow: null,
     spinGlow: null,
     frames: 'assets/models/smoke_detector_frames.json',
-    displaySize: 52.0,
+    scale: 1.0,
     alarmSound: false,
   ),
   DeviceModelSpec(
@@ -28,7 +28,7 @@ const deviceModelSpecs = <DeviceModelSpec>[
     glow: 'assets/models/siren_glow.png',
     spinGlow: 'assets/models/siren_spin_glow.png',
     frames: 'assets/models/siren_frames.json',
-    displaySize: 56.0,
+    scale: 1.0,
     alarmSound: true,
   ),
   DeviceModelSpec(
@@ -40,7 +40,7 @@ const deviceModelSpecs = <DeviceModelSpec>[
     glow: null,
     spinGlow: null,
     frames: 'assets/models/push_button_frames.json',
-    displaySize: 52.0,
+    scale: 1.0,
     alarmSound: false,
   ),
 ];

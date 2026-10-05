@@ -315,7 +315,8 @@ class _DeviceModelAvatarState extends State<DeviceModelAvatar>
             t * 2 * math.pi * 1e6 / DeviceModelAvatar.spinPeriod.inMicroseconds
         : _yaw;
     final pose = sprites.spinPose(yaw);
-    final box = size / sprites.frames.bodyFraction;
+    // Same visual weight for every product (deviceModelVisualWeight).
+    final box = sprites.frameBox(size);
     final dst = Rect.fromCenter(
         center: Offset(size / 2, size / 2), width: box, height: box);
     final led = pose.led;

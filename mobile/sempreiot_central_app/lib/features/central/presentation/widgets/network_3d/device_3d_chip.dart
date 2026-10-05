@@ -362,12 +362,17 @@ class Model3dChip extends StatelessWidget {
 
   static const width = 104.0;
 
+  /// Layout size of a model on the map at chip scale 1, px.
+  static const size = 52.0;
+
   @override
   Widget build(BuildContext context) {
     final frames = sprites.frames;
     final pose = sprites.mapPose(yaw, pitch);
-    final body = sprites.spec.displaySize;
-    final box = body / frames.bodyFraction;
+    // Layout size of the unit on the map (the sphere's scale); the model
+    // gets the same visual weight as every other (deviceModelVisualWeight).
+    const body = Model3dChip.size;
+    final box = sprites.frameBox(body);
     const cx = width / 2, cy = device3dAnchorY;
     final dst =
         Rect.fromCenter(center: const Offset(cx, cy), width: box, height: box);
@@ -422,10 +427,10 @@ class Model3dChip extends StatelessWidget {
                   ),
                 ),
                 if (!node.online)
-                  Positioned(
+                  const Positioned(
                     left: cx + body * 0.1,
                     top: cy - body * 0.5 - 8,
-                    child: const DeviceOfflineBadge(),
+                    child: DeviceOfflineBadge(),
                   ),
                 if (node.sleeping)
                   Positioned(
@@ -447,10 +452,10 @@ class Model3dChip extends StatelessWidget {
                     ),
                   ),
                 if (node.alarmLatched)
-                  Positioned(
+                  const Positioned(
                     left: cx + 6,
                     top: cy + body * 0.38,
-                    child: const _Badge(
+                    child: _Badge(
                       label: 'ALARME',
                       background: AppColors.error,
                       foreground: Colors.white,

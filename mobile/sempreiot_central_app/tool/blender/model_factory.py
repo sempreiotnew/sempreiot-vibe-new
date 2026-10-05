@@ -12,8 +12,9 @@ For every model in tool/blender/models.json (or the ones named):
      <slug>_spin_glow.png   atlas / spin (only when the model has alarm lights)
   markers — when only a marker (e.g. the LED) moved, or --markers: just the
      positions, no rendering (seconds)
-     <slug>_frames.json     sizes, angles, bodyFraction, every marker per frame,
-                            alarm flags, fingerprints
+     <slug>_frames.json     sizes, angles, bodyFraction, coverage (how much of the
+                            frame the outline covers, for equal visual weight), every
+                            marker per frame, alarm flags, fingerprints
   code    — always, for all models (cheap):
      lib/.../network_3d/device_models.g.dart   product code -> model
      pubspec.yaml block between the device-models markers
@@ -107,6 +108,9 @@ def load_manifest(cat, dart_codes):
             seen_fallback[fb] = s
         for k, v in d.items():
             m.setdefault(k, v)
+        if "displaySize" in m:
+            log(f"{s}: 'displaySize' is replaced by 'scale' (1.0 = same visual weight as every model) — remove it")
+            m.pop("displaySize")
         m.setdefault("hide", [])
         m.setdefault("markers", {})
         m.setdefault("alarm", {})
@@ -343,6 +347,20 @@ def pack(files, cols, out):
     log("wrote", os.path.relpath(out, APP), f"{cols * w}x{rows * h}")
 
 
+def coverage(m):
+    """Mean share of a frame the model's outline covers, over the spin turn —
+    the app sizes every model to the same visual weight from it."""
+    px = load_px(out_paths(m)["spin"])[..., 3]
+    s, cols = m["size"], int(m["spin"]["cols"])
+    rows = px.shape[0] // s
+    vals = []
+    for i in range(len(spin_yaws(m))):
+        r, c = i // cols, i % cols
+        y0 = (rows - 1 - r) * s  # bottom-up
+        vals.append(float(px[y0:y0 + s, c * s:(c + 1) * s].mean()))
+    return sum(vals) / len(vals)
+
+
 def write_frames(m, scene, prev=None):
     paths = out_paths(m)
     data = {
@@ -356,6 +374,7 @@ def write_frames(m, scene, prev=None):
         "bodyFraction": round(scene.body_fraction, 4),
         "orthoScale": round(scene.ortho, 5),
         "dims": [round(x, 4) for x in scene.dims],
+        "coverage": round(coverage(m), 4),
         "markers": scene.marker_frames(map_angles(m)),
         "spin": {
             "pitch": m["spin"]["pitch"],
@@ -444,7 +463,7 @@ def codegen(man, cat):
             f"    glow: {repr(rel(p['glow'])) if 'glow' in p else 'null'},",
             f"    spinGlow: {repr(rel(p['spinGlow'])) if 'spinGlow' in p else 'null'},",
             f"    frames: '{rel(p['frames'])}',",
-            f"    displaySize: {float(m['displaySize'])},",
+            f"    scale: {float(m['scale'])},",
             f"    alarmSound: {'true' if m['alarm']['sound'] else 'false'},",
             "  ),",
         ]
