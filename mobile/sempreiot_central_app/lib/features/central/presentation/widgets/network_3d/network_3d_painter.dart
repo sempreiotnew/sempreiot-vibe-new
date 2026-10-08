@@ -46,7 +46,30 @@ class Packet3d {
 
   double progress(DateTime now) =>
       now.difference(startedAt).inMicroseconds / duration.inMicroseconds;
+
+  /// The departure ripple's phase (0..1), or null when it is over.
+  double? departureRipple(DateTime now) {
+    final t = now.difference(startedAt).inMilliseconds / packetRippleMs;
+    return t >= 0 && t < 1 ? t : null;
+  }
+
+  /// The arrival ripple's phase (0..1), or null before and after it.
+  double? arrivalRipple(DateTime now) {
+    final t =
+        (now.difference(startedAt).inMilliseconds - duration.inMilliseconds) /
+            packetRippleMs;
+    return t >= 0 && t < 1 ? t : null;
+  }
+
+  /// Travelled and rippled: nothing left to draw.
+  bool done(DateTime now) =>
+      now.difference(startedAt).inMilliseconds >
+      duration.inMilliseconds + packetRippleMs;
 }
+
+/// A packet leaving or reaching a unit spreads rings from it — the same
+/// ripple as the Rede map's (mesh_map.dart `packetRippleMs`).
+const packetRippleMs = 900;
 
 /// Time per hop, as on the Rede map: a leaf's packet a little slower so the
 /// eye can follow it.
@@ -172,6 +195,10 @@ class Network3dPainter extends CustomPainter {
     }
 
     for (final p in packets) {
+      final dep = p.departureRipple(now);
+      if (dep != null) _ripple(canvas, projected[p.path.first], p.color, dep);
+      final arr = p.arrivalRipple(now);
+      if (arr != null) _ripple(canvas, projected[p.path.last], p.color, arr);
       for (var k = 2; k >= 0; k--) {
         final t = p.progress(now) - k * 0.03;
         if (t < 0 || t >= 1) continue;
@@ -398,6 +425,34 @@ class Network3dPainter extends CustomPainter {
         ..color = color.withValues(alpha: 0.35 * fade),
     );
     tp.paint(canvas, pos - Offset(tp.width / 2, tp.height / 2));
+  }
+
+  /// Rings spreading from a unit, like a drop on water, scaled by depth.
+  void _ripple(Canvas canvas, Projected? at, Color color, double t) {
+    if (at == null) return;
+    final k = at.scale.clamp(0.2, 2.8);
+    if (t < 0.4) {
+      canvas.drawCircle(
+        at.offset,
+        22 * k,
+        Paint()
+          ..color = color.withValues(alpha: 0.18 * (1 - t / 0.4))
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
+      );
+    }
+    for (final lag in const [0.0, 0.2, 0.4]) {
+      final q = ((t - lag) / (1 - lag)).clamp(0.0, 1.0);
+      if (q <= 0 || q >= 1) continue;
+      final eased = Curves.easeOutCubic.transform(q);
+      canvas.drawCircle(
+        at.offset,
+        (16 + eased * 34) * k,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = (2.2 * (1 - q) + 0.5) * k.clamp(0.6, 1.4)
+          ..color = color.withValues(alpha: 0.65 * (1 - q)),
+      );
+    }
   }
 
   void _pulse(Canvas canvas, Projected? at, Color color, double phase,

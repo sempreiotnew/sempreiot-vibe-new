@@ -76,5 +76,24 @@ void main() {
       expect(s.overdue(at(39)), isFalse);
       expect(s.overdue(at(41)), isTrue);
     });
+
+    test('the banner knows which root was lost and who won, in how long', () {
+      var s = run(RootElectionState.none, [(0, {a}), (3, {a})]);
+      expect(s.electedMac, isNull, reason: 'a quiet start is no election');
+      s = stepRootElection(s, {}, at(10)); // the root dies
+      expect(s.lostRootMac, a);
+      s = stepRootElection(s, {b}, at(14));
+      expect(s.lostRootMac, a, reason: 'kept while the election runs');
+      s = run(s, [(15, {b}), (17, {b})]);
+      expect(s.rootMac, b);
+      expect(s.electing, isFalse);
+      expect(s.electedMac, b);
+      expect(s.electedAfter, const Duration(seconds: 7));
+      expect(s.electedAt, at(17));
+      // While b holds, the outcome is kept (the banner times itself out).
+      s = stepRootElection(s, {b}, at(20));
+      expect(s.electedMac, b);
+      expect(s.electedAt, at(17));
+    });
   });
 }

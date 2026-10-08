@@ -147,6 +147,16 @@ tablet). It does not send a frame itself — it asks the central:
 
 A batch that carries an event is sent QoS 1 (an event is not repeated by the next batch).
 
+**Every command's steps, since 2026-10-08.** The tablet follows each command it sends to a unit
+(`device_command_provider.dart`: Identificar, Testar, Silenciar / Ligar som, Rearmar — from its own
+popover or a phone's request) and publishes every step as `["command", mac, kind × 16 + step, who]`:
+kind 0 Identificar · 1 Testar · 2 Silenciar · 3 Ligar som · 4 Rearmar (5–7 are what a unit sent — never published, each phone derives them from the ticks); step 0 sent · 1 the board took
+it · 2 the unit confirmed it (its own ACK) · 3 the test came back · 4 no confirmation; `who` = the
+phone user who asked, absent for the tablet. The phone puts it into its own tracker — learning a system test's membership from the events themselves (the broadcast's `sending` opens the list, every unit status of the same command joins it), so outcomes stay for the whole test, the tally counts them and they leave together, as on the tablet; a phone never invents a verdict past the window, it waits for the tablet's — so its Rede map
+draws the same pill, checks and rings as the tablet; the command packets themselves arrive as ticks
+(a COMMAND going down, the unit's ACK coming up). A phone still asks only for Identificar, as above;
+the `identify*` events stay for phones of older builds.
+
 The level of the user is not checked: any accepted user may identify (open decision D3).
 
 ---
@@ -160,13 +170,15 @@ All JSON, all with `"v":1`. Field names are short on `frames` only, where size i
 ```json
 {"v":1,"seq":41,"at":"2026-10-03T21:00:05.236Z","link":"connected",
  "units":[{"mac":"AA:BB:…","role":"node","layer":1,"parent":null,"rssi":-58,"bat":null,
-           "online":true,"heard":true,"updating":false,"lastSeen":"…",
+           "online":true,"heard":true,"awaiting":false,"updating":false,"lastSeen":"…",
            "alarm":false,"alarmAt":null,"name":"Hall","zone":"Térreo",
            "product":3,"hw":1,"fw":"0.2.1","boardState":2,"boardFlags":0,
            "candidates":[["CC:DD:…",-61]]}]}
 ```
 
 One entry per `TopologyNode` (`topology_provider.dart`), same fields; absent = null / false / 0.
+`awaiting` (2026-10-08): known from the board's table only, never heard by the tablet — `layer` is
+then -1, the unit is counted "aguardando o primeiro sinal" and not drawn in the tree.
 `link` is the board link (`serialLinkProvider`): with the cable down every unit is offline on the
 phone too.
 
@@ -189,7 +201,8 @@ Size: about 250 bytes per unit — 12 KB for 50 units, 60 KB for 250, in one mes
 ```
 
 `events` (optional) carries what is not a frame movement: `["identify_sending", mac, 0]`,
-`["identify", mac, seconds]` and `["identify_failed", mac, 0]` (§3.3).
+`["identify", mac, seconds]`, `["identify_failed", mac, 0]` and `["command", mac, kind × 16 + step,
+who?]` (§3.3).
 
 One tick = one `SafrTrafficTick` (`safr_traffic_provider.dart`):
 `[ms since t0, mac, direction (0 up, 1 down), severity, ack, parentMac, msgType, eventCode, uptimeS]`.
@@ -334,7 +347,7 @@ Menu and actions — what a user gets:
 | **Bloquear central** (lock button, PIN) | hidden | locks the tablet's own screen |
 | Acessos | hidden | the operator at the tablet grants access |
 | Identificar | **shown** — asked to the central, which sends it (§3.3) | lights an LED, changes nothing |
-| Other unit actions (rename, zone, test, RESET / Rearmar, silence, retire, Limpar dispositivos) | hidden | rule 2: no command from a phone |
+| Other unit actions (rename, zone, test, RESET / Rearmar, silence, retire, Sincronizar com a placa) | hidden | rule 2: no command from a phone |
 | A tap on a unit | its basics, Identificar and the Dispositivo screen, read only | — |
 
 What cannot be mirrored, as on the tablet: survey blinks, setup, button hold — they never cross the

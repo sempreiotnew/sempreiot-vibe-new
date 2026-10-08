@@ -33,6 +33,7 @@ class TopologyNode {
     this.fwVersion,
     this.updating = false,
     this.heard = true,
+    this.awaitingSignal = false,
   });
 
   final String mac;
@@ -55,6 +56,12 @@ class TopologyNode {
   /// its new firmware. Nothing of what it does then crosses the wire, so
   /// its LED on screen is dark.
   final bool heard;
+
+  /// Known only from the board's table (or INSTALLATION): this tablet has
+  /// not heard a frame of it yet, so its level and parent are unknown and
+  /// it is not drawn in the tree — [layer] is then -1. The Rede strip
+  /// counts it as "aguardando o primeiro sinal"; its first frame places it.
+  final bool awaitingSignal;
 
   /// Alarm held on the panel (SAFR v3 §7.1.4) until the operator RESET.
   final bool alarmLatched;
@@ -163,8 +170,9 @@ List<({String mac, int rssi})> _decodeCandidates(String? json) {
 /// cable.
 ///
 /// Every registered device stays on the map, however long it has been silent
-/// (it is only dimmed once `stale`); the manual "Limpar dispositivos" action
-/// is the one way a unit leaves the map.
+/// (it is only dimmed once `stale`); it leaves the map when forgotten, or
+/// on a "Sincronizar com a placa" that finds it out of the board's table and
+/// silent (board_sync_provider.dart).
 ///
 /// USER mode with a central open: the units come from that central's mirror
 /// (central_mirror_viewer.dart), and nothing of this device's registry,
@@ -188,9 +196,14 @@ final topologyProvider = Provider<List<TopologyNode>>((ref) {
     for (final s in supervision)
       TopologyNode(
         mac: s.device.mac,
-        role:
-            _resolveRole(s.device.role, s.device.layer, s.device.mac, parents),
-        layer: s.device.layer,
+        role: _resolveRole(
+            s.device.role,
+            s.device.registryState == 'enrolled' ? -1 : s.device.layer,
+            s.device.mac,
+            parents),
+        // Never heard: its level is unknown — and 0 would make it the board.
+        layer: s.device.registryState == 'enrolled' ? -1 : s.device.layer,
+        awaitingSignal: s.device.registryState == 'enrolled',
         parentMac: s.device.parentMac,
         rssi: s.device.lastRssi,
         batteryPct: s.device.batteryPct,
@@ -208,8 +221,7 @@ final topologyProvider = Provider<List<TopologyNode>>((ref) {
         productCode: s.device.productCode,
         hwRev: s.device.hwRev,
         fwVersion: s.device.fwVersion,
-        updating:
-            linkUp && updatingUnits.updatingAt(s.device.mac, now, grace),
+        updating: linkUp && updatingUnits.updatingAt(s.device.mac, now, grace),
         heard: linkUp && s.heard,
       ),
   ]..sort((a, b) {

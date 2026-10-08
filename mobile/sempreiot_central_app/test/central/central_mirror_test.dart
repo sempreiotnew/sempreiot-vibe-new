@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sempreiot_central_app/core/database/app_database.dart'
     show OtaRun, OtaRunUnit;
 import 'package:sempreiot_central_app/features/central/application/central_mirror_codec.dart';
+import 'package:sempreiot_central_app/features/central/application/device_command_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/central_mirror_publisher.dart';
 import 'package:sempreiot_central_app/features/central/application/central_mirror_viewer.dart';
 import 'package:sempreiot_central_app/features/central/application/device_update_controller.dart';
@@ -794,6 +795,29 @@ void main() {
       expect(sent.where((m) => m.topic == mirrorFramesTopic(id)).single.qos, 1);
     });
 
+    test('a command\'s steps go to the phones as they happen', () {
+      publisher.onCommand(encodeMirrorWatch(hello: true));
+      publisher.pump();
+      sent.clear();
+      final status = DeviceCommandStatus(
+        mac: rootMac,
+        kind: DeviceCommandKind.test,
+        step: DeviceCommandStep.delivered,
+        startedAt: now,
+      );
+      publisher.onCommandStatus(rootMac, status.wire, 'ana@x.com');
+      advance(CentralMirrorPublisher.pumpEvery);
+      publisher.pump();
+      expect(eventsSent(), [
+        (
+          kind: MirrorEventKind.command,
+          mac: rootMac,
+          arg: status.wire,
+          text: 'ana@x.com',
+        ),
+      ]);
+    });
+
     test('Identificar on the tablet itself blinks on the phones too', () {
       publisher.onCommand(encodeMirrorWatch(hello: true));
       publisher.pump();
@@ -1121,6 +1145,24 @@ void main() {
       ]));
       expect(await outcome, MirrorIdentifyOutcome.confirmed);
       expect(blinks, [(mac: rootMac, seconds: 10)]);
+    });
+
+    test('a command on the central shows its steps here too', () async {
+      final seen = <(String, int, String?)>[];
+      final v = CentralMirrorViewer(
+        centralId: id,
+        repo: repo,
+        traffic: bus,
+        onCommand: (mac, wire, by) => seen.add((mac, wire, by)),
+        clock: () => now,
+      );
+      v.onConnected();
+      repo.deliver(mirrorFramesTopic(id), events(1, const [
+        (kind: MirrorEventKind.command, mac: rootMac, arg: 18, text: 'ana'),
+      ]));
+      await pumpEventQueue();
+      expect(seen, [(rootMac, 18, 'ana')]);
+      v.dispose();
     });
 
     test('an Identificar started on the tablet blinks here too', () async {

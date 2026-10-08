@@ -70,11 +70,13 @@ ask → sleep. Hard budget 500 ms outside alarm. State lives in RTC memory; a wa
 timer, sensor (GPIO 4), button (GPIO 21).
 
 **Binding** (spec §12.3): `PARENT_PROBE {0}` broadcast, listen ≈ 200 ms; every AC device offers, ONLINE ones with their layer, the others with `0xFF` (heard, never bound; the board never offers).
+**First contact** (never bound since provisioning, 2026-10-09): 3 probe copies 300 ms apart, ≈ 800 ms listen, each copy's send status checked and resent once if it did not leave — one unacknowledged broadcast at the first second of a cold boot was lost often enough that a fresh leaf stayed invisible until its button was pressed. Once bound, a re-probe is one copy.
 Link = weaker of the two directions. Best link wins, lower layer breaks ties, prefer ≥ −85 dBm but bind to
 the best available anyway. After a bind: `NAME_ANNOUNCE` (once ever), `TOPOLOGY` with the parent
 candidates, `HEARTBEAT`. Re-probe on the 2nd consecutive miss (≈ 120 s, before the board's 180 s rule),
 on the next wake after `NO_PATH`, and once a day. Unbound back-off: every wake while nodes are heard but
-none online (board not there yet), every 5 min when nobody answers.
+none online (board not there yet), every 5 min when nobody answers — except a leaf that has never bound
+since provisioning, which probes on every one of its first 10 wakes (first contact, 2026-10-09).
 
 **Losing the parent** (spec §12.3, §12.6): a parent that is **off** (no MAC ACK to two sends) is
 replaced **on that wake**: probe, bind to the best answer, the same frame again to it (2026-10-03 — a TEST
@@ -106,7 +108,7 @@ probe (one blink per answering unit in its colour, 400 ms on / 200 ms dark like 
 *to* it.
 
 **After provisioning** (spec §12.8, §12.9): `stored` → awake ≤ 30 s, and the leaf does by itself what a
-press does: probe → bind → announce → the walk test: blue sent → **cyan** (the panel's ACK came back) or
+press does: probe (3 copies, first contact) → bind → announce → the walk test: blue sent → **cyan** (the panel's ACK came back) or
 **one red blink**; with no path to the board, the survey blinks instead → sleep. Same LEDs as a press and
 as every other unit; no green verdict (2026-09-29).
 Setup network 2 minutes; no `/identify` → deep sleep, button-only wake.
@@ -185,10 +187,11 @@ and `siot_coordinator` forward any authenticated frame regardless of link (brief
 |---|---|
 | Heartbeat interval | 60 s fixed (3 × 60 = 180 s missing; NFPA 72 200 s cap → interval ≤ ≈ 66 s) |
 | Wake budget / ACK wait / probe listen | 500 ms / 100 ms / ≈ 200 ms |
+| First contact (never bound since provisioning) | 3 probe copies 300 ms apart, ≈ 800 ms listen · a probe on every one of the first 10 wakes |
 | Post-provisioning verdict | ≤ 30 s awake |
 | Bind preference / weak-link flag | link ≥ −85 dBm / < −85 flagged, < −75 reported |
 | Re-probe | at once when the parent gives no MAC ACK · 2nd miss · after `NO_PATH` · every 24 h |
-| Unbound back-off | every wake (nodes heard) · every 5 min (nobody) |
+| Unbound back-off | every wake (nodes heard) · every 5 min (nobody) · every wake for the first 10 wakes while never bound |
 | Mailbox | 4 per leaf, same-`CMD` replace, ≤ 4 drained per wake, expiry 180 s |
 | Custody queue (parent) | 32 frames, ALARM never dropped |
 | Outbox | 16 entries ≈ 40 B, NVS-mirrored |

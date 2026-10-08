@@ -6,15 +6,20 @@ import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/database/app_database.dart' show safrBroadcastMac;
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/signal_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
+import '../../application/central_mirror_viewer.dart';
+import '../../application/device_command_provider.dart';
 import '../../application/ota_push_report.dart';
 import '../../application/ota_rollout_report.dart';
 import '../../application/root_election_provider.dart';
 import '../../application/safr_traffic_provider.dart';
 import '../../application/topology_provider.dart';
 import '../../domain/safr/safr_product.dart';
+import '../../domain/safr/safr_v2_frame.dart' show SafrMsgType;
+import 'device_command_widgets.dart';
 import 'device_menu.dart' show deviceAnchorOf;
 import 'device_avatar.dart';
 import 'network_3d/device_3d_chip.dart' show DeviceOfflineBadge;
@@ -39,6 +44,7 @@ class MeshMap extends ConsumerStatefulWidget {
     this.focus,
     this.selectionTarget,
     this.onCentralTap,
+    this.onCentralMenu,
   });
 
   /// The mesh units (layer 1 and below); the board is [board].
@@ -50,7 +56,7 @@ class MeshMap extends ConsumerStatefulWidget {
   /// Who is root, or that the mesh is still deciding.
   final RootElectionState election;
 
-  /// A tap on a unit, with the chip's screen rect (a menu drops from it).
+  /// A tap on a unit, with the chip's screen rect (the popover points at it).
   final void Function(TopologyNode node, Rect anchor) onNodeTap;
 
   /// Firmware push and rollout drawn on the map: the tablet and its cable,
@@ -78,6 +84,10 @@ class MeshMap extends ConsumerStatefulWidget {
   /// A tap on the CENTRAL chip; null = the chip is not tappable.
   final VoidCallback? onCentralTap;
 
+  /// A tap on the CENTRAL chip with its screen rect (Rede: the Central's
+  /// popover points at it). Wins over [onCentralTap] when both are given.
+  final void Function(Rect anchor)? onCentralMenu;
+
   @override
   ConsumerState<MeshMap> createState() => _MeshMapState();
 }
@@ -101,6 +111,11 @@ const _rolloutOrigin = '@rollout';
 
 /// While a unit downloads, a packet leaves the board this often.
 const _rolloutPacketEvery = Duration(milliseconds: 1500);
+
+/// A packet leaving or reaching a unit spreads rings from it — a drop on
+/// water, the radio's signal going out and being taken in — for this long,
+/// in the packet's colour. Every packet, every unit, the central too.
+const packetRippleMs = 900;
 
 /// The map's zoom factor. The map is only ever translated and uniformly
 /// scaled, so the x-axis entry IS the scale. Never read the "max scale on
@@ -313,7 +328,20 @@ class _MeshMapState extends ConsumerState<MeshMap>
     // The tablet's ACK going back down is the cyan the unit's LED shows when
     // it arrives: worth a packet for any unit (walk test: blue up, cyan down).
     final ackDown = tick.ack && tick.direction == SafrTrafficDirection.downlink;
-    if (tick.severity < 1 && !leafRoutine && !ackDown) return;
+    // A COMMAND of the tablet (Identificar, Testar, Silenciar, Rearmar …)
+    // going down to its unit, one packet per transmission, and the unit's
+    // own ACK of it coming back up (safr_downlink_provider `deliveries`):
+    // the operator sees the command reach the unit and the answer return.
+    final commandDown = tick.msgType == SafrMsgType.command &&
+        tick.direction == SafrTrafficDirection.downlink;
+    final unitAckUp = tick.ack && tick.direction == SafrTrafficDirection.uplink;
+    if (tick.severity < 1 &&
+        !leafRoutine &&
+        !ackDown &&
+        !commandDown &&
+        !unitAckUp) {
+      return;
+    }
 
     // Path from the device up to the central, following parent links. The
     // first hop is the parent the frame itself named when it did (a leaf
@@ -334,6 +362,11 @@ class _MeshMapState extends ConsumerState<MeshMap>
       cursor = nodes[cursor.parentMac];
     }
     path.add(_centralKey);
+    // A sleeping detector's command waits in its parent's mailbox for the
+    // next wake (protocol §12.5): the packet stops at the parent.
+    if (commandDown && origin.isLeaf && origin.sleeping && path.length > 2) {
+      path.removeAt(0);
+    }
 
     final color = switch (tick.severity) {
       3 => AppColors.error,
@@ -462,7 +495,12 @@ class _MeshMapState extends ConsumerState<MeshMap>
 
   @override
   Widget build(BuildContext context) {
-    final nodes = widget.nodes;
+    // A unit this tablet never heard has no level or parent yet: the strip
+    // counts it ("aguardando"), the tree places it with its first frame.
+    final nodes = [
+      for (final n in widget.nodes)
+        if (!n.awaitingSignal) n
+    ];
     final board = widget.board;
     final election = widget.election;
     final boardMac = board?.mac;
@@ -482,6 +520,19 @@ class _MeshMapState extends ConsumerState<MeshMap>
         ? ref.watch(otaPushViewProvider.select(otaBoardActivity))
         : null;
     if (activity == null) _dots.removeWhere((d) => d.origin == _otaOrigin);
+
+    // Commands on their way: a pill under the unit, rings when it confirms,
+    // a check on the CENTRAL when the board takes it.
+    final commands = ref.watch(deviceCommandProvider);
+    final viewOnly = ref.watch(mirrorViewOnlyProvider);
+    // A broadcast command (Rearmar from the alarm banner) every unit
+    // confirmed: a cyan wave down the tree, once, from the moment the last
+    // ACK came in.
+    final allConfirmed = commands[safrBroadcastMac];
+    final waveStartedAt =
+        allConfirmed != null && allConfirmed.step == DeviceCommandStep.delivered
+            ? allConfirmed.updatedAt
+            : null;
 
     // A push is drawn on the central: it is on the map while one runs, mesh
     // or no mesh.
@@ -551,6 +602,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
                                     : const {},
                                 otaLink: activity != null,
                                 faded: _faded(nodes),
+                                waveStartedAt: waveStartedAt,
                               ),
                             ),
                           ),
@@ -568,6 +620,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
                             activity: activity,
                             selected: widget.boardSelected,
                             onTap: widget.onCentralTap,
+                            onMenu: widget.onCentralMenu,
                           ),
                           for (final node in nodes)
                             if (layout.positions.containsKey(node.mac))
@@ -587,6 +640,12 @@ class _MeshMapState extends ConsumerState<MeshMap>
                                 onTap: (anchor) =>
                                     widget.onNodeTap(node, anchor),
                               ),
+                          ..._commandMarks(
+                            commands,
+                            layout,
+                            nodes,
+                            viewOnly: viewOnly,
+                          ),
                         ],
                       ),
                     ),
@@ -625,6 +684,95 @@ class _MeshMapState extends ConsumerState<MeshMap>
 }
 
 extension on _MeshMapState {
+  /// What a command in flight draws: the rings on the unit when it
+  /// confirms (or red when nothing came back), the ticks under it, and the
+  /// ticks under the CENTRAL for what it sent.
+  List<Widget> _commandMarks(
+    Map<String, DeviceCommandStatus> commands,
+    _MeshLayout layout,
+    List<TopologyNode> nodes, {
+    required bool viewOnly,
+  }) {
+    if (commands.isEmpty) return const [];
+    final marks = <Widget>[];
+    const avatar = 46.0;
+    final ripple = CommandRipple.extentFor(avatar);
+    DeviceCommandStatus? latestTaken;
+    for (final s in commands.values) {
+      // The Central's own ticks: the broadcast's while one runs, else the
+      // latest command to one unit — never a unit's confirmation of the
+      // broadcast (which comes later and would make the Central ✓✓ before
+      // the last unit is in).
+      final partOfBroadcast = s.mac != safrBroadcastMac &&
+          commands[safrBroadcastMac]?.kind == s.kind;
+      if (!s.kind.fromUnit &&
+          !partOfBroadcast &&
+          s.step != DeviceCommandStep.sending &&
+          (latestTaken == null ||
+              (latestTaken.mac != safrBroadcastMac &&
+                  (s.mac == safrBroadcastMac ||
+                      s.startedAt.isAfter(latestTaken.startedAt))))) {
+        latestTaken = s;
+      }
+      final at = layout.positions[s.mac];
+      if (at == null) continue;
+      // The avatar's centre: the chip's top is 26 above the slot.
+      final centre = Offset(at.dx, at.dy - 26 + avatar / 2);
+      if (s.step == DeviceCommandStep.delivered ||
+          s.step == DeviceCommandStep.answered ||
+          s.step == DeviceCommandStep.failed) {
+        marks.add(Positioned(
+          key: ValueKey('cmd-ripple-${s.mac}-${s.step.name}-${s.startedAt}'),
+          left: centre.dx - ripple / 2,
+          top: centre.dy - ripple / 2,
+          child: CommandRipple(color: commandStepColor(s.step)),
+        ));
+      }
+      final canRetry = s.step == DeviceCommandStep.failed &&
+          (!viewOnly || s.kind == DeviceCommandKind.identify);
+      final node = nodes.where((n) => n.mac == s.mac).firstOrNull;
+      // The ticks sit under the unit's name line, like a message's.
+      marks.add(Positioned(
+        key: ValueKey('cmd-tag-${s.mac}'),
+        left: at.dx - 20,
+        top: at.dy + 48,
+        width: 40,
+        child: Center(
+          child: CommandTicks(
+            status: s,
+            size: 17,
+            onRetry: canRetry
+                ? () => ref.read(deviceCommandProvider.notifier).run(
+                      s.mac,
+                      s.kind,
+                      waitsForWake: node?.sleeping ?? false,
+                    )
+                : null,
+          ),
+        ),
+      ));
+    }
+    // The Central shows the same ticks for the latest command, as the
+    // sender's side of a message: ✓ when the board took it, ✓✓ when the
+    // unit confirmed it.
+    final taken = latestTaken;
+    final central = layout.positions[_centralKey];
+    if (taken != null && central != null) {
+      marks.add(Positioned(
+        key: ValueKey('cmd-central-${taken.mac}'),
+        // Beside the disc, on the right: the chip's own lines (CENTRAL,
+        // MAC, dBm) stay clear.
+        left: central.dx + _CentralChip._circle / 2 + 8,
+        top: central.dy - 9,
+        width: 40,
+        child: Center(
+          child: IgnorePointer(child: CommandTicks(status: taken, size: 17)),
+        ),
+      ));
+    }
+    return marks;
+  }
+
   /// MACs drawn faded: outside the update that runs.
   Set<String> _faded(List<TopologyNode> nodes) {
     final focus = widget.focus;
@@ -716,10 +864,24 @@ class _TrafficDot {
   /// packets that cross on one link each keep to their side.
   final double lane;
 
-  double get progress {
-    final elapsed = DateTime.now().difference(startedAt).inMilliseconds;
-    return elapsed / duration.inMilliseconds;
+  int get _elapsedMs => DateTime.now().difference(startedAt).inMilliseconds;
+
+  double get progress => _elapsedMs / duration.inMilliseconds;
+
+  /// The departure ripple's phase (0..1), or null when it is over.
+  double? get departureRipple {
+    final t = _elapsedMs / packetRippleMs;
+    return t >= 0 && t < 1 ? t : null;
   }
+
+  /// The arrival ripple's phase (0..1), or null before and after it.
+  double? get arrivalRipple {
+    final t = (_elapsedMs - duration.inMilliseconds) / packetRippleMs;
+    return t >= 0 && t < 1 ? t : null;
+  }
+
+  /// Travelled and rippled: nothing left to draw.
+  bool get done => _elapsedMs > duration.inMilliseconds + packetRippleMs;
 }
 
 // ── Painter: background grid, curved glowing links, pulses, dot trails ──────
@@ -736,7 +898,14 @@ class _MeshGraphPainter extends CustomPainter {
     this.candidates = const {},
     this.otaLink = false,
     this.faded = const {},
+    this.waveStartedAt,
   }) : super(repaint: repaint);
+
+  /// Every unit confirmed a broadcast command: a cyan wave from the Central
+  /// down the rows, each a little after the one above, for [_waveMs].
+  final DateTime? waveStartedAt;
+  static const _waveMs = 2200;
+  static const _waveRowLagMs = 260;
 
   final List<TopologyNode> nodes;
   final _MeshLayout layout;
@@ -874,13 +1043,44 @@ class _MeshGraphPainter extends CustomPainter {
       }
     }
 
+    // Everyone confirmed: the wave.
+    final wave = waveStartedAt;
+    if (wave != null) {
+      final ms = nowMs - wave.millisecondsSinceEpoch;
+      if (ms >= 0 && ms < _waveMs) {
+        final t0 = ms / packetRippleMs;
+        if (t0 < 1) {
+          _ripple(canvas, layout.positions[_centralKey], AppColors.ledCyan, t0);
+        }
+        final rows = layout.laneCenters.keys.toList()..sort();
+        for (var i = 0; i < rows.length; i++) {
+          final t = (ms - (i + 1) * _waveRowLagMs) / packetRippleMs;
+          if (t < 0 || t >= 1) continue;
+          for (final n in nodes) {
+            if (n.layer == rows[i]) {
+              _ripple(canvas, layout.positions[n.mac], AppColors.ledCyan, t);
+            }
+          }
+        }
+      }
+    }
+
     // Traveling packets: a small data packet (rounded body, two data stripes)
     // oriented along the line, with a soft glow and two fainter ghosts behind.
-    dots.removeWhere((d) => d.progress >= 1.0);
+    // Where a packet leaves and where it lands, rings spread from the unit.
+    dots.removeWhere((d) => d.done);
     for (final dot in dots) {
+      final dep = dot.departureRipple;
+      if (dep != null) {
+        _ripple(canvas, layout.positions[dot.path.first], dot.color, dep);
+      }
+      final arr = dot.arrivalRipple;
+      if (arr != null) {
+        _ripple(canvas, layout.positions[dot.path.last], dot.color, arr);
+      }
       for (var k = 2; k >= 0; k--) {
         final t = dot.progress - k * 0.03;
-        if (t < 0) continue;
+        if (t < 0 || t >= 1) continue;
         final tan = _tangentAlong(dot.path, t);
         if (tan == null) continue;
         // `lane` to the left of the heading (the canvas' y grows downward).
@@ -1011,6 +1211,35 @@ class _MeshGraphPainter extends CustomPainter {
     if (tan == null) return null;
     // Tangent.angle is measured counter-clockwise; the canvas rotates clockwise.
     return Tangent.fromAngle(tan.position, -tan.angle);
+  }
+
+  /// Rings spreading from a unit, like a drop on water: three, each a
+  /// little behind the one before, thinning and fading as they widen.
+  void _ripple(Canvas canvas, Offset? center, Color color, double t) {
+    if (center == null) return;
+    // A soft flash on the unit itself at the start.
+    if (t < 0.4) {
+      canvas.drawCircle(
+        center,
+        22,
+        Paint()
+          ..color = color.withValues(alpha: 0.18 * (1 - t / 0.4))
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
+      );
+    }
+    for (final lag in const [0.0, 0.2, 0.4]) {
+      final k = ((t - lag) / (1 - lag)).clamp(0.0, 1.0);
+      if (k <= 0 || k >= 1) continue;
+      final eased = Curves.easeOutCubic.transform(k);
+      canvas.drawCircle(
+        center,
+        16 + eased * 34,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.2 * (1 - k) + 0.5
+          ..color = color.withValues(alpha: 0.65 * (1 - k)),
+      );
+    }
   }
 
   void _pulse(
@@ -1261,6 +1490,7 @@ class _CentralChip extends StatelessWidget {
     this.activity,
     this.selected = false,
     this.onTap,
+    this.onMenu,
   });
   final Offset position;
   final TopologyNode? board;
@@ -1268,6 +1498,9 @@ class _CentralChip extends StatelessWidget {
   /// Chosen for an update: ring and check around the disc.
   final bool selected;
   final VoidCallback? onTap;
+
+  /// A tap with the chip's rect, for a popover that points at it.
+  final void Function(Rect anchor)? onMenu;
 
   /// A firmware push runs: what the board is doing with it. The avatar
   /// then shows the board (the tablet is drawn beside it), a progress ring
@@ -1398,13 +1631,24 @@ class _CentralChip extends StatelessWidget {
     return Positioned(
       left: position.dx - _CentralChip._width / 2,
       top: position.dy - _CentralChip._circle / 2,
-      child: tap == null
-          ? chip
-          : Semantics(
+      child: onMenu != null
+          ? Semantics(
               button: true,
               label: 'Central (placa)',
-              child: _ArenaFreeTap(onTap: tap, child: chip),
-            ),
+              child: Builder(
+                builder: (chipContext) => _ArenaFreeTap(
+                  onTap: () => onMenu!(deviceAnchorOf(chipContext)),
+                  child: chip,
+                ),
+              ),
+            )
+          : tap == null
+              ? chip
+              : Semantics(
+                  button: true,
+                  label: 'Central (placa)',
+                  child: _ArenaFreeTap(onTap: tap, child: chip),
+                ),
     );
   }
 }
@@ -1499,7 +1743,7 @@ class _NodeChip extends StatelessWidget {
   final bool isRoot;
   final bool isCandidate;
 
-  /// Called with the chip's screen rect: the device menu drops from it.
+  /// Called with the chip's screen rect: the device popover points at it.
   final ValueChanged<Rect> onTap;
 
   @override

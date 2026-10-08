@@ -50,6 +50,27 @@ class SafrDownlink {
   int _jrnHighWater = 0;
   bool _disposed = false;
 
+  /// COMMANDs sent to a unit — or to all, broadcast — by MSG_ID: the units'
+  /// own ACKs are still to come. The board ACKs a COMMAND before relaying
+  /// it (protocol §7.5), each unit ACKs it again when it arrives
+  /// (siot_netcore.c, "ACK every time"), and the board relays those ACKs up
+  /// like every uplink frame. For a broadcast the first ACK is the board's
+  /// (it answers before relaying); every later one is a unit's.
+  final _awaitingUnit = <int, _AwaitingUnit>{};
+
+  /// How long a unit's ACK may come after the command left: seconds for a
+  /// mains unit; for a broadcast, a battery detector's comes on its next
+  /// wake — up to 60 s (protocol §12.2) plus the mesh — so its window is
+  /// the tracker's (DeviceCommandTracker.broadcastWindow) with a margin.
+  static const _unitAckWindow = Duration(seconds: 15);
+  static const _broadcastAckWindow = Duration(seconds: 130);
+
+  final _deliveries = StreamController<String>.broadcast();
+
+  /// The MAC of every unit that confirmed a COMMAND of this tablet itself
+  /// (its own ACK, not the board's): the command reached it.
+  Stream<String> get deliveries => _deliveries.stream;
+
   /// Re-keys the encoder for the imported installation. A fresh BOOT_CTR
   /// keeps CCM nonces unique across the switch (spec §9.1); MSG_ID restarts,
   /// which is fine because nothing is pending before the link is up.
@@ -307,8 +328,35 @@ class SafrDownlink {
     }
   }
 
-  /// Root confirmed one of our F_ACK_REQ frames.
-  void handleAck(SafrAckPayload ack) {
+  /// An ACK addressed to the tablet; [srcMac] = who confirms (the board, or
+  /// the unit a COMMAND was for — see [deliveries]).
+  void handleAck(SafrAckPayload ack, {String? srcMac}) {
+    final awaiting = _awaitingUnit[ack.ackedMsgId];
+    String? unit;
+    if (awaiting != null && srcMac != null && ack.status == SafrAckStatus.ok) {
+      if (awaiting.mac == safrBroadcastMac) {
+        if (awaiting.boardAcked) {
+          unit = srcMac;
+        } else {
+          awaiting.boardAcked = true;
+        }
+      } else if (srcMac == awaiting.mac) {
+        _awaitingUnit.remove(ack.ackedMsgId);
+        unit = srcMac;
+      }
+    }
+    if (unit != null) {
+      if (!_deliveries.isClosed) _deliveries.add(unit);
+      // The unit put a frame on the mesh (blue 500 ms on its LED, and the
+      // board's as it relays it — siot_ui_led.c `on_tx`): it travels up.
+      _ref.read(safrTrafficProvider).emit(SafrTrafficTick(
+            mac: unit,
+            direction: SafrTrafficDirection.uplink,
+            severity: 0,
+            ack: true,
+            msgType: SafrMsgType.ack,
+          ));
+    }
     final pending = _pending.remove(ack.ackedMsgId);
     if (pending == null) return;
     pending.retryTimer?.cancel();
@@ -605,6 +653,16 @@ class SafrDownlink {
     );
     _pending[id] = pending;
     _scheduleRetry(id);
+    final now = DateTime.now();
+    _awaitingUnit.removeWhere((_, a) => a.until.isBefore(now));
+    if (msgType == SafrMsgType.command && targetMac != null) {
+      _awaitingUnit[id] = _AwaitingUnit(
+        mac: targetMac,
+        until: now.add(targetMac == safrBroadcastMac
+            ? _broadcastAckWindow
+            : _unitAckWindow),
+      );
+    }
 
     final sent = await _write(frame, raw);
     _emitTick(targetMac);
@@ -688,6 +746,7 @@ class SafrDownlink {
 
   void dispose() {
     _disposed = true;
+    _deliveries.close();
     _hourlySync?.cancel();
     _linkCheck?.cancel();
     for (final p in _pending.values) {
@@ -717,6 +776,16 @@ class LifecycleResult {
           : detail == SafrAckDetail.none
               ? 'Recusado pela placa.'
               : 'Recusado: ${detail!.label}.';
+}
+
+/// A COMMAND's units whose own ACKs are awaited (see `_awaitingUnit`).
+class _AwaitingUnit {
+  _AwaitingUnit({required this.mac, required this.until});
+  final String mac;
+  final DateTime until;
+
+  /// Broadcast only: the board's ACK (the first) has come.
+  bool boardAcked = false;
 }
 
 class _PendingTx {

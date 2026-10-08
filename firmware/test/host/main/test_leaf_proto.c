@@ -179,14 +179,24 @@ TEST_CASE("leaf outbox: full → drops the oldest non-ALARM, keeps every ALARM",
     TEST_ASSERT_EQUAL(2, (got[15] << 8) | got[16]);
 }
 
-TEST_CASE("leaf policy: probe on the 2nd miss; unbound every wake / every 5th; budget", "[leaf][policy]")
+TEST_CASE("leaf policy: probe on the 2nd miss; unbound every wake / every 5th; first contact; budget", "[leaf][policy]")
 {
     TEST_ASSERT_FALSE(siot_leaf_probe_after_misses(0));
     TEST_ASSERT_FALSE(siot_leaf_probe_after_misses(1));
     TEST_ASSERT_TRUE(siot_leaf_probe_after_misses(2));
-    TEST_ASSERT_TRUE(siot_leaf_probe_due_unbound(0, true));
-    TEST_ASSERT_FALSE(siot_leaf_probe_due_unbound(4, false));
-    TEST_ASSERT_TRUE(siot_leaf_probe_due_unbound(5, false));
+    TEST_ASSERT_TRUE(siot_leaf_probe_due_unbound(0, true, false, 100));
+    TEST_ASSERT_FALSE(siot_leaf_probe_due_unbound(4, false, false, 100));
+    TEST_ASSERT_TRUE(siot_leaf_probe_due_unbound(5, false, false, 100));
+    /* first contact: never bound → every wake for the first 10 wakes, then the 5th-wake rule */
+    TEST_ASSERT_TRUE(siot_leaf_probe_due_unbound(1, false, true, 2));
+    TEST_ASSERT_TRUE(siot_leaf_probe_due_unbound(1, false, true, SIOT_LEAF_FIRST_CONTACT_WAKES));
+    TEST_ASSERT_FALSE(siot_leaf_probe_due_unbound(1, false, true, SIOT_LEAF_FIRST_CONTACT_WAKES + 1));
+    TEST_ASSERT_TRUE(siot_leaf_probe_due_unbound(5, false, true, SIOT_LEAF_FIRST_CONTACT_WAKES + 1));
+    TEST_ASSERT_EQUAL(SIOT_LEAF_PROBE_COPIES, siot_leaf_probe_copies(true));
+    TEST_ASSERT_EQUAL(1, siot_leaf_probe_copies(false));
+    TEST_ASSERT_EQUAL(SIOT_LEAF_PROBE_LISTEN_MS, siot_leaf_probe_window_ms(1, SIOT_LEAF_PROBE_SPACING_MS));
+    TEST_ASSERT_EQUAL(2 * SIOT_LEAF_PROBE_SPACING_MS + SIOT_LEAF_PROBE_LISTEN_MS,
+                      siot_leaf_probe_window_ms(3, SIOT_LEAF_PROBE_SPACING_MS));
     TEST_ASSERT_EQUAL(500, siot_leaf_budget_left_ms(0, 500));
     TEST_ASSERT_EQUAL(120, siot_leaf_budget_left_ms(380, 500));
     TEST_ASSERT_EQUAL(0, siot_leaf_budget_left_ms(500, 500));

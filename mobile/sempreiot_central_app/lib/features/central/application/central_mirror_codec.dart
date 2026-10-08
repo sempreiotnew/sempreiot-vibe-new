@@ -101,8 +101,7 @@ String encodeMirrorOtaStart({
       if (name != null && name.isNotEmpty) 'name': name,
     });
 
-String encodeMirrorOtaCancel({required String id, String? name}) =>
-    jsonEncode({
+String encodeMirrorOtaCancel({required String id, String? name}) => jsonEncode({
       'v': mirrorVersion,
       'type': 'ota_cancel',
       'id': id,
@@ -117,7 +116,8 @@ MirrorRemoteOta? decodeMirrorRemoteOta(String payload) {
     final name = map['name'] is String ? map['name'] as String : null;
     switch (map['type']) {
       case 'ota_cancel':
-        return MirrorRemoteOta(id: map['id'] as String, cancel: true, name: name);
+        return MirrorRemoteOta(
+            id: map['id'] as String, cancel: true, name: name);
       case 'ota_start':
         final all = map['all'] == true;
         final family = _byName(SafrProductFamily.values, map['family']);
@@ -271,6 +271,7 @@ Map<String, dynamic> _unitToJson(TopologyNode n, {bool volatile = true}) => {
       if (n.batteryPct != null) 'bat': n.batteryPct,
       'online': n.online,
       'heard': n.heard,
+      if (n.awaitingSignal) 'awaiting': true,
       if (n.updating) 'updating': true,
       if (volatile) 'lastSeen': n.lastSeenAt.toUtc().toIso8601String(),
       if (n.alarmLatched) 'alarm': true,
@@ -328,6 +329,7 @@ TopologyNode? _unitFromJson(Object? raw, DateTime fallbackSeen) {
     batteryPct: (raw['bat'] as num?)?.toInt(),
     online: raw['online'] == true,
     heard: raw['heard'] == true,
+    awaitingSignal: raw['awaiting'] == true,
     updating: raw['updating'] == true,
     lastSeenAt: time(raw['lastSeen']) ?? fallbackSeen,
     alarmLatched: raw['alarm'] == true,
@@ -383,7 +385,12 @@ typedef MirrorTick = ({int offsetMs, SafrTrafficTick tick});
 /// - [identifyFailed]: an IDENTIFY a phone asked for got no confirmation;
 /// - [otaAnswer]: the central's answer to a phone's `ota_start` /
 ///   `ota_cancel` — [mac] carries the request's id, [arg] is
-///   [MirrorOtaAnswer], [text] why it was refused.
+///   [MirrorOtaAnswer], [text] why it was refused;
+/// - [command]: a command to the unit [mac] moved on — [arg] is
+///   `DeviceCommandStatus.wire` (kind × 16 + step: sent, the board took it,
+///   the unit confirmed it, the test came back, or no confirmation), [text]
+///   who started it from a phone. The phones draw the same packet and
+///   checks the tablet draws.
 typedef MirrorEvent = ({String kind, String mac, int arg, String? text});
 
 abstract final class MirrorEventKind {
@@ -391,6 +398,7 @@ abstract final class MirrorEventKind {
   static const identifySending = 'identify_sending';
   static const identifyFailed = 'identify_failed';
   static const otaAnswer = 'ota_answer';
+  static const command = 'command';
 }
 
 /// [MirrorEventKind.otaAnswer]'s `arg`.

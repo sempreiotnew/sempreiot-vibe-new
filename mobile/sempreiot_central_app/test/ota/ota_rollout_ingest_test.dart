@@ -38,7 +38,7 @@ void main() {
       db: db,
       onOtaRolloutEvent: events.add,
       onAckRequired: (f) async => acked.add(f),
-      onAckReceived: confirmed.add,
+      onAckReceived: (ack, _) => confirmed.add(ack),
       onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS) =>
           traffic.add((mac, msgType)),
     );

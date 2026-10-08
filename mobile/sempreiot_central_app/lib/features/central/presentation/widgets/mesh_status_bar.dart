@@ -6,6 +6,7 @@ import '../../../../core/utils/relative_time.dart';
 import '../../application/root_election_provider.dart';
 import '../../application/topology_provider.dart';
 import '../screens/network_3d_screen.dart';
+import 'device_avatar.dart';
 
 // ── Status bar ───────────────────────────────────────────────────────────────
 
@@ -14,32 +15,46 @@ class MeshStatusBar extends StatelessWidget {
     super.key,
     required this.nodes,
     required this.election,
-    this.onClear,
+    this.onSync,
+    this.syncing = false,
     this.show3d,
     this.leading = const [],
+    this.electionPill = true,
   });
   final List<TopologyNode> nodes;
   final RootElectionState election;
 
-  /// "Limpar dispositivos" lives here, not floating over the canvas, so it
-  /// can never collide with the zoom controls on a short landscape screen.
-  /// Null: no clear button — and no 3D button either, unless [show3d].
-  final VoidCallback? onClear;
+  /// "Sincronizar com a placa" lives here, not floating over the canvas, so
+  /// it can never collide with the zoom controls on a short landscape
+  /// screen. Null: no sync button — and no 3D button either, unless
+  /// [show3d].
+  final VoidCallback? onSync;
 
-  /// The 3D button; null = shown with the clear button. True with no
-  /// [onClear]: a user's phone viewing a central — it may look, not clear.
+  /// A sync is running: the icon turns.
+  final bool syncing;
+
+  /// The 3D button; null = shown with the sync button. True with no
+  /// [onSync]: a user's phone viewing a central — it may look, not sync.
   final bool? show3d;
 
   /// Pills ahead of the counts (an update in progress, say).
   final List<Widget> leading;
 
+  /// "REORGANIZANDO" in the strip; Rede shows the election as its own
+  /// banner under the strip instead (root_election_banner.dart).
+  final bool electionPill;
+
   @override
   Widget build(BuildContext context) {
-    final online = nodes.where((n) => n.online && !n.sleeping).length;
-    final sleeping = nodes.where((n) => n.sleeping).length;
-    final offline = nodes.where((n) => !n.online).length;
+    // A unit the tablet never heard is no "offline" unit: it waits for its
+    // first frame (aguardando), and is not in the tree yet.
+    final placed = nodes.where((n) => !n.awaitingSignal);
+    final awaiting = nodes.where((n) => n.awaitingSignal).toList();
+    final online = placed.where((n) => n.online && !n.sleeping).length;
+    final sleeping = placed.where((n) => n.sleeping).length;
+    final offline = placed.where((n) => !n.online).length;
     DateTime? lastSeen;
-    for (final n in nodes) {
+    for (final n in placed) {
       if (lastSeen == null || n.lastSeenAt.isAfter(lastSeen)) {
         lastSeen = n.lastSeenAt;
       }
@@ -68,7 +83,7 @@ class MeshStatusBar extends StatelessWidget {
                     pill,
                     const SizedBox(width: 14),
                   ],
-                  if (election.electing) ...[
+                  if (electionPill && election.electing) ...[
                     _ElectionPill(election: election),
                     const SizedBox(width: 14),
                   ],
@@ -82,6 +97,26 @@ class MeshStatusBar extends StatelessWidget {
                   const SizedBox(width: 14),
                   _StatusCount(
                       color: AppColors.error, label: 'OFFLINE', count: offline),
+                  if (awaiting.isNotEmpty) ...[
+                    const SizedBox(width: 14),
+                    Tooltip(
+                      message: 'Conhecidos pela placa, ainda sem sinal neste '
+                          'tablet',
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(6),
+                        onTap: () => _showAwaiting(context, awaiting),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 2, vertical: 2),
+                          child: _StatusCount(
+                            color: AppColors.secondary,
+                            label: 'AGUARDANDO',
+                            count: awaiting.length,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -109,7 +144,7 @@ class MeshStatusBar extends StatelessWidget {
                 ),
               ],
             ),
-          if (show3d ?? onClear != null) ...[
+          if (show3d ?? onSync != null) ...[
             const SizedBox(width: 10),
             // PROTOTYPE: the same network as a 3D cloud (network_3d_screen).
             IconButton(
@@ -127,10 +162,10 @@ class MeshStatusBar extends StatelessWidget {
               ),
             ),
           ],
-          if (onClear != null) ...[
+          if (onSync != null) ...[
             const SizedBox(width: 6),
             IconButton(
-              tooltip: 'Ressincronizar com a placa',
+              tooltip: 'Sincronizar com a placa',
               // M3 pads the tap target to 48 px, which alone made the strip
               // two lines tall; the strip stays one compact line.
               style: IconButton.styleFrom(
@@ -138,16 +173,125 @@ class MeshStatusBar extends StatelessWidget {
                 fixedSize: const Size(30, 30),
                 minimumSize: const Size(30, 30),
                 padding: EdgeInsets.zero,
-                foregroundColor: AppColors.error,
+                foregroundColor: AppColors.secondary,
+                // Turning while it runs: keep the colour, not a grey look.
+                disabledForegroundColor: AppColors.secondary,
               ),
-              icon: const Icon(Icons.delete_sweep_rounded, size: 20),
-              onPressed: onClear,
+              icon: _SyncIcon(spinning: syncing),
+              onPressed: syncing ? null : onSync,
             ),
           ],
         ],
       ),
     );
   }
+
+  /// Who the board knows and this tablet has not heard yet, and why.
+  void _showAwaiting(BuildContext context, List<TopologyNode> awaiting) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon:
+            const Icon(Icons.hourglass_top_rounded, color: AppColors.secondary),
+        title: const Text('Aguardando o primeiro sinal'),
+        content: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(ctx).height * 0.5,
+            maxWidth: 420,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'A placa conhece estes dispositivos, mas este tablet ainda '
+                  'não recebeu nenhum sinal deles. Cada um entra no mapa com '
+                  'o primeiro sinal: os alimentados em até 15 s, os '
+                  'detectores a bateria quando acordarem (até 1 min).',
+                ),
+                const SizedBox(height: 12),
+                for (final n in awaiting)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: Row(
+                      children: [
+                        Icon(
+                          n.isLeaf
+                              ? Icons.sensors_rounded
+                              : Icons.router_outlined,
+                          size: 16,
+                          color: ctx.textSecondary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            deviceDisplayName(n),
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Entendi'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The sync icon; it turns while the board sends its table.
+class _SyncIcon extends StatefulWidget {
+  const _SyncIcon({required this.spinning});
+  final bool spinning;
+
+  @override
+  State<_SyncIcon> createState() => _SyncIconState();
+}
+
+class _SyncIconState extends State<_SyncIcon>
+    with SingleTickerProviderStateMixin {
+  late final _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.spinning) _c.repeat();
+  }
+
+  @override
+  void didUpdateWidget(_SyncIcon old) {
+    super.didUpdateWidget(old);
+    if (widget.spinning && !_c.isAnimating) {
+      _c.repeat();
+    } else if (!widget.spinning && _c.isAnimating) {
+      _c.stop();
+      _c.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => RotationTransition(
+        turns: _c,
+        child: const Icon(Icons.sync_rounded, size: 20),
+      );
 }
 
 /// "The mesh is choosing its root": shown while several units claim level 1

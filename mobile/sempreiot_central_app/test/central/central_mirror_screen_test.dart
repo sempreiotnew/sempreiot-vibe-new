@@ -20,7 +20,9 @@ import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_paylo
 import 'package:sempreiot_central_app/features/central/presentation/screens/device_update_screen.dart';
 import 'package:sempreiot_central_app/features/central/presentation/screens/devices_screen.dart';
 import 'package:sempreiot_central_app/features/central/presentation/screens/topology_screen.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/device_command_widgets.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/mirror_watchers_button.dart';
+import 'package:sempreiot_central_app/presentation/screens/main/widgets/main_app_bar.dart';
 import 'package:sempreiot_central_app/features/access/application/central_access_provider.dart';
 import 'package:sempreiot_central_app/features/access/application/user_access_provider.dart';
 import 'package:sempreiot_central_app/features/access/domain/entities/access_level.dart';
@@ -174,14 +176,14 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.text('Sirene Corredor'), findsOneWidget);
       expect(find.byTooltip('Ver em 3D (protótipo)'), findsOneWidget);
-      expect(find.byTooltip('Ressincronizar com a placa'), findsNothing);
+      expect(find.byTooltip('Sincronizar com a placa'), findsNothing);
 
       await tester.tap(find.text('Sirene Corredor'));
-      // The menu opens: a frame to lay it out, then its animation.
+      // The popover opens: a frame to lay it out, then its animation.
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pump(const Duration(milliseconds: 400));
-      expect(find.text('Dispositivo'), findsOneWidget);
+      expect(find.text('Abrir dispositivo'), findsOneWidget);
       // In alarm on the tablet — and still nothing to reset from here.
       for (final action in ['Testar', 'Rearmar', 'Som']) {
         expect(find.textContaining(action), findsNothing, reason: action);
@@ -192,11 +194,9 @@ void main() {
       await tester.tap(find.text('Identificar'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
-      expect(
-          decodeMirrorIdentify(repo.published.last.payload)!.mac, sirenMac);
-      final siren = container
-          .read(topologyProvider)
-          .firstWhere((n) => n.mac == sirenMac);
+      expect(decodeMirrorIdentify(repo.published.last.payload)!.mac, sirenMac);
+      final siren =
+          container.read(topologyProvider).firstWhere((n) => n.mac == sirenMac);
       expect(container.read(deviceLedProvider).look(siren).color,
           isNot(LedColor.blue));
 
@@ -207,15 +207,21 @@ void main() {
           t0: DateTime.now(),
           ticks: const [],
           events: const [
-            (kind: MirrorEventKind.identify, mac: sirenMac, arg: 10, text: null),
+            (
+              kind: MirrorEventKind.identify,
+              mac: sirenMac,
+              arg: 10,
+              text: null
+            ),
           ],
         ),
       );
-      // The "enviando…" bar leaves, the outcome comes in.
+      // No snackbar: the tag under the unit on the map moves on.
       for (var i = 0; i < 4; i++) {
         await tester.pump(const Duration(milliseconds: 300));
       }
-      expect(find.textContaining('confirmado pelo root'), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
+      expect(find.byKey(CommandTicks.keyOne), findsNWidgets(2));
       // IDENTIFY blinks: blue on, then off — sampled over two seconds.
       final seen = <LedColor?>{};
       for (var i = 0; i < 20; i++) {
@@ -237,18 +243,23 @@ void main() {
       await leave(tester);
     });
 
-    testWidgets('Dispositivos: a unit without communication says OFFLINE — '
+    testWidgets(
+        'Dispositivos: a unit without communication says OFFLINE — '
         '${s.key}', (tester) async {
       await pump(tester, s.value, const Scaffold(body: DevicesScreen()));
       expect(find.text('OFFLINE'), findsNothing);
       repo.deliver(
         mirrorStateTopic(id),
-        encodeMirrorState(seq: 2, at: DateTime.now(), link: 'connected', nodes: [
-          units[0],
-          units[1],
-          node(sirenMac, SafrNodeRole.node, 2, 'Sirene Corredor',
-              parent: rootMac, online: false),
-        ]),
+        encodeMirrorState(
+            seq: 2,
+            at: DateTime.now(),
+            link: 'connected',
+            nodes: [
+              units[0],
+              units[1],
+              node(sirenMac, SafrNodeRole.node, 2, 'Sirene Corredor',
+                  parent: rootMac, online: false),
+            ]),
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
@@ -257,7 +268,8 @@ void main() {
       await leave(tester);
     });
 
-    testWidgets('Atualizar dispositivos: the tablet\'s run, view only — '
+    testWidgets(
+        'Atualizar dispositivos: the tablet\'s run, view only — '
         '${s.key}', (tester) async {
       await pump(tester, s.value, const DeviceUpdateScreen());
       expect(tester.takeException(), isNull);
@@ -265,8 +277,7 @@ void main() {
       expect(find.byKey(const ValueKey('firmware-library')), findsNothing);
       expect(find.byKey(const ValueKey('update-all')), findsNothing);
       // Opening the screen asks the central for its history.
-      expect(
-          repo.published.any((m) => isMirrorOtaHistoryRequest(m.payload)),
+      expect(repo.published.any((m) => isMirrorOtaHistoryRequest(m.payload)),
           isTrue);
 
       repo.deliver(
@@ -298,10 +309,10 @@ void main() {
               region: '',
               publishedBy: const FirmwarePublisher(who: 'tallesaugusto'),
               images: const {
-                SafrProductFamily.board:
-                    FirmwareReleaseImage(key: '', size: 900000, sha256: '', project: ''),
-                SafrProductFamily.node:
-                    FirmwareReleaseImage(key: '', size: 900000, sha256: '', project: ''),
+                SafrProductFamily.board: FirmwareReleaseImage(
+                    key: '', size: 900000, sha256: '', project: ''),
+                SafrProductFamily.node: FirmwareReleaseImage(
+                    key: '', size: 900000, sha256: '', project: ''),
               },
             ),
           ],
@@ -349,18 +360,50 @@ void main() {
       // The central answers: started. The sheet closes.
       repo.deliver(
           mirrorFramesTopic(id),
-          encodeMirrorFrames(seq: 7, t0: DateTime.now(), ticks: const [], events: [
-            (
-              kind: MirrorEventKind.otaAnswer,
-              mac: command.id,
-              arg: MirrorOtaAnswer.started,
-              text: null
-            ),
-          ]));
+          encodeMirrorFrames(
+              seq: 7,
+              t0: DateTime.now(),
+              ticks: const [],
+              events: [
+                (
+                  kind: MirrorEventKind.otaAnswer,
+                  mac: command.id,
+                  arg: MirrorOtaAnswer.started,
+                  text: null
+                ),
+              ]));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.text('A VERSÃO MAIS NOVA PUBLICADA DE CADA'), findsNothing);
       expectNothingOfThePhoneStarted();
+      await leave(tester);
+    });
+  }
+
+  for (final s in sizes.entries) {
+    testWidgets(
+        'the bar with a central open: Voltar and Menu together on '
+        'the left, no brand mark — ${s.key}', (tester) async {
+      await pump(
+        tester,
+        s.value,
+        Scaffold(
+          appBar: MainAppBar(
+            onMenuTap: () {},
+            onBack: () {},
+            centralId: id,
+          ),
+        ),
+        level: AccessLevel.values.first,
+      );
+      final back = tester.getRect(find.byTooltip('Voltar'));
+      final menu = tester.getRect(find.byTooltip('Menu'));
+      final title = tester.getRect(find.text('Bloco A Central'));
+      expect(menu.left, greaterThanOrEqualTo(back.right - 1));
+      expect(menu.left - back.right, lessThan(16), reason: 'side by side');
+      expect(menu.right, lessThan(title.left), reason: 'both on the left');
+      expect(find.byIcon(Icons.sensors_rounded), findsNothing);
+      expect(tester.takeException(), isNull);
       await leave(tester);
     });
   }
@@ -402,8 +445,8 @@ void main() {
   testWidgets('the eye on the tablet: crossed out, then who is watching',
       (tester) async {
     final container = ProviderContainer(overrides: [
-      centralAccessRelationsProvider.overrideWith(
-          (ref) => CentralAccessRelationsNotifier(ref)),
+      centralAccessRelationsProvider
+          .overrideWith((ref) => CentralAccessRelationsNotifier(ref)),
     ]);
     addTearDown(container.dispose);
     await tester.pumpWidget(UncontrolledProviderScope(

@@ -323,16 +323,16 @@ void main() {
     await g.up();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.byTooltip('Fechar'), findsNothing);
-    // Still tap: the device menu drops (its close button is the marker).
+    // Still tap: the device popover opens (its close button is the marker).
     await tester.tap(root);
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.byTooltip('Fechar'), findsOneWidget);
   });
 
-  testWidgets('clear button sits in the status strip, apart from zoom',
+  testWidgets('sync button sits in the status strip, apart from zoom',
       (tester) async {
     await pump(tester, const Size(640, 300));
-    final clear = tester.getRect(find.byTooltip('Ressincronizar com a placa'));
+    final clear = tester.getRect(find.byTooltip('Sincronizar com a placa'));
     for (final tip in ['Aproximar', 'Afastar', 'Ajustar à tela']) {
       final zoom = tester.getRect(find.byTooltip(tip));
       expect(clear.overlaps(zoom), isFalse, reason: 'clear vs $tip');

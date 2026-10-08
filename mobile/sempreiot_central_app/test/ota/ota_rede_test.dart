@@ -252,7 +252,7 @@ void main() {
     });
   }
 
-  group('device menu', () {
+  group('device popover', () {
     Future<void> open(WidgetTester tester, String mac) async {
       await tester.tap(find.text(mac));
       await tester.pump(const Duration(milliseconds: 400));
@@ -272,10 +272,14 @@ void main() {
               chunksDone: 100,
               stored: const {SafrProductFamily.node: '0.1.1'}),
         );
+        // The map's chips show the version too: count the popover's own.
+        int versions() =>
+            find.text('v0.1.0-dev', skipOffstage: false).evaluate().length;
+        final onMap = versions();
         // The root: on the screen in every size without panning.
         await open(tester, _root);
-        expect(find.text('Firmware', skipOffstage: false), findsOneWidget);
-        expect(find.text('0.1.0-dev', skipOffstage: false), findsOneWidget);
+        expect(find.text('FIRMWARE', skipOffstage: false), findsOneWidget);
+        expect(versions(), onMap + 1);
         expect(find.text('Na placa', skipOffstage: false), findsNothing);
         expect(find.byKey(pending), findsNothing);
         expect(tester.takeException(), isNull);

@@ -135,29 +135,37 @@ void main() {
     });
   });
 
-  group('device menu on the Rede map', () {
+  group('device popover on the Rede map', () {
     for (final s in sizes.entries) {
-      testWidgets('shows Produto and Firmware — ${s.key}', (tester) async {
+      testWidgets('shows the product and the firmware — ${s.key}',
+          (tester) async {
         await pump(tester, s.value, const TopologyScreen());
+        // The map's chips show the version too: count the popover's own.
+        int versions() =>
+            find.text('v0.1.0-dev', skipOffstage: false).evaluate().length;
+        final onMap = versions();
         await tester.tap(find.text(siren));
         await tester.pump(const Duration(milliseconds: 400));
         expect(find.byTooltip('Fechar'), findsOneWidget);
-        expect(find.text('Produto', skipOffstage: false), findsOneWidget);
-        expect(find.text('Sirene · SIOT-SIREN-01', skipOffstage: false),
+        // The product under the name, in the popover's header.
+        expect(
+            find.textContaining('Sirene · SIOT\u2011SIREN\u201101',
+                skipOffstage: false),
             findsOneWidget);
-        expect(find.text('Firmware', skipOffstage: false), findsOneWidget);
-        expect(find.text('0.1.0-dev', skipOffstage: false), findsOneWidget);
+        expect(find.text('FIRMWARE', skipOffstage: false), findsOneWidget);
+        expect(versions(), onMap + 1);
         expect(tester.takeException(), isNull);
       });
     }
 
-    testWidgets('firmware older than v3.5: "—" for both', (tester) async {
+    testWidgets('firmware older than v3.5: no product, firmware "—"',
+        (tester) async {
       await pump(tester, const Size(1280, 800), const TopologyScreen());
       await tester.tap(find.text(old));
       await tester.pump(const Duration(milliseconds: 400));
-      expect(find.text('Produto'), findsOneWidget);
-      expect(find.text('Firmware'), findsOneWidget);
-      expect(find.text('—'), findsNWidgets(2));
+      expect(find.textContaining('SIOT\u2011'), findsNothing);
+      expect(find.text('FIRMWARE'), findsOneWidget);
+      expect(find.text('—'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });

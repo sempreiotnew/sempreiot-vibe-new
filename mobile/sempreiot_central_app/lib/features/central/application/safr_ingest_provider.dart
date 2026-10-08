@@ -12,6 +12,7 @@ import '../domain/safr/safr_identity.dart';
 import 'central_installation_provider.dart';
 import 'ota_board_events_provider.dart';
 import 'ota_rollout_events_provider.dart';
+import 'board_sync_provider.dart';
 import 'safr_downlink_provider.dart';
 import 'safr_traffic_provider.dart';
 import 'serial_link_provider.dart';
@@ -46,7 +47,12 @@ class SafrIngestService {
     this.onCode,
     this.onOtaBoardEvent,
     this.onOtaRolloutEvent,
+    this.onDeviceTableSynced,
   });
+
+  /// The board's DEVICE_TABLE arrived complete (its last page): every MAC
+  /// it lists. Ends a "Sincronizar com a placa" (board_sync_provider).
+  final void Function(Set<String> listed)? onDeviceTableSynced;
 
   final AppDatabase db;
 
@@ -57,7 +63,9 @@ class SafrIngestService {
   final void Function()? onValidFrame;
   final void Function()? onInvalidFrame;
   final Future<void> Function(SafrWireFrame frame)? onAckRequired;
-  final void Function(SafrAckPayload ack)? onAckReceived;
+
+  /// [srcMac]: who confirms — the board, or the unit a COMMAND was for.
+  final void Function(SafrAckPayload ack, String srcMac)? onAckReceived;
 
   /// Journal replay bookkeeping (spec §7.9) — the downlink service persists
   /// the JRN_SEQ high-water mark and paginates with further EVENT_LOG_REQs.
@@ -163,7 +171,7 @@ class SafrIngestService {
       // board's own sequence: it must never confirm the tablet's frame that
       // happens to have the same number.
       if (frame.dstMac == safrCentralMac || frame.isDstBroadcast) {
-        onAckReceived?.call(frame.payload as SafrAckPayload);
+        onAckReceived?.call(frame.payload as SafrAckPayload, frame.srcMac);
       }
       return;
     }
@@ -205,8 +213,8 @@ class SafrIngestService {
     // report, handed over in the order it arrived.
     if (frame.msgType == SafrMsgType.otaRollout &&
         frame.payload is SafrOtaRolloutPayload) {
-      onOtaRolloutEvent?.call(
-          OtaRolloutPageEvent(frame.payload as SafrOtaRolloutPayload));
+      onOtaRolloutEvent
+          ?.call(OtaRolloutPageEvent(frame.payload as SafrOtaRolloutPayload));
       if (frame.ackRequired) await onAckRequired?.call(frame);
       return; // the board's own report: not a device to register
     }
@@ -594,7 +602,7 @@ class SafrIngestService {
     final frame = result.frame;
     if (frame.error != null || !frame.isEncrypted) return false;
     if (frame.msgType == SafrMsgType.ack && frame.payload is SafrAckPayload) {
-      onAckReceived?.call(frame.payload as SafrAckPayload);
+      onAckReceived?.call(frame.payload as SafrAckPayload, frame.srcMac);
       return true;
     }
     if (frame.msgType == SafrMsgType.code && frame.payload is SafrCodePayload) {
@@ -659,8 +667,10 @@ class SafrIngestService {
           );
     }
     if (page.isLastPage) {
-      await db.pruneUnlistedBoardRows(Set.of(_tableSeen));
+      final listed = Set.of(_tableSeen);
+      await db.pruneUnlistedBoardRows(listed);
       _tableSeen.clear();
+      onDeviceTableSynced?.call(listed);
     }
   }
 
@@ -767,7 +777,9 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
     onValidFrame: link.reportValidFrame,
     onInvalidFrame: link.reportInvalidFrame,
     onAckRequired: downlink.sendAck,
-    onAckReceived: downlink.handleAck,
+    onAckReceived: (ack, src) => downlink.handleAck(ack, srcMac: src),
+    onDeviceTableSynced: (listed) =>
+        ref.read(boardSyncProvider.notifier).tableArrived(listed),
     onJournalData: downlink.handleJournalData,
     onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS) =>
         traffic.emit(SafrTrafficTick(

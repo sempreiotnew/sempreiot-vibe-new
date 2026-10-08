@@ -117,6 +117,31 @@ void main() {
     expect(at(childMac, 1100), isNull);
   });
 
+  test('a COMMAND: the board relays it down (blue 500 ms on the board), the '
+      'unit\'s own ACK of it is blue 500 ms on the unit and the board', () {
+    // safr_downlink_provider: one downlink tick per transmission …
+    tickAt(0, const SafrTrafficTick(
+      mac: childMac,
+      direction: SafrTrafficDirection.downlink,
+      severity: 0,
+      msgType: SafrMsgType.command,
+    ));
+    expect(at(boardMac, 300), LedColor.blue);
+    expect(at(childMac, 300), isNull, reason: 'receiving lights nothing');
+    // … and the unit's ACK (siot_netcore.c "ACK every time" → on_tx: ACK is
+    // a message, 500 ms), relayed up by the board.
+    tickAt(1000, const SafrTrafficTick(
+      mac: childMac,
+      direction: SafrTrafficDirection.uplink,
+      severity: 0,
+      ack: true,
+      msgType: SafrMsgType.ack,
+    ));
+    expect(at(childMac, 1400), LedColor.blue);
+    expect(at(childMac, 1600), isNull);
+    expect(at(boardMac, 1400), LedColor.blue);
+  });
+
   test('a leaf stays dark for routine frames', () {
     tickAt(0, up(leafMac, SafrMsgType.heartbeat));
     tickAt(10, up(leafMac, SafrMsgType.event, code: SafrEventCode.smokeAlarm));

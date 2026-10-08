@@ -311,17 +311,41 @@ class AppDatabase extends _$AppDatabase {
 
   /// Wipes the mesh device registry (the Rede map). Live devices
   /// reappear on their next heartbeat; history in deviceEvents is kept.
-  Future<void> clearMeshDevices() => delete(meshDevices).go();
-
-  /// After a complete DEVICE_TABLE sync: rows the board no longer lists and
-  /// that this tablet only ever knew through the board (never heard live, or
-  /// already mirrored from an earlier table) are dropped.
-  Future<int> pruneUnlistedBoardRows(Set<String> listedMacs) {
-    final q = delete(meshDevices)
-      ..where((t) => t.registryState.equals('enrolled') | t.boardState.isNotNull());
+  /// After a complete DEVICE_TABLE sync. Rows the board no longer lists:
+  /// one this tablet only ever knew through the board (`enrolled`, never
+  /// heard) is dropped; one the tablet heard itself stays — with its name —
+  /// and only forgets what the board said about it (`boardState`, flags).
+  /// A board that was erased sends an empty table: the tablet's own
+  /// knowledge of the units is never thrown away for that.
+  Future<int> pruneUnlistedBoardRows(Set<String> listedMacs) async {
+    final gone = delete(meshDevices)
+      ..where((t) => t.registryState.equals('enrolled'));
+    final forget = update(meshDevices)..where((t) => t.boardState.isNotNull());
     if (listedMacs.isNotEmpty) {
-      q.where((t) => t.mac.isNotIn(listedMacs.toList()));
+      gone.where((t) => t.mac.isNotIn(listedMacs.toList()));
+      forget.where((t) => t.mac.isNotIn(listedMacs.toList()));
     }
+    final dropped = await gone.go();
+    await forget.write(const MeshDevicesCompanion(
+      boardState: Value(null),
+      boardFlags: Value(0),
+      tableSyncedAt: Value(null),
+    ));
+    return dropped;
+  }
+
+  /// After a "Sincronizar com a placa": rows the board does not list and
+  /// that have been silent since [silentBefore] — units removed from the
+  /// installation, or left over from another one. A unit heard recently
+  /// stays whatever the table says: it is plainly there.
+  /// An empty table (a board just erased) removes nothing.
+  Future<int> pruneUnlistedSilentRows(
+      Set<String> listedMacs, DateTime silentBefore) {
+    if (listedMacs.isEmpty) return Future.value(0);
+    final q = delete(meshDevices)
+      ..where((t) =>
+          t.lastSeenAt.isSmallerThanValue(silentBefore) &
+          t.mac.isNotIn(listedMacs.toList()));
     return q.go();
   }
 

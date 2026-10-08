@@ -22,6 +22,14 @@ extern "C" {
 #define SIOT_LEAF_WAKE_BUDGET_MS       500  /* hard cap outside alarm */
 #define SIOT_LEAF_ACK_WAIT_MS          100
 #define SIOT_LEAF_PROBE_LISTEN_MS      200
+/* First contact (never bound since provisioning, §12.3 amended 2026-10-09): the
+ * discovery probe is a broadcast nobody acknowledges, and one copy at the first
+ * second of a cold boot was lost often enough that a just-provisioned leaf sat
+ * invisible until its button was pressed. Copies, spacing, and how many wakes
+ * the leaf keeps probing on every wake before the 5-min back-off applies. */
+#define SIOT_LEAF_PROBE_COPIES         3
+#define SIOT_LEAF_PROBE_SPACING_MS     300
+#define SIOT_LEAF_FIRST_CONTACT_WAKES  10
 #define SIOT_LEAF_VERDICT_WINDOW_MS    30000
 #define SIOT_LEAF_WALKTEST_ACK_MS      3000
 #define SIOT_LEAF_BIND_MIN_DBM         (-85) /* prefer at or above; bind to the best anyway */
@@ -188,10 +196,27 @@ static inline bool siot_leaf_probe_after_misses(uint8_t misses)
     return misses >= SIOT_LEAF_MISSES_BEFORE_PROBE;
 }
 /* Unbound leaf: probe on this wake? `heard_any` = the last probe got offers
- * (nodes exist, none online yet) → every wake; nobody → every 5th wake. */
-static inline bool siot_leaf_probe_due_unbound(uint16_t wakes_since_probe, bool heard_any)
+ * (nodes exist, none online yet) → every wake; nobody → every 5th wake.
+ * `never_bound` + `wake_count`: a leaf that has not bound once since it was
+ * provisioned probes on every one of its first SIOT_LEAF_FIRST_CONTACT_WAKES
+ * wakes — the installer is standing there, a lost probe must not cost 5 min. */
+static inline bool siot_leaf_probe_due_unbound(uint16_t wakes_since_probe, bool heard_any,
+                                               bool never_bound, uint32_t wake_count)
 {
+    if (never_bound && wake_count <= SIOT_LEAF_FIRST_CONTACT_WAKES) return true;
     return heard_any || wakes_since_probe >= SIOT_LEAF_UNBOUND_PROBE_EVERY;
+}
+/* Copies of the discovery probe: several at first contact, one afterwards
+ * (a bound leaf re-probing is on its battery budget, §12.2). */
+static inline uint8_t siot_leaf_probe_copies(bool first_contact)
+{
+    return first_contact ? SIOT_LEAF_PROBE_COPIES : 1;
+}
+/* Listen window for `copies` probes `spacing_ms` apart: the last copy still
+ * gets the full SIOT_LEAF_PROBE_LISTEN_MS. */
+static inline uint32_t siot_leaf_probe_window_ms(uint8_t copies, uint32_t spacing_ms)
+{
+    return (copies > 1 ? (uint32_t)(copies - 1) * spacing_ms : 0u) + SIOT_LEAF_PROBE_LISTEN_MS;
 }
 /* Time left in the wake budget (0 when exhausted). */
 static inline uint32_t siot_leaf_budget_left_ms(int64_t awake_ms, uint32_t budget_ms)

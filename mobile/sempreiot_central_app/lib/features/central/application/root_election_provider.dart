@@ -26,6 +26,10 @@ class RootElectionState {
     this.candidates = const {},
     this.settlingMac,
     this.settlingSince,
+    this.lostRootMac,
+    this.electedMac,
+    this.electedAfter,
+    this.electedAt,
   });
 
   /// The settled root; null while electing, or with no mesh at all.
@@ -40,6 +44,17 @@ class RootElectionState {
   /// The single candidate currently alone, and since when (settle timer).
   final String? settlingMac;
   final DateTime? settlingSince;
+
+  /// The root this election replaces (null when none was known: a fresh
+  /// mesh with several contenders).
+  final String? lostRootMac;
+
+  /// The last election's outcome — who won, how long it took and when —
+  /// kept while that root holds, so the Rede banner can say so for a few
+  /// seconds after.
+  final String? electedMac;
+  final Duration? electedAfter;
+  final DateTime? electedAt;
 
   bool get electing => electingSince != null;
 
@@ -69,15 +84,34 @@ RootElectionState stepRootElection(
   Set<String> candidates,
   DateTime now,
 ) {
+  // The root an election replaces: the settled one it started from, kept
+  // for as long as the election runs.
+  final lost = prev.electing ? prev.lostRootMac : prev.rootMac;
+  RootElectionState settled(String mac) {
+    if (!prev.electing) {
+      // No election ran (or this root just holds): keep the last outcome.
+      return RootElectionState(
+        rootMac: mac,
+        candidates: candidates,
+        electedMac: prev.electedMac == mac ? prev.electedMac : null,
+        electedAfter: prev.electedMac == mac ? prev.electedAfter : null,
+        electedAt: prev.electedMac == mac ? prev.electedAt : null,
+      );
+    }
+    return RootElectionState(
+      rootMac: mac,
+      candidates: candidates,
+      electedMac: mac,
+      electedAfter: now.difference(prev.electingSince!),
+      electedAt: now,
+    );
+  }
+
   if (candidates.length == 1) {
     final mac = candidates.first;
-    if (prev.rootMac == mac && !prev.electing) {
-      return RootElectionState(rootMac: mac, candidates: candidates);
-    }
+    if (prev.rootMac == mac && !prev.electing) return settled(mac);
     final since = prev.settlingMac == mac ? prev.settlingSince! : now;
-    if (now.difference(since) >= rootElectionSettle) {
-      return RootElectionState(rootMac: mac, candidates: candidates);
-    }
+    if (now.difference(since) >= rootElectionSettle) return settled(mac);
     final electingSince =
         prev.electingSince ?? (prev.rootMac != null ? now : null);
     return RootElectionState(
@@ -85,16 +119,21 @@ RootElectionState stepRootElection(
       candidates: candidates,
       settlingMac: mac,
       settlingSince: since,
+      lostRootMac: electingSince == null ? null : lost,
     );
   }
   if (candidates.length > 1) {
     return RootElectionState(
       electingSince: prev.electingSince ?? now,
       candidates: candidates,
+      lostRootMac: lost,
     );
   }
   if (prev.rootMac != null || prev.electing) {
-    return RootElectionState(electingSince: prev.electingSince ?? now);
+    return RootElectionState(
+      electingSince: prev.electingSince ?? now,
+      lostRootMac: lost,
+    );
   }
   return RootElectionState.none;
 }
@@ -199,7 +238,8 @@ final rootElectionProvider =
   ref.listen<List<TopologyNode>>(topologyProvider, (_, __) => push(),
       fireImmediately: true);
   ref.listen<bool>(boardLinkUpProvider, (_, __) => push());
-  final timer = Timer.periodic(const Duration(seconds: 1), (_) => notifier.tick());
+  final timer =
+      Timer.periodic(const Duration(seconds: 1), (_) => notifier.tick());
   ref.onDispose(timer.cancel);
   return notifier;
 });

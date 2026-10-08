@@ -12,6 +12,7 @@ import '../../iot/domain/repositories/i_iot_mqtt_repository.dart';
 import '../domain/ota/firmware_release.dart';
 import '../domain/safr/safr_product.dart';
 import 'central_mirror_codec.dart';
+import 'device_command_provider.dart';
 import 'device_led_provider.dart';
 import 'device_update_state.dart';
 import 'ota_push_state.dart';
@@ -157,8 +158,10 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
     required SafrTrafficBus traffic,
     String? Function()? accountName,
     void Function(String mac, int seconds)? onIdentify,
+    void Function(String mac, int wire, String? by)? onCommand,
     DateTime Function()? clock,
   })  : _repo = repo,
+        _onCommand = onCommand,
         _traffic = traffic,
         _accountName = accountName,
         _onIdentify = onIdentify,
@@ -180,6 +183,10 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
   /// An IDENTIFY blink started on the central: this phone's LED engine
   /// starts the same blink.
   final void Function(String mac, int seconds)? _onIdentify;
+
+  /// A command to a unit moved on, on the central (Identificar, Testar …):
+  /// this phone's map shows the same checks.
+  final void Function(String mac, int wire, String? by)? _onCommand;
   final DateTime Function() _clock;
 
   /// How long a phone waits for the central to say it heard an Identificar
@@ -467,6 +474,8 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
         _identifyDone(event.mac, MirrorIdentifyOutcome.confirmed);
       case MirrorEventKind.identifyFailed:
         _identifyDone(event.mac, MirrorIdentifyOutcome.notConfirmed);
+      case MirrorEventKind.command:
+        _onCommand?.call(event.mac, event.arg, event.text);
       case MirrorEventKind.otaAnswer:
         final asked = _otaAsked[event.mac];
         if (asked == null) return;
@@ -618,6 +627,11 @@ final StateNotifierProvider<CentralMirrorViewer, CentralMirrorView>
     accountName: () => ref.read(authNotifierProvider).valueOrNull?.userId,
     onIdentify: (mac, seconds) =>
         ref.read(deviceLedProvider).identify(mac, seconds),
+    onCommand: (mac, wire, by) {
+      final s =
+          DeviceCommandStatus.fromWire(mac, wire, by: by, at: DateTime.now());
+      if (s != null) ref.read(deviceCommandProvider.notifier).applyRemote(s);
+    },
   );
   if (id == null) return viewer;
 

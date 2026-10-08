@@ -11,6 +11,7 @@ import '../../../../core/theme/theme_ext.dart';
 import '../../application/root_election_provider.dart';
 import '../../application/safr_traffic_provider.dart';
 import '../../application/topology_provider.dart';
+import '../../domain/safr/safr_v2_frame.dart' show SafrMsgType;
 import '../widgets/device_avatar.dart';
 import '../widgets/device_menu.dart';
 import '../widgets/network_3d/device_model_sprites.dart';
@@ -132,7 +133,7 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
         f.onArrive?.call();
       }
     }
-    _packets.removeWhere((p) => p.progress(now) >= 1);
+    _packets.removeWhere((p) => p.done(now));
   }
 
   // ── Data ─────────────────────────────────────────────────────────────────
@@ -143,7 +144,8 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
     for (final n in all) {
       if (n.layer == 0) {
         board ??= n;
-      } else {
+      } else if (!n.awaitingSignal) {
+        // Never heard by this tablet: no place in the cloud yet.
         nodes[n.mac] = n;
       }
     }
@@ -172,7 +174,18 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
         origin.isLeaf &&
         tick.direction == SafrTrafficDirection.uplink;
     final ackDown = tick.ack && tick.direction == SafrTrafficDirection.downlink;
-    if (tick.severity < 1 && !leafRoutine && !ackDown) return;
+    // A COMMAND going down to its unit and the unit's own ACK of it coming
+    // back up — as on the 2D map (mesh_map.dart).
+    final commandDown = tick.msgType == SafrMsgType.command &&
+        tick.direction == SafrTrafficDirection.downlink;
+    final unitAckUp = tick.ack && tick.direction == SafrTrafficDirection.uplink;
+    if (tick.severity < 1 &&
+        !leafRoutine &&
+        !ackDown &&
+        !commandDown &&
+        !unitAckUp) {
+      return;
+    }
 
     final path = <String>[tick.mac];
     final first = tick.parentMac != null && nodes.containsKey(tick.parentMac)
@@ -188,6 +201,10 @@ class _Network3dScreenState extends ConsumerState<Network3dScreen>
       cursor = nodes[cursor.parentMac];
     }
     path.add(graphCentralKey);
+    // A sleeping detector's command waits at its parent (protocol §12.5).
+    if (commandDown && origin.isLeaf && origin.sleeping && path.length > 2) {
+      path.removeAt(0);
+    }
 
     final uplink = tick.direction == SafrTrafficDirection.uplink;
     final color = packetColor(tick.severity, ackDown);

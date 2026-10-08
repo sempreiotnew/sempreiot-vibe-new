@@ -19,6 +19,10 @@ import 'topology_provider.dart';
 ///    pulse when it relays someone else's frame;
 ///  * the board pulses for its own frames AND for every frame it relays,
 ///    up to the tablet or down into the mesh;
+///  * a COMMAND of the tablet: the board pulses as it relays it down; the
+///    unit's own ACK of it (siot_netcore.c ACKs every command, and the
+///    board relays that ACK up — safr_downlink_provider `deliveries`) is a
+///    message the unit transmits: blue 500 ms on the unit and on the board;
 ///  * cyan 500 ms when the tablet ACKs the unit's EVENT — or the
 ///    OTA_RESULT of its firmware update (protocol §13.4): the node lights
 ///    cyan for every ACK addressed to it (siot_netcore.c `on_ack`);
@@ -192,8 +196,7 @@ class DeviceLedEngine extends ChangeNotifier {
     notifyListeners();
   }
 
-  final _identifies =
-      StreamController<({String mac, int seconds})>.broadcast();
+  final _identifies = StreamController<({String mac, int seconds})>.broadcast();
 
   /// Every IDENTIFY blink this engine started, for the central mirror.
   Stream<({String mac, int seconds})> get identifies => _identifies.stream;

@@ -6,13 +6,16 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../../../core/utils/relative_time.dart';
 import '../../application/alarm_latch_provider.dart';
-import '../../application/safr_downlink_provider.dart';
+import '../../application/device_command_provider.dart';
+import 'device_command_widgets.dart';
 
 /// Alarm hold (SAFR v3 §7.1.4 — UL 864 / NFPA 72): every device whose alarm
 /// is latched stays listed here, whatever the sensor reports afterwards,
 /// until the operator presses REARMAR. Renders nothing while no alarm is
 /// held. The reset is a broadcast; the central only clears its latches once
-/// the root ACKs it.
+/// the board ACKs it. The answer shows as ticks beside the button — and on
+/// the Rede map: ✓ the board took it, ✓✓ every unit confirmed, with the
+/// wave (device_command_provider.dart) — never as a snackbar.
 class LatchedAlarmBanner extends ConsumerStatefulWidget {
   const LatchedAlarmBanner({super.key});
 
@@ -21,26 +24,16 @@ class LatchedAlarmBanner extends ConsumerStatefulWidget {
 }
 
 class _LatchedAlarmBannerState extends ConsumerState<LatchedAlarmBanner> {
-  bool _resetting = false;
-
-  Future<void> _rearm() async {
-    setState(() => _resetting = true);
-    final ok = await ref.read(safrDownlinkProvider).sendReset(safrBroadcastMac);
-    if (!mounted) return;
-    setState(() => _resetting = false);
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(ok
-          ? 'Sistema rearmado — alarmes retidos liberados'
-          : 'Rearme SEM confirmação do root — alarmes continuam retidos'),
-      backgroundColor: ok ? null : AppColors.error,
-      behavior: SnackBarBehavior.floating,
-    ));
-  }
+  void _rearm() => ref
+      .read(deviceCommandProvider.notifier)
+      .run(safrBroadcastMac, DeviceCommandKind.reset);
 
   @override
   Widget build(BuildContext context) {
     final latched = ref.watch(latchedAlarmsProvider).valueOrNull ?? const [];
     if (latched.isEmpty) return const SizedBox.shrink();
+    final reset = ref.watch(deviceCommandProvider)[safrBroadcastMac];
+    final resetting = reset?.inFlight == true;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -74,14 +67,18 @@ class _LatchedAlarmBannerState extends ConsumerState<LatchedAlarmBanner> {
                   ),
                 ),
               ),
+              if (reset != null) ...[
+                CommandTicks(status: reset, size: 18),
+                const SizedBox(width: 8),
+              ],
               FilledButton.icon(
-                onPressed: _resetting ? null : _rearm,
+                onPressed: resetting ? null : _rearm,
                 style: FilledButton.styleFrom(
                   backgroundColor: AppColors.error,
                   foregroundColor: Colors.white,
                   visualDensity: VisualDensity.compact,
                 ),
-                icon: _resetting
+                icon: resetting
                     ? const SizedBox(
                         width: 14,
                         height: 14,

@@ -72,6 +72,7 @@ typedef struct {
     bool     verdict_pending;   /* first wake with a code: show the §12.8 verdict */
     bool     no_path;           /* last ACK said NO_PATH */
     bool     heard_any;         /* last probe got offers (none online) → probe every wake */
+    bool     bound_ever;        /* bound at least once since provisioning (first contact over, §12.3) */
     uint16_t wakes_since_probe;
     uint16_t msg_id;            /* last MSG_ID used: continues across wakes (spec §12.2) */
     uint32_t wake_count;
@@ -535,8 +536,18 @@ static uint8_t probe(uint8_t purpose, uint8_t copies, uint32_t spacing_ms, uint3
     const uint16_t msg_id = siot_safr_next_msg_id();
     const uint8_t p[1] = {purpose};
     const int64_t start = now_ms();
+    uint8_t sent = 0;
     for (uint8_t i = 0; i < copies; i++) {
+        /* A broadcast nobody acknowledges: the only proof it left is the
+         * driver's send status. A copy that did not leave (radio just
+         * started, busy) is sent once more right away — otherwise a lost
+         * first contact looked exactly like "nobody there" (2026-10-09). */
         siot_safr_send(SAFR_BCAST_MAC, SAFR_MSG_PARENT_PROBE, msg_id, 0, p, sizeof(p));
+        if (!s_last_tx_ok) {
+            pump(20);
+            siot_safr_send(SAFR_BCAST_MAC, SAFR_MSG_PARENT_PROBE, msg_id, 0, p, sizeof(p));
+        }
+        if (s_last_tx_ok) sent++;
         if (i + 1 < copies) pump(spacing_ms);
     }
     const int64_t left = (int64_t)window_ms - (now_ms() - start);
@@ -548,9 +559,11 @@ static uint8_t probe(uint8_t purpose, uint8_t copies, uint32_t spacing_ms, uint3
      * this channel heard us or nobody is there. */
     siot_safr_stats_t st;
     siot_safr_get_stats(&st);
-    ESP_LOGW(TAG, "probe purpose %u: %u offer(s); radio rx %lu frame(s): ok %lu, foreign %lu, auth-fail %lu, bad %lu, replay %lu",
-             purpose, s_cand_n, (unsigned long)st.rx_frames, (unsigned long)st.rx_ok, (unsigned long)st.foreign,
-             (unsigned long)st.auth, (unsigned long)st.bad_frame, (unsigned long)st.replay);
+    ESP_LOGW(TAG, "probe purpose %u: %u/%u cop%s left, %u offer(s); radio rx %lu frame(s): ok %lu, foreign %lu, auth-fail %lu, bad %lu, replay %lu",
+             purpose, sent, copies, copies == 1 ? "y" : "ies", s_cand_n, (unsigned long)st.rx_frames,
+             (unsigned long)st.rx_ok, (unsigned long)st.foreign, (unsigned long)st.auth,
+             (unsigned long)st.bad_frame, (unsigned long)st.replay);
+    if (sent == 0) ESP_LOGE(TAG, "probe: no copy left the radio");
     siot_safr_reset_stats();
     return s_cand_n;
 }
@@ -564,6 +577,7 @@ static void bind_to(const siot_leaf_candidate_t *c)
     s_rtc.parent_link = c->link;
     s_rtc.misses = 0;
     s_rtc.no_path = false;
+    s_rtc.bound_ever = true;
     siot_safr_set_level(leaf_level());
     char m[SIOT_MAC_STR_LEN];
     ESP_LOGW(TAG, "bound to %s (layer %u, link %d dBm%s)", siot_mac_to_str(c->mac, m), c->layer, c->link,
@@ -588,11 +602,15 @@ static void emit_topology(void)
     siot_safr_send(SAFR_BCAST_MAC, SAFR_MSG_TOPOLOGY, siot_safr_next_msg_id(), 0, p, off);
 }
 
-/* §12.3: probe for a parent; true when bound afterwards. */
-static bool discover(void)
+/* §12.3: probe for a parent; true when bound afterwards. `first_contact` =
+ * never bound since provisioning: several copies of the probe (the installer
+ * is waiting; a bound leaf re-probing spends one, on its budget). */
+static bool discover(bool first_contact)
 {
     s_rtc.wakes_since_probe = 0;
-    const uint8_t n = probe(SAFR_PROBE_PARENT, 1, 0, SIOT_LEAF_PROBE_LISTEN_MS);
+    const uint8_t copies = siot_leaf_probe_copies(first_contact);
+    const uint8_t n = probe(SAFR_PROBE_PARENT, copies, SIOT_LEAF_PROBE_SPACING_MS,
+                            siot_leaf_probe_window_ms(copies, SIOT_LEAF_PROBE_SPACING_MS));
     s_rtc.heard_any = n > 0; /* nodes around (online or not) → probe every wake (§12.3) */
     /* Only a unit with a path to the board is a parent: LAYER 0xFF answers are
      * "here, but no board yet" — counted, listed in TOPOLOGY, never bound. */
@@ -646,7 +664,7 @@ static bool rebind_now(void)
     memcpy(old, s_rtc.parent_mac, 6);
     char m[SIOT_MAC_STR_LEN];
     ESP_LOGW(TAG, "parent %s does not answer at the radio: looking for another one now", siot_mac_to_str(old, m));
-    if (!discover()) {
+    if (!discover(false)) {
         s_rtc.bind = BIND_BOUND;
         ESP_LOGW(TAG, "no other parent in reach: keeping %s", m);
         return false;
@@ -827,8 +845,8 @@ static void test_or_survey(void)
      * sends nothing acked, so without this a NO_PATH leaf would keep
      * surveying until its next heartbeat ACK, long after the board is back.
      * A failed probe keeps the old parent, as on a timer wake. */
-    if (s_rtc.bind != BIND_BOUND) discover();
-    else if (s_rtc.no_path && !discover()) s_rtc.bind = BIND_BOUND;
+    if (s_rtc.bind != BIND_BOUND) discover(!s_rtc.bound_ever);
+    else if (s_rtc.no_path && !discover(false)) s_rtc.bind = BIND_BOUND;
     if (s_rtc.bind == BIND_BOUND && !s_rtc.no_path) walk_test();
     else survey();
 }
@@ -990,7 +1008,7 @@ static void one_wake(esp_sleep_wakeup_cause_t cause)
              * touches the parent fields on success, so a silent probe keeps
              * the old parent — it is still the best relay when the board returns. */
             ESP_LOGI(TAG, "%s re-probe", s_rtc.no_path ? "NO_PATH" : "periodic");
-            if (!discover()) s_rtc.bind = BIND_BOUND;
+            if (!discover(false)) s_rtc.bind = BIND_BOUND;
         }
         heard = heartbeat_cycle();
         /* a new image gets this one wake to prove it can talk — worth two more
@@ -1002,11 +1020,15 @@ static void one_wake(esp_sleep_wakeup_cause_t cause)
         if (!heard && siot_leaf_probe_after_misses(s_rtc.misses)) {
             ESP_LOGW(TAG, "%u misses → looking for another parent", s_rtc.misses);
             /* bound again: the outbox and this wake's heartbeat go now, not a minute later */
-            if (discover()) heard = heartbeat_cycle();
+            if (discover(false)) heard = heartbeat_cycle();
         }
     } else {
-        if (ota_wants_parent || siot_leaf_probe_due_unbound(s_rtc.wakes_since_probe, s_rtc.heard_any)) {
-            if (discover()) heard = heartbeat_cycle();
+        /* Never bound since provisioning: every wake for the first ones
+         * (§12.3 first contact), then the heard_any / 5th-wake rule. */
+        const bool first_contact = !s_rtc.bound_ever;
+        if (ota_wants_parent ||
+            siot_leaf_probe_due_unbound(s_rtc.wakes_since_probe, s_rtc.heard_any, first_contact, s_rtc.wake_count)) {
+            if (discover(first_contact)) heard = heartbeat_cycle();
         }
         if (s_rtc.bind != BIND_BOUND) ESP_LOGW(TAG, "COMM_FAULT: chirp (no sounder on the devkit)");
     }

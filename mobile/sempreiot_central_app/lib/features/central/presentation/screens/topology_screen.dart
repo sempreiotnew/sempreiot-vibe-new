@@ -1,19 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/database/app_database.dart';
 import '../../../../core/theme/theme_ext.dart';
+import '../../application/board_sync_provider.dart';
 import '../../application/central_mirror_viewer.dart';
 import '../../application/root_election_provider.dart';
-import '../../application/safr_downlink_provider.dart';
 import '../../application/topology_provider.dart';
+import '../widgets/board_sync_banner.dart';
 import '../widgets/device_menu.dart';
 import '../widgets/mesh_map.dart';
 import '../widgets/mesh_status_bar.dart';
 import '../widgets/device_update_rede_line.dart';
+import '../widgets/root_election_banner.dart';
 
 /// Rede — live map of the fire-alarm mesh (the map itself: [MeshMap]),
-/// with the status strip on top and the device menu on a tap.
+/// with the status strip on top, under it the root election and the board
+/// sync while they happen, and the device popover on a tap.
 class TopologyScreen extends ConsumerStatefulWidget {
   const TopologyScreen({super.key, this.embedded = false});
 
@@ -34,6 +36,7 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
     final election = ref.watch(rootElectionProvider);
     // A user's phone viewing a central: the map and nothing that commands.
     final viewOnly = ref.watch(mirrorViewOnlyProvider);
+    final sync = ref.watch(boardSyncProvider);
     TopologyNode? board;
     final nodes = <TopologyNode>[];
     for (final n in allNodes) {
@@ -50,15 +53,31 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
         MeshStatusBar(
           nodes: nodes,
           election: election,
-          onClear: viewOnly ? null : _clearRegistry,
+          onSync: viewOnly
+              ? null
+              : () => ref.read(boardSyncProvider.notifier).start(),
+          syncing: sync.phase == BoardSyncPhase.syncing,
           show3d: true,
+          electionPill: false,
         ),
+        RootElectionBanner(election: election, nodes: nodes),
+        if (!viewOnly)
+          BoardSyncBanner(
+            sync: sync,
+            awaiting: nodes.where((n) => n.awaitingSignal).length,
+          ),
         Expanded(
           child: MeshMap(
             nodes: nodes,
             board: board,
             election: election,
             onNodeTap: _showNodeMenu,
+            onCentralMenu: (anchor) => showCentralMenu(
+              context: context,
+              ref: ref,
+              board: board,
+              anchor: anchor,
+            ),
             // Rede is the alarm view: the update is drawn on "Atualizar
             // dispositivos" only.
             showOta: false,
@@ -80,38 +99,8 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
     );
   }
 
-  /// Wipes the device registry so the map stops showing units from old
-  /// sessions or installations. Live devices reappear on their next heartbeat.
-  Future<void> _clearRegistry() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Ressincronizar com a placa'),
-        content: const Text(
-            'Limpa o mapa da rede e pede à placa a tabela de dispositivos de '
-            'novo. Os que estiverem ativos reaparecem no próximo heartbeat; '
-            'o histórico de logs é mantido.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Ressincronizar'),
-          ),
-        ],
-      ),
-    );
-    if (ok == true) {
-      await ref.read(appDatabaseProvider).clearMeshDevices();
-      await ref.read(safrDownlinkProvider).sendGetInstallation();
-      await ref.read(safrDownlinkProvider).sendGetDeviceTable();
-    }
-  }
-
-  /// A tap on a device drops its menu (basics + Dispositivo, Identificar,
-  /// Silenciar, Testar) from the chip.
+  /// A tap on a device opens its popover (facts, commands, Dispositivo)
+  /// pointing at the chip.
   void _showNodeMenu(TopologyNode node, Rect anchor) => showDeviceMenu(
         context: context,
         ref: ref,

@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sempreiot_central_app/core/database/app_database.dart';
@@ -38,7 +39,7 @@ void main() {
     setup = null;
     ingest = SafrIngestService(
       db: db,
-      onAckReceived: acks.add,
+      onAckReceived: (ack, _) => acks.add(ack),
       onCode: codes.add,
       setupIdentity: () => setup,
     );
@@ -47,7 +48,8 @@ void main() {
 
   tearDown(() => db.close());
 
-  Future<void> feed(Uint8List frame) => ingest.handleFrame(frame, deviceId: 't');
+  Future<void> feed(Uint8List frame) =>
+      ingest.handleFrame(frame, deviceId: 't');
 
   group('DEVICE_TABLE ingest (spec §7.12, lifecycle §3)', () {
     test('mirrors state, flags, name and zone into MeshDevices', () async {
@@ -89,7 +91,8 @@ void main() {
       expect(rows.any((r) => r.mac == _board), isFalse);
     });
 
-    test('a live unit keeps its live state; unlisted board rows are pruned', () async {
+    test('a live unit keeps its live state; unlisted board rows are pruned',
+        () async {
       // Unit A speaks first (live), unit B only ever came from an old table.
       final unitEnc = SafrEncoder(srcMac: safrMacToBytes(_unitA), bootCtr: 7);
       await feed(unitEnc.encode(
@@ -100,11 +103,21 @@ void main() {
         msgType: SafrMsgType.deviceTable,
         payload: _tablePage(page: 1, pageCount: 1, entries: const [
           SafrDeviceTableEntry(
-              mac: _unitA, role: SafrNodeRole.node, state: SafrDeviceState.online,
-              flags: 1, lastSeenAgeS: 1, name: 'Sirene 1', zone: 'T'),
+              mac: _unitA,
+              role: SafrNodeRole.node,
+              state: SafrDeviceState.online,
+              flags: 1,
+              lastSeenAgeS: 1,
+              name: 'Sirene 1',
+              zone: 'T'),
           SafrDeviceTableEntry(
-              mac: _unitB, role: SafrNodeRole.unknown, state: SafrDeviceState.expected,
-              flags: 0, lastSeenAgeS: null, name: 'Velho', zone: ''),
+              mac: _unitB,
+              role: SafrNodeRole.unknown,
+              state: SafrDeviceState.expected,
+              flags: 0,
+              lastSeenAgeS: null,
+              name: 'Velho',
+              zone: ''),
         ]),
       ));
       expect((await db.select(db.meshDevices).get()).length, 2);
@@ -114,8 +127,13 @@ void main() {
         msgType: SafrMsgType.deviceTable,
         payload: _tablePage(page: 1, pageCount: 1, total: 1, entries: const [
           SafrDeviceTableEntry(
-              mac: _unitA, role: SafrNodeRole.node, state: SafrDeviceState.missing,
-              flags: 1, lastSeenAgeS: 90, name: 'Sirene 1', zone: 'T'),
+              mac: _unitA,
+              role: SafrNodeRole.node,
+              state: SafrDeviceState.missing,
+              flags: 1,
+              lastSeenAgeS: 90,
+              name: 'Sirene 1',
+              zone: 'T'),
         ]),
       ));
       final rows = await db.select(db.meshDevices).get();
@@ -125,10 +143,85 @@ void main() {
     });
   });
 
+  group('Sincronizar com a placa (2026-10-08)', () {
+    test('a unit the tablet heard keeps its name when the board forgets it',
+        () async {
+      // The unit named itself to this tablet; the board's table listed it.
+      final unitEnc = SafrEncoder(srcMac: safrMacToBytes(_unitA), bootCtr: 7);
+      await feed(unitEnc.encode(
+        msgType: SafrMsgType.nameAnnounce,
+        payload: SafrNameAnnouncePayload.build(name: 'Sirene Hall', zone: 'T'),
+      ));
+      await feed(boardEnc.encode(
+        msgType: SafrMsgType.deviceTable,
+        payload: _tablePage(page: 1, pageCount: 1, total: 1, entries: const [
+          SafrDeviceTableEntry(
+              mac: _unitA,
+              role: SafrNodeRole.node,
+              state: SafrDeviceState.online,
+              flags: 1,
+              lastSeenAgeS: 1,
+              name: 'Sirene Hall',
+              zone: 'T'),
+        ]),
+      ));
+      // The board was erased (or never heard it): an empty table. The old
+      // code dropped the row here; the unit came back from its heartbeat
+      // as a bare MAC.
+      await feed(boardEnc.encode(
+        msgType: SafrMsgType.deviceTable,
+        payload: _tablePage(page: 1, pageCount: 1, total: 0, entries: const []),
+      ));
+      final rows = await db.select(db.meshDevices).get();
+      expect(rows.map((r) => r.mac), [_unitA]);
+      expect(rows.single.name, 'Sirene Hall');
+      expect(rows.single.boardState, isNull, reason: 'the board forgot it');
+      // A table that names nothing never overwrites a name either.
+      await feed(boardEnc.encode(
+        msgType: SafrMsgType.deviceTable,
+        payload: _tablePage(page: 1, pageCount: 1, total: 1, entries: const [
+          SafrDeviceTableEntry(
+              mac: _unitA,
+              role: SafrNodeRole.node,
+              state: SafrDeviceState.online,
+              flags: 1,
+              lastSeenAgeS: 1,
+              name: '',
+              zone: ''),
+        ]),
+      ));
+      expect(
+          (await db.select(db.meshDevices).get()).single.name, 'Sirene Hall');
+    });
+
+    test('the silent prune: only unlisted AND silent, never on an empty table',
+        () async {
+      final now = DateTime.now().toUtc();
+      Future<void> row(String mac, Duration ago) =>
+          db.into(db.meshDevices).insert(MeshDevicesCompanion.insert(
+                mac: mac,
+                role: const Value(1),
+                layer: const Value(1),
+                firstSeenAt: now,
+                lastSeenAt: now.subtract(ago),
+              ));
+      await row(_unitA, const Duration(seconds: 10)); // heard just now
+      await row(_unitB, const Duration(minutes: 20)); // long silent
+      final before = now.subtract(const Duration(minutes: 5));
+      expect(await db.pruneUnlistedSilentRows(const {}, before), 0);
+      expect((await db.select(db.meshDevices).get()).length, 2);
+      expect(await db.pruneUnlistedSilentRows(const {'other'}, before), 1);
+      expect((await db.select(db.meshDevices).get()).single.mac, _unitA);
+    });
+  });
+
   group('setup channel (spec §3.1 v3.2)', () {
-    test('ACK and CODE under SYSTEM_ID 0 are accepted only while open', () async {
-      final key = ProvisioningCrypto.deriveSetupKey(id: 'dev-1', pop: '0123456789ABCDEF');
-      final setupEnc = SafrEncoder(srcMac: safrMacToBytes(_board), bootCtr: 2, systemId: 0, key: key);
+    test('ACK and CODE under SYSTEM_ID 0 are accepted only while open',
+        () async {
+      final key = ProvisioningCrypto.deriveSetupKey(
+          id: 'dev-1', pop: '0123456789ABCDEF');
+      final setupEnc = SafrEncoder(
+          srcMac: safrMacToBytes(_board), bootCtr: 2, systemId: 0, key: key);
       final code = SafrInstallationCode(
         systemId: 0x1234,
         channel: 6,
@@ -139,10 +232,14 @@ void main() {
         name: 'Galpao',
       );
       final codeFrame = setupEnc.encode(
-          msgType: SafrMsgType.code, payload: code.build(), dstMac: safrCentralMacBytes);
+          msgType: SafrMsgType.code,
+          payload: code.build(),
+          dstMac: safrCentralMacBytes);
       final ackFrame = setupEnc.encode(
           msgType: SafrMsgType.ack,
-          payload: SafrAckPayload.build(ackedMsgId: 9, detail: SafrAckDetail.notInSetupMode,
+          payload: SafrAckPayload.build(
+              ackedMsgId: 9,
+              detail: SafrAckDetail.notInSetupMode,
               status: SafrAckStatus.error),
           dstMac: safrCentralMacBytes);
 

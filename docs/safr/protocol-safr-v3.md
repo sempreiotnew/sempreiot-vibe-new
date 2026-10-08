@@ -974,6 +974,13 @@ provisioning, a button press, and the COMM_FAULT chirp (§12.8).
 - **Probe:** `PARENT_PROBE {PURPOSE = 0}` broadcast, listen ≈ 200 ms. Every AC
   node answers (`PARENT_OFFER`, §7.15): ONLINE ones with their LAYER, the others
   with `LAYER 0xFF` — heard, listed in the leaf's TOPOLOGY, **never bound**.
+  **First contact** *(2026-10-09)*: while the leaf has never bound since it was
+  provisioned, a discovery is **3 copies 300 ms apart** (same `MSG_ID`, fresh
+  `MSG_CTR`, as the survey's), listening ≈ 800 ms in all; each copy's send status
+  is checked and a copy that did not leave the radio is sent once more at once.
+  A probe is a broadcast nobody acknowledges: one copy at the first second of a
+  cold boot was lost often enough that a just-provisioned leaf went silent until
+  its button was pressed. A leaf that has bound once re-probes with one copy.
 - **Link quality** of a candidate = the weaker direction:
   `min(RSSI_SEEN in the offer, RSSI at which the leaf received the offer)`.
 - **Selection:** best link wins; lower `LAYER` breaks ties. Prefer candidates
@@ -998,7 +1005,10 @@ provisioning, a button press, and the COMM_FAULT chirp (§12.8).
   exist, board not there yet) → probe **every wake**, so the leaf appears
   within a minute of the board arriving. Nobody answered at all → probe every
   **5 min** (every 5th wake); there is nothing to wait for and a probe is a full
-  wake. A **button press** on an unbound leaf also runs one discovery first
+  wake. **Exception, first contact** *(2026-10-09)*: a leaf that has never bound
+  since provisioning probes on **every one of its first 10 wakes** whatever it
+  heard — the installer is standing there; only after those does the 5-min rule
+  apply. A **button press** on an unbound leaf also runs one discovery first
   (§12.8).
 
 ### 12.4 Leaf ACK (parent → leaf) — payload 9 bytes
@@ -1166,7 +1176,10 @@ are always awake to answer a leaf's probe.
   **10 minutes after boot whatever happens** (the battery backstop) → **deep
   sleep with the button as the only wake source, no timer**; the radio is
   stopped first. A short press opens a new window.
-- `/provision` → `stored` → the verdict of §12.8 → sleep at `HB_INTERVAL`.
+- `/provision` → `stored` → the verdict of §12.8 (its discovery is a first
+  contact: 3 probe copies, §12.3) → sleep at `HB_INTERVAL`. Not bound after
+  the verdict → a discovery on every one of the next wakes (§12.3 first
+  contact), so the leaf joins within a minute of a node being in reach.
 - `NAME_ANNOUNCE` once after provisioning with `ROLE = 2` (§7.11). From that
   frame (or the first `TOPOLOGY`) the board knows the role and applies the
   3 × 60 s = 180 s missing rule (§9.2).
@@ -1177,6 +1190,7 @@ are always awake to answer a leaf's probe.
 |---|---|---|
 | `HB_INTERVAL` | 60 s, fixed | §12.2, §12.12 |
 | Wake budget / ACK wait / probe listen | 500 ms / 100 ms / ≈ 200 ms | §12.2, §12.3 |
+| First contact (never bound since provisioning) | 3 probe copies 300 ms apart, ≈ 800 ms listen; a probe on every one of the first 10 wakes | §12.3, §12.9 |
 | Post-provisioning verdict window | ≤ 30 s awake | §12.8 |
 | Bind preference / weak-link flag | link ≥ −85 dBm / < −75 dBm reported, < −85 flagged | §12.3, §12.7 |
 | Re-probe | 2nd consecutive miss; next wake after `NO_PATH`; every 24 h | §12.3 |

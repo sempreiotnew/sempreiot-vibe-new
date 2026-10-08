@@ -63,18 +63,27 @@ class MainAppBar extends ConsumerWidget implements PreferredSizeWidget {
               curve: Curves.easeInOutCubic,
               child: IgnorePointer(
                 ignoring: isLocked,
-                child: onBack != null
-                    ? _BarIconButton(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (onBack != null)
+                      _BarIconButton(
                         icon: Icons.arrow_back_ios_new_rounded,
                         onTap: onBack!,
                         tooltip: 'Voltar',
-                      )
-                    : _BarIconButton(
+                      ),
+                    // A central open on a phone: the back arrow and the
+                    // menu side by side, both on the left, where a hand
+                    // expects them.
+                    if (onBack == null || centralId != null)
+                      _BarIconButton(
                         icon: Icons.menu_rounded,
                         onTap: onMenuTap ?? () {},
                         tooltip: 'Menu',
                         dot: updateDot,
                       ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(width: 6),
@@ -106,8 +115,7 @@ class MainAppBar extends ConsumerWidget implements PreferredSizeWidget {
                           padding: const EdgeInsets.all(6),
                           child: Icon(
                             Icons.lock_rounded,
-                            color:
-                                context.textSecondary.withValues(alpha: 0.5),
+                            color: context.textSecondary.withValues(alpha: 0.5),
                             size: 18,
                           ),
                         ),
@@ -119,15 +127,6 @@ class MainAppBar extends ConsumerWidget implements PreferredSizeWidget {
                       ),
               ),
             ],
-            // Central-detail view: back arrow owns the left slot, so the
-            // restricted drawer's menu button lives on the right instead.
-            if (centralId != null)
-              _BarIconButton(
-                icon: Icons.menu_rounded,
-                onTap: onMenuTap ?? () {},
-                tooltip: 'Menu',
-                dot: updateDot,
-              ),
             const SizedBox(width: 10),
             AnimatedOpacity(
               opacity: isLocked ? 0.0 : 1.0,
@@ -165,24 +164,28 @@ class _Branding extends ConsumerWidget {
       behavior: HitTestBehavior.opaque,
       child: Row(
         children: [
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [AppColors.primary, AppColors.secondary],
+          // The brand mark; not when a central is open on a phone — its name
+          // and id are the title, and the bar is short on room there.
+          if (centralId == null) ...[
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [AppColors.primary, AppColors.secondary],
+                ),
+                borderRadius: BorderRadius.circular(8),
               ),
-              borderRadius: BorderRadius.circular(8),
+              child: const Icon(
+                Icons.sensors_rounded,
+                color: AppColors.white,
+                size: 15,
+              ),
             ),
-            child: const Icon(
-              Icons.sensors_rounded,
-              color: AppColors.white,
-              size: 15,
-            ),
-          ),
-          const SizedBox(width: 10),
+            const SizedBox(width: 10),
+          ],
           Expanded(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -250,8 +253,7 @@ class _Branding extends ConsumerWidget {
     }
     if (centralId != null) {
       final centrals = ref.watch(savedCentralsProvider);
-      final matches =
-          centrals.where((c) => c.identityId == centralId).toList();
+      final matches = centrals.where((c) => c.identityId == centralId).toList();
       final name = matches.isNotEmpty ? matches.first.name : '';
       // Subtitle shows the subId — the central's real identity — so the
       // user's personal nickname above it can never cause ambiguity.
@@ -309,8 +311,8 @@ class _BarIconButton extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: AppColors.secondary,
                         shape: BoxShape.circle,
-                        border: Border.all(
-                            color: context.surfaceColor, width: 1.5),
+                        border:
+                            Border.all(color: context.surfaceColor, width: 1.5),
                       ),
                     ),
                   ),
@@ -369,31 +371,31 @@ class _UserAvatar extends ConsumerWidget {
       child: Padding(
         padding: const EdgeInsets.all(5),
         child: Container(
-        width: 34,
-        height: 34,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [AppColors.primary, Color(0xFF2E6DA4)],
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AppColors.primary, Color(0xFF2E6DA4)],
+            ),
+            border: Border.all(
+              color: AppColors.secondary.withValues(alpha: 0.35),
+              width: 1.5,
+            ),
           ),
-          border: Border.all(
-            color: AppColors.secondary.withValues(alpha: 0.35),
-            width: 1.5,
+          alignment: Alignment.center,
+          child: Text(
+            initials,
+            style: const TextStyle(
+              color: AppColors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
+            ),
           ),
         ),
-        alignment: Alignment.center,
-        child: Text(
-          initials,
-          style: const TextStyle(
-            color: AppColors.white,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.3,
-          ),
-        ),
-      ),
       ),
     );
   }

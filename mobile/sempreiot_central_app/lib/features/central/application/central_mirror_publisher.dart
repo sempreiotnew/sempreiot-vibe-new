@@ -9,8 +9,8 @@ import '../../iot/domain/entities/mqtt_message_entity.dart';
 import 'alarm_latch_provider.dart';
 import 'central_iot_provider.dart';
 import '../domain/ota/firmware_release.dart';
-import '../domain/safr/safr_v2_payloads.dart';
 import 'central_mirror_codec.dart';
+import 'device_command_provider.dart';
 import 'device_led_provider.dart';
 import 'device_update_controller.dart';
 import 'device_update_history.dart';
@@ -20,7 +20,6 @@ import 'remote_ota.dart';
 import 'device_update_state.dart';
 import 'ota_push_report.dart';
 import 'ota_push_state.dart';
-import 'safr_downlink_provider.dart';
 import 'safr_traffic_provider.dart';
 import 'serial_link_provider.dart';
 import 'topology_provider.dart';
@@ -141,8 +140,8 @@ class CentralMirrorPublisher {
 
   /// Carries out a phone's `ota_start` / `ota_cancel`: null = done, else
   /// why not (for the phone). The topic already proved who asked.
-  final Future<String?> Function(String userIdentityId, MirrorRemoteOta command)?
-      _remoteOta;
+  final Future<String?> Function(
+      String userIdentityId, MirrorRemoteOta command)? _remoteOta;
   final void Function(List<MirrorWatcher> watchers)? _onWatchers;
   final DateTime Function() _clock;
 
@@ -245,7 +244,8 @@ class CentralMirrorPublisher {
       } catch (e) {
         refused = 'A central não conseguiu: $e';
       }
-      _answer(command.id,
+      _answer(
+          command.id,
           refused == null ? MirrorOtaAnswer.started : MirrorOtaAnswer.refused,
           refused);
       // The run (or its end) goes out at once, not at the next look.
@@ -255,7 +255,8 @@ class CentralMirrorPublisher {
 
   void _answer(String id, int arg, String? text) {
     if (!watched) return;
-    _events.add((kind: MirrorEventKind.otaAnswer, mac: id, arg: arg, text: text));
+    _events
+        .add((kind: MirrorEventKind.otaAnswer, mac: id, arg: arg, text: text));
   }
 
   /// One frame movement on the mesh.
@@ -277,7 +278,15 @@ class CentralMirrorPublisher {
   /// the phones' LEDs blink too.
   void onIdentify(String mac, int seconds) {
     if (!watched) return;
-    _events.add((kind: MirrorEventKind.identify, mac: mac, arg: seconds, text: null));
+    _events.add(
+        (kind: MirrorEventKind.identify, mac: mac, arg: seconds, text: null));
+  }
+
+  /// A command to a unit moved on (device_command_provider): the phones
+  /// show the same checks.
+  void onCommandStatus(String mac, int wire, String? by) {
+    if (!watched) return;
+    _events.add((kind: MirrorEventKind.command, mac: mac, arg: wire, text: by));
   }
 
   /// A phone asked for IDENTIFY. Only from a phone that is watching, only
@@ -287,10 +296,12 @@ class CentralMirrorPublisher {
     if (send == null || !watched || _identifying.contains(mac)) return;
     // Heard: the phone can now tell a central that does not answer (off
     // line, or a build without this) from a root that does not confirm.
-    _events.add((kind: MirrorEventKind.identifySending, mac: mac, arg: 0, text: null));
+    _events.add(
+        (kind: MirrorEventKind.identifySending, mac: mac, arg: 0, text: null));
     final known = _nodes().any((n) => n.mac == mac && n.online && !n.isLeaf);
     if (!known) {
-      _events.add((kind: MirrorEventKind.identifyFailed, mac: mac, arg: 0, text: null));
+      _events.add(
+          (kind: MirrorEventKind.identifyFailed, mac: mac, arg: 0, text: null));
       return;
     }
     _identifying.add(mac);
@@ -303,7 +314,8 @@ class CentralMirrorPublisher {
       _identifying.remove(mac);
     }
     if (!ok && watched) {
-      _events.add((kind: MirrorEventKind.identifyFailed, mac: mac, arg: 0, text: null));
+      _events.add(
+          (kind: MirrorEventKind.identifyFailed, mac: mac, arg: 0, text: null));
     }
   }
 
@@ -527,13 +539,12 @@ final centralMirrorPublisherProvider = Provider<void>((ref) {
     },
     remoteOta: (user, command) =>
         ref.read(remoteOtaProvider).handle(user, command),
-    // The same path as the tablet's own menu (device_menu.dart): the
-    // command goes down, and the blink starts only on the root's ACK.
+    // The same path as the tablet's own popover (device_menu.dart): the
+    // command goes down, and the blink starts only on the board's ACK.
     identify: (mac, seconds, by) async {
       final ok = await ref
-          .read(safrDownlinkProvider)
-          .sendCommand(mac, SafrCommand.identify, args: [seconds]);
-      if (ok) ref.read(deviceLedProvider).identify(mac, seconds);
+          .read(deviceCommandProvider.notifier)
+          .run(mac, DeviceCommandKind.identify, by: by);
       try {
         await ref.read(appDatabaseProvider).addAudit(
           'remote',
@@ -572,6 +583,16 @@ final centralMirrorPublisherProvider = Provider<void>((ref) {
       .identifies
       .listen((i) => publisher.onIdentify(i.mac, i.seconds));
 
+  ref.listen<Map<String, DeviceCommandStatus>>(deviceCommandProvider,
+      (prev, next) {
+    for (final s in next.values) {
+      // What a unit sent is derived from the ticks the phone replays; only
+      // the tablet's commands need telling.
+      if (!s.kind.fromUnit && !identical(prev?[s.mac], s)) {
+        publisher.onCommandStatus(s.mac, s.wire, s.by);
+      }
+    }
+  });
   ref.listen(topologyProvider, (_, __) => publisher.onMapChanged());
   ref.listen(serialLinkProvider, (_, __) => publisher.onMapChanged());
   ref.listen(latchedAlarmsProvider, (_, next) {
