@@ -22,7 +22,7 @@ import '../../domain/safr/safr_v2_frame.dart' show SafrMsgType;
 import 'device_command_widgets.dart';
 import 'device_menu.dart' show deviceAnchorOf;
 import 'device_avatar.dart';
-import 'network_3d/device_3d_chip.dart' show DeviceOfflineBadge;
+
 import 'ota_rede_widgets.dart';
 
 /// The 2D map of the fire-alarm mesh, shared by Rede and "Atualizar
@@ -124,9 +124,40 @@ const packetRippleMs = 900;
 /// zoom, pan clamp and label position then computed with the wrong scale.
 double _scaleOf(Matrix4 m) => m.storage[0];
 
-/// Opacity of a device (and its link) that has been silent for longer than
-/// [topologyStaleAfter]: still on the map, visibly faded.
-const _staleOpacity = deviceStaleOpacity;
+/// Where a unit's link goes — and where a packet of it goes next.
+///
+/// A unit the central does not hear stays on the map (faded, OFFLINE) but
+/// is never a hop: nothing it is said to relay can be true. So an ONLINE
+/// unit whose registry parent is offline is linked to its nearest online
+/// ancestor — or the central — as a *presumed* link (dashed, no dBm): its
+/// frames do arrive, so they come some other way, and its next heartbeat
+/// (every 15 s, with the parent it really has) replaces the guess. An
+/// OFFLINE unit keeps its last known parent, drawn as a faint ghost line.
+/// Null: no link at all (a parent the map does not know).
+({String key, bool presumed})? meshLinkTargetOf(
+  TopologyNode n,
+  Map<String, TopologyNode> byMac,
+  String? boardMac,
+) {
+  final p = n.parentMac;
+  final parent = p == null ? null : byMac[p];
+  if (parent == null) {
+    return n.layer <= 1 || p == boardMac
+        ? (key: _centralKey, presumed: false)
+        : null;
+  }
+  if (!n.online || parent.online) return (key: parent.mac, presumed: false);
+  var cursor = parent;
+  var guard = 0;
+  while (guard++ < 8) {
+    final upMac = cursor.parentMac;
+    final up = upMac == null ? null : byMac[upMac];
+    if (up == null) return (key: _centralKey, presumed: true);
+    if (up.online) return (key: up.mac, presumed: true);
+    cursor = up;
+  }
+  return (key: _centralKey, presumed: true);
+}
 
 class _MeshMapState extends ConsumerState<MeshMap>
     with SingleTickerProviderStateMixin {
@@ -343,23 +374,31 @@ class _MeshMapState extends ConsumerState<MeshMap>
       return;
     }
 
-    // Path from the device up to the central, following parent links. The
-    // first hop is the parent the frame itself named when it did (a leaf
-    // that just re-bound: the registry still holds the old parent until this
-    // very frame is stored); the rest follows the registry.
+    // Path from the device up to the central, following the links as the
+    // map draws them (_linkTargetOf). The first hop is the parent the
+    // frame itself named when it did (a leaf that just re-bound: the
+    // registry still holds the old parent until this very frame is
+    // stored); the rest follows the registry — never through a unit the
+    // central does not hear: at the first dead hop the packet goes on to
+    // the nearest live ancestor, else straight to the central.
+    final boardMac = widget.board?.mac;
     final path = <String>[tick.mac];
-    final firstParent =
-        tick.parentMac != null && nodes.containsKey(tick.parentMac)
-            ? tick.parentMac
-            : origin.parentMac;
-    var cursor = firstParent != null ? nodes[firstParent] : null;
-    if (cursor != null) path.add(cursor.mac);
+    var cursor = origin;
+    var named = tick.parentMac;
     var guard = 0;
-    while (cursor?.parentMac != null &&
-        nodes.containsKey(cursor!.parentMac) &&
-        guard++ < 8) {
-      path.add(cursor.parentMac!);
-      cursor = nodes[cursor.parentMac];
+    while (guard++ < 8) {
+      final String? next;
+      if (named != null && nodes[named]?.online == true) {
+        next = named;
+      } else {
+        next = meshLinkTargetOf(cursor, nodes, boardMac)?.key;
+      }
+      named = null;
+      if (next == null || next == _centralKey) break;
+      final hop = nodes[next];
+      if (hop == null || !hop.online) break;
+      path.add(next);
+      cursor = hop;
     }
     path.add(_centralKey);
     // A sleeping detector's command waits in its parent's mailbox for the
@@ -731,12 +770,15 @@ extension on _MeshMapState {
       final canRetry = s.step == DeviceCommandStep.failed &&
           (!viewOnly || s.kind == DeviceCommandKind.identify);
       final node = nodes.where((n) => n.mac == s.mac).firstOrNull;
-      // The ticks sit under the unit's name line, like a message's.
+      // The ticks sit beside the avatar, on the right, level with its
+      // middle — as the Central's: never over the name, the version pill
+      // at the bottom right, the OFFLINE tag at the top right, or a
+      // neighbour (the row pitch leaves 35 px clear there).
       marks.add(Positioned(
         key: ValueKey('cmd-tag-${s.mac}'),
-        left: at.dx - 20,
-        top: at.dy + 48,
-        width: 40,
+        left: at.dx + avatar / 2 + 3,
+        top: centre.dy - 9,
+        width: 22,
         child: Center(
           child: CommandTicks(
             status: s,
@@ -933,28 +975,24 @@ class _MeshGraphPainter extends CustomPainter {
 
     _paintGrid(canvas, size);
 
-    // Links: curved, two-pass (glow + core).
+    // Links: curved, two-pass (glow + core). Where each one goes is
+    // _linkTargetOf's: an online unit never hangs off a dead one.
     for (final n in nodes) {
       final from = layout.positions[n.mac];
       if (from == null) continue;
-      final parentKey = (n.parentMac != null && byMac.containsKey(n.parentMac))
-          ? n.parentMac!
-          : (n.layer <= 1 || n.parentMac == boardMac ? _centralKey : null);
-      final to = parentKey != null ? layout.positions[parentKey] : null;
+      final target = meshLinkTargetOf(n, byMac, boardMac);
+      if (target == null) continue;
+      final to = layout.positions[target.key];
       if (to == null) continue;
 
-      final parentOnline =
-          parentKey == _centralKey || (byMac[parentKey]?.online ?? false);
-      final healthy = n.online && parentOnline;
       final candidate = candidates.contains(n.mac);
       // Link colour = signal quality (system reference §3.6.2). A sleeping
       // leaf's link keeps its last dBm but wears the sleep colour: the reading
       // is from the last wake and the next one may come through any parent.
-      final color = candidate
-          ? AppColors.warning
-          : healthy
-              ? (n.sleeping ? sleepingLinkColor(isDark) : signalColor(n.rssi))
-              : AppColors.error.withValues(alpha: 0.8);
+      final signal =
+          n.sleeping ? sleepingLinkColor(isDark) : signalColor(n.rssi);
+      final ghost = (isDark ? Colors.white : Colors.black)
+          .withValues(alpha: n.stale ? 0.10 : 0.22);
 
       final path = _linkPath(from, to);
       // Outside the update that runs: the link fades with its unit.
@@ -971,16 +1009,38 @@ class _MeshGraphPainter extends CustomPainter {
           Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1.3
-            ..color = color.withValues(alpha: 0.7),
+            ..color = AppColors.warning.withValues(alpha: 0.7),
         );
-      } else if (healthy) {
+      } else if (!n.online) {
+        // Not heard: a ghost of where it hung, so the picture keeps its
+        // shape — no colour to read, no dBm, nothing travels on it.
+        _drawDashedPath(
+          canvas,
+          path,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.0
+            ..color = ghost,
+        );
+      } else if (target.presumed) {
+        // Its registry parent is dead and it is still heard: linked to the
+        // nearest live unit above it until it says who its parent is now.
+        _drawDashedPath(
+          canvas,
+          path,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.2
+            ..color = signal.withValues(alpha: 0.5),
+        );
+      } else {
         // Glow pass
         canvas.drawPath(
           path,
           Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = 5
-            ..color = color.withValues(alpha: 0.10)
+            ..color = signal.withValues(alpha: 0.10)
             ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
         );
         canvas.drawPath(
@@ -988,26 +1048,18 @@ class _MeshGraphPainter extends CustomPainter {
           Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1.3
-            ..color = color.withValues(alpha: 0.55),
-        );
-      } else {
-        _drawDashedPath(
-          canvas,
-          path,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.1
-            ..color =
-                color.withValues(alpha: n.stale ? 0.55 * _staleOpacity : 0.55),
+            ..color = signal.withValues(alpha: 0.55),
         );
       }
 
-      // Link quality: the child's RSSI to this parent, printed on the line in
-      // the link's colour (not for a stale device — that reading is long out
-      // of date). A sleeping leaf keeps its last value, in the sleep colour.
-      if (n.rssi != null && !n.stale) {
-        _linkLabel(
-            canvas, path, '${n.rssi} dBm', healthy ? color : AppColors.error);
+      // Link quality: the child's RSSI to this parent, printed on the line
+      // in the link's colour — only for a link that is real and live (a
+      // dead unit's reading is from before it went; a presumed link's was
+      // to another parent). A sleeping leaf keeps its last value, in the
+      // sleep colour.
+      if (n.online && !target.presumed && n.rssi != null) {
+        _linkLabel(canvas, path, '${n.rssi} dBm',
+            candidate ? AppColors.warning : signal);
       }
       if (fade) canvas.restore();
     }
@@ -1577,54 +1629,30 @@ class _CentralChip extends StatelessWidget {
                   left: (_CentralChip._circle - 11) / 2,
                   child: DeviceLedDot(node: board!, size: 11),
                 ),
+              // The firmware the board runs: the same pill, in the same
+              // place, as on every unit — bottom right of the disc. (Its
+              // MAC and the rest are in its popover.)
+              if (activity == null && board?.fwVersion?.isNotEmpty == true)
+                Positioned(
+                  left: _CentralChip._circle / 2 + 8,
+                  bottom: -5,
+                  child: FirmwareTag(version: board!.fwVersion),
+                ),
             ],
           ),
-          const SizedBox(height: 5),
+          const SizedBox(height: 6),
           if (activity != null)
             OtaBoardCaption(activity: activity!)
           else
-            // The firmware the board runs sits on the caption's line
-            // (nothing when it never said): the chip keeps its height.
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'CENTRAL',
-                    style: TextStyle(
-                      color: context.textSecondary,
-                      fontSize: 9,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.0,
-                    ),
-                  ),
-                  if (board?.fwVersion?.isNotEmpty == true) ...[
-                    const SizedBox(width: 5),
-                    FirmwareTag(version: board!.fwVersion),
-                  ],
-                ],
-              ),
-            ),
-          if (board != null) ...[
-            const SizedBox(height: 2),
             Text(
-              board!.mac,
+              'CENTRAL',
               style: TextStyle(
-                color: context.textSecondary.withValues(alpha: 0.8),
-                fontSize: 8,
-                fontFamily: 'monospace',
+                color: context.textPrimary,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.0,
               ),
             ),
-            if (board!.rssi != null)
-              Text(
-                '${board!.rssi} dBm',
-                style: TextStyle(
-                  color: context.textSecondary.withValues(alpha: 0.7),
-                  fontSize: 8,
-                ),
-              ),
-          ],
         ],
       ),
     );
@@ -1787,11 +1815,27 @@ class _NodeChip extends StatelessWidget {
                           top: (46 - OtaProgressRing.sizeFor(46)) / 2,
                           child: OtaUnitRing(activity: activity!, diameter: 46),
                         ),
+                      // The firmware it runs, and whether another waits on
+                      // the board, as a pill at the bottom right of the
+                      // avatar (ALARME is at the bottom left, ROOT on top,
+                      // the ticks on the right, OFFLINE top right: nothing
+                      // shares a corner). Nothing when the unit never said
+                      // its version. In a rollout, and while chosen for
+                      // one, the line under the name says it instead.
+                      if (activity == null &&
+                          !(selected && selectionTarget != null))
+                        Positioned(
+                          left: 46 / 2 + 8,
+                          bottom: -5,
+                          child: FirmwareTag(
+                              version: node.fwVersion, pending: pending),
+                        ),
                     ],
                   ),
-                  const SizedBox(height: 5),
+                  const SizedBox(height: 6),
                   // Identification: the device's name when set, otherwise the
-                  // full MAC address — never a truncated fragment.
+                  // full MAC address — never a truncated fragment. The name
+                  // is the only line under the unit.
                   Text(
                     node.name?.isNotEmpty == true ? node.name! : node.mac,
                     maxLines: 1,
@@ -1801,16 +1845,15 @@ class _NodeChip extends StatelessWidget {
                       color: node.name?.isNotEmpty == true
                           ? context.textPrimary
                           : context.textSecondary,
-                      fontSize: node.name?.isNotEmpty == true ? 9.5 : 8,
-                      fontWeight: FontWeight.w600,
+                      fontSize: node.name?.isNotEmpty == true ? 11 : 8.5,
+                      fontWeight: FontWeight.w700,
                       fontFamily:
                           node.name?.isNotEmpty == true ? null : 'monospace',
                       letterSpacing: node.name?.isNotEmpty == true ? 0 : -0.2,
                     ),
                   ),
-                  // The firmware it runs, and whether another waits on the
-                  // board; nothing when the unit never said its version. In
-                  // a rollout: where the unit is in it.
+                  // In a rollout: where the unit is in it. Chosen for one:
+                  // from what it runs to what it will.
                   if (activity != null)
                     OtaUnitTag(activity: activity!, version: node.fwVersion)
                   else if (selected && selectionTarget != null)
@@ -1824,9 +1867,7 @@ class _NodeChip extends StatelessWidget {
                         fontSize: 8,
                         fontWeight: FontWeight.w700,
                       ),
-                    )
-                  else
-                    FirmwareTag(version: node.fwVersion, pending: pending),
+                    ),
                 ],
               ),
             ),

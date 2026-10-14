@@ -67,12 +67,17 @@ function buildPolicyDocument() {
         // /alarm carries the retained list of held alarms (the mirror,
         // docs/cloud/central-mirror.md §4.5): published always, so a user
         // who opens the app after an alarm started still gets it.
+        // /test carries the retained system test — the one running and
+        // the last ten (§4.7, 2026-10-14) — for the same reason: a phone
+        // opened or reloaded mid-test starts with the whole picture.
+        // Live policies get it from tools/cloud_test_topic_policy.sh.
         Effect: "Allow",
         Action: ["iot:Publish", "iot:RetainPublish"],
         Resource: [
           `${base}:topic/${sub}/will`,
           `${base}:topic/${sub}/storage`,
           `${base}:topic/${sub}/alarm`,
+          `${base}:topic/${sub}/test`,
         ],
       },
       {

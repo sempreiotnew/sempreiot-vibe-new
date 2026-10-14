@@ -10,7 +10,10 @@ import 'device_led_provider.dart';
 import 'device_sound_provider.dart';
 import 'safr_downlink_provider.dart';
 import 'safr_traffic_provider.dart';
+import 'central_mirror_codec.dart' show MirrorTests;
+import 'system_test_provider.dart' show mirrorTestsProvider;
 import 'topology_provider.dart';
+import '../domain/system_test/system_test_run.dart';
 
 /// What an operator commands a unit to do from the Rede map.
 ///
@@ -144,8 +147,9 @@ class BroadcastTally {
     required this.sleepers,
     required this.missing,
     required this.noAnswer,
+    this.cancelled = 0,
   });
-  final int total, confirmed, pending, sleepers, missing, noAnswer;
+  final int total, confirmed, pending, sleepers, missing, noAnswer, cancelled;
 
   bool get done => pending == 0;
 
@@ -156,6 +160,8 @@ class BroadcastTally {
               '${sleepers > 0 ? ' ($sleepers no próximo despertar)' : ''}',
         if (missing > 0) '$missing sem comunicação',
         if (noAnswer > 0) '$noAnswer sem resposta',
+        if (cancelled > 0)
+          '$cancelled ${cancelled == 1 ? 'cancelado' : 'cancelados'}',
       ].join(' · ');
 }
 
@@ -293,6 +299,10 @@ class DeviceCommandTracker
       final ok = await send(mac, kind);
       if (!identical(_startOf(mac), started.startedAt)) return ok;
       _advance(mac, ok ? DeviceCommandStep.boardAck : DeviceCommandStep.failed);
+      // The units' own ACKs may all be in before the board's answer was
+      // handed back (the board answers first on the wire, but the
+      // awaiting code runs after): the verdict is given now, not never.
+      if (mac == safrBroadcastMac && ok) _settleBroadcast();
       return ok;
     }
     final ask = _askCentral;
@@ -328,7 +338,15 @@ class DeviceCommandTracker
     // the tablet does.
     final all = state[safrBroadcastMac];
     if (remote.mac == safrBroadcastMac) {
-      if (remote.step == DeviceCommandStep.sending) _broadcastUnits.clear();
+      // A NEW broadcast opens an empty list. The tablet re-publishes the
+      // same "sending" with its tally line right after it listed the
+      // units: that one must not empty the list again, or the units'
+      // clocks would leave the phone's map after 20 s and the Central's
+      // tally would count nobody (fixed 2026-10-14).
+      if (remote.step == DeviceCommandStep.sending &&
+          (cur == null || cur.step != DeviceCommandStep.sending)) {
+        _broadcastUnits.clear();
+      }
     } else if (all != null && all.kind == remote.kind) {
       _broadcastUnits.add(remote.mac);
     }
@@ -361,9 +379,82 @@ class DeviceCommandTracker
   /// A unit that never confirmed inside the window.
   static const noAnswerNote = 'sem resposta';
 
+  /// A unit still waiting when the operator cancelled the test.
+  static const cancelledNote = 'cancelado';
+
+  /// Every unit of the running (or lingering) broadcast.
+  Set<String> get broadcastUnits => Set.unmodifiable(_broadcastUnits);
+
+  /// The operator cancels the running broadcast: every unit still waiting
+  /// is "cancelado", the Central's own status fails with that note, and
+  /// nothing more is waited for. False when no broadcast runs.
+  bool cancelBroadcast() {
+    final all = state[safrBroadcastMac];
+    if (all == null || !all.broadcastRunning) return false;
+    final now = _clock();
+    for (final m in _broadcastUnits) {
+      final cur = state[m];
+      if (cur != null &&
+          cur.kind == all.kind &&
+          (cur.step == DeviceCommandStep.sending ||
+              cur.step == DeviceCommandStep.boardAck)) {
+        _put(cur.copyWith(
+            step: DeviceCommandStep.failed,
+            note: cancelledNote,
+            updatedAt: now));
+      }
+    }
+    _broadcastWaiting.clear();
+    _put(all.copyWith(
+        step: DeviceCommandStep.failed, note: cancelledNote, updatedAt: now));
+    return true;
+  }
+
+  /// A phone: the running test as the central's retained record says it
+  /// (a reload, a late join): the broadcast, then every unit, through the
+  /// same door as the events — a step already passed is never undone.
+  void seedFromRun(SystemTestRun run) {
+    if (!run.running) return;
+    final t0 = run.startedAt;
+    applyRemote(DeviceCommandStatus(
+      mac: safrBroadcastMac,
+      kind: DeviceCommandKind.test,
+      step: run.boardAcked
+          ? DeviceCommandStep.boardAck
+          : DeviceCommandStep.sending,
+      startedAt: t0,
+      by: run.by,
+    ));
+    for (final u in run.units) {
+      final (step, note) = switch (u.outcome) {
+        SystemTestOutcome.pending || SystemTestOutcome.pendingWake => (
+            DeviceCommandStep.sending,
+            null
+          ),
+        SystemTestOutcome.confirmed => (DeviceCommandStep.delivered, null),
+        SystemTestOutcome.noAnswer => (DeviceCommandStep.failed, noAnswerNote),
+        SystemTestOutcome.missing => (DeviceCommandStep.failed, missingNote),
+        SystemTestOutcome.cancelled => (
+            DeviceCommandStep.failed,
+            cancelledNote
+          ),
+      };
+      applyRemote(DeviceCommandStatus(
+        mac: u.mac,
+        kind: DeviceCommandKind.test,
+        step: step,
+        startedAt: t0,
+        waitsForWake: u.outcome == SystemTestOutcome.pendingWake,
+        by: run.by,
+        note: note,
+      ));
+    }
+  }
+
   /// The broadcast's units by outcome, from their statuses.
   BroadcastTally get broadcastTally {
     var confirmed = 0, pending = 0, sleepers = 0, missing = 0, noAnswer = 0;
+    var cancelled = 0;
     for (final m in _broadcastUnits) {
       final u = state[m];
       if (u == null) continue;
@@ -374,6 +465,8 @@ class DeviceCommandTracker
         case DeviceCommandStep.failed:
           if (u.note == missingNote) {
             missing++;
+          } else if (u.note == cancelledNote) {
+            cancelled++;
           } else {
             noAnswer++;
           }
@@ -390,6 +483,7 @@ class DeviceCommandTracker
       sleepers: sleepers,
       missing: missing,
       noAnswer: noAnswer,
+      cancelled: cancelled,
     );
   }
 
@@ -418,10 +512,43 @@ class DeviceCommandTracker
       }
     }
     _broadcastWaiting.clear();
+    // The verdict comes from the outcomes themselves: a unit that
+    // answered (its test came back) confirmed, whatever happened to its
+    // ACK. Red only when someone really was out of reach or never
+    // answered.
+    final tally = broadcastTally;
+    final clean =
+        tally.pending == 0 && tally.missing == 0 && tally.noAnswer == 0;
     _put(all.copyWith(
-        step: DeviceCommandStep.failed,
+        step: clean ? DeviceCommandStep.delivered : DeviceCommandStep.failed,
         note: _broadcastNote(),
         updatedAt: now));
+  }
+
+  /// A unit of the broadcast is confirmed (its own ACK, or its answer to
+  /// the test). The Central's ✓✓ — and the wave — once the LAST one is
+  /// in: the verdict is given whenever the last confirmation lands, before
+  /// or after the board's own answer was handed back.
+  void _broadcastUnitConfirmed(String mac) {
+    _broadcastWaiting.remove(mac);
+    _settleBroadcast();
+  }
+
+  /// Everyone reachable confirmed: ✓✓ and the wave only if nobody was
+  /// left out — a unit that was offline makes the whole test red. With
+  /// units still waiting, the Central's tally moves.
+  void _settleBroadcast() {
+    final all = state[safrBroadcastMac];
+    if (all == null || all.step != DeviceCommandStep.boardAck) return;
+    if (_broadcastWaiting.isNotEmpty) {
+      _put(all.copyWith(note: _broadcastNote()));
+      return;
+    }
+    final clean = broadcastTally.missing == 0;
+    _put(all.copyWith(
+        step: clean ? DeviceCommandStep.delivered : DeviceCommandStep.failed,
+        note: _broadcastNote(),
+        updatedAt: _clock()));
   }
 
   void _onDelivered(String mac) {
@@ -439,7 +566,11 @@ class DeviceCommandTracker
     // A unit confirming a broadcast: its own ✓✓ — even after the window
     // closed on it — and the Central's ✓✓ once the LAST one is in.
     if (all == null) return;
-    if (cur == null || !cur.inFlight || cur.kind == all.kind) {
+    // A unit that already answered the test keeps its ✓✓ as it is.
+    final answered = cur != null &&
+        cur.kind == all.kind &&
+        cur.step == DeviceCommandStep.answered;
+    if (!answered && (cur == null || !cur.inFlight || cur.kind == all.kind)) {
       _put(DeviceCommandStatus(
         mac: mac,
         kind: all.kind,
@@ -449,21 +580,7 @@ class DeviceCommandTracker
         by: all.by,
       ));
     }
-    _broadcastWaiting.remove(mac);
-    if (all.step == DeviceCommandStep.boardAck) {
-      if (_broadcastWaiting.isEmpty) {
-        // Everyone reachable confirmed. ✓✓ and the wave only if nobody was
-        // left out; a unit that was offline makes the whole test red.
-        final clean = broadcastTally.missing == 0;
-        _put(all.copyWith(
-            step:
-                clean ? DeviceCommandStep.delivered : DeviceCommandStep.failed,
-            note: _broadcastNote(),
-            updatedAt: _clock()));
-      } else {
-        _put(all.copyWith(note: _broadcastNote()));
-      }
-    }
+    _broadcastUnitConfirmed(mac);
   }
 
   void _onTraffic(SafrTrafficTick tick) {
@@ -476,6 +593,14 @@ class DeviceCommandTracker
           tick.eventCode == SafrEventCode.manualTest) {
         if (cur.step.index < DeviceCommandStep.answered.index) {
           _advance(tick.mac, DeviceCommandStep.answered);
+        }
+        // The answer proves the command reached it: for the system test
+        // it counts as the unit's confirmation, whether or not its own
+        // ACK makes it up the mesh (the unit emits the test event before
+        // it ACKs, and an ACK has no retry).
+        if (_broadcastWaiting.contains(tick.mac) &&
+            state[safrBroadcastMac]?.kind == DeviceCommandKind.test) {
+          _broadcastUnitConfirmed(tick.mac);
         }
         return;
       }
@@ -578,8 +703,9 @@ final deviceCommandProvider = StateNotifierProvider<DeviceCommandTracker,
     Map<String, DeviceCommandStatus>>((ref) {
   final traffic = ref.watch(safrTrafficProvider).stream;
   // A phone viewing a central: it asks, the central sends.
-  if (ref.watch(viewedCentralProvider) != null) {
-    return DeviceCommandTracker(
+  final viewed = ref.watch(viewedCentralProvider);
+  if (viewed != null) {
+    final tracker = DeviceCommandTracker(
       traffic: traffic,
       askCentral: (mac) async {
         final outcome =
@@ -591,6 +717,14 @@ final deviceCommandProvider = StateNotifierProvider<DeviceCommandTracker,
         };
       },
     );
+    // The test running on the central, as its retained record says it:
+    // the whole picture after a reload or a late join, whatever the
+    // snapshot's and the events' timing.
+    ref.listen<MirrorTests?>(mirrorTestsProvider(viewed), (_, next) {
+      final run = next?.running;
+      if (run != null) tracker.seedFromRun(run);
+    }, fireImmediately: true);
+    return tracker;
   }
   final downlink = ref.watch(safrDownlinkProvider);
   return DeviceCommandTracker(

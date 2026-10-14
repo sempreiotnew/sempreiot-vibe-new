@@ -22,6 +22,8 @@ import 'ota_push_report.dart';
 import 'ota_push_state.dart';
 import 'safr_traffic_provider.dart';
 import 'serial_link_provider.dart';
+import '../domain/system_test/system_test_run.dart';
+import 'system_test_provider.dart';
 import 'topology_provider.dart';
 
 /// Publishes one mirror message; false = not sent (MQTT down).
@@ -98,11 +100,13 @@ class CentralMirrorPublisher {
     Future<String?> Function(String userIdentityId, MirrorRemoteOta command)?
         remoteOta,
     void Function(List<MirrorWatcher> watchers)? onWatchers,
+    List<DeviceCommandStatus> Function()? commands,
     DateTime Function()? clock,
   })  : _identityId = identityId,
         _publish = publish,
         _nodes = nodes,
         _link = link,
+        _commands = commands,
         _ota = ota,
         _otaHistory = otaHistory,
         _identify = identify,
@@ -143,6 +147,13 @@ class CentralMirrorPublisher {
   final Future<String?> Function(
       String userIdentityId, MirrorRemoteOta command)? _remoteOta;
   final void Function(List<MirrorWatcher> watchers)? _onWatchers;
+
+  /// The tablet's commands on the map right now (device_command_provider):
+  /// they ride every snapshot, so a phone that joins mid-test — or asks for
+  /// the snapshot again after a lost batch — gets the clocks, the ticks and
+  /// the Central's tally, not only what moves from then on. Read when a
+  /// snapshot leaves, never listened to here (the steps go as events).
+  final List<DeviceCommandStatus> Function()? _commands;
   final DateTime Function() _clock;
 
   /// Per phone: who it is and when it last pinged.
@@ -162,6 +173,9 @@ class CentralMirrorPublisher {
 
   String? _alarmSignature;
   List<MirrorAlarm> _alarms = const [];
+  String? _testsSignature;
+  SystemTestRun? _testRunning;
+  List<SystemTestRun> _testsRecent = const [];
 
   bool _otaHelloPending = false;
   String? _lastOtaBody;
@@ -423,6 +437,21 @@ class CentralMirrorPublisher {
     _batchStart = null;
   }
 
+  /// What the snapshot says of the commands: the tablet's own (what a unit
+  /// sent is derived from the ticks the phone replays), the broadcast
+  /// first so a phone opens the test before it meets the test's units.
+  List<MirrorCommand> _commandsInFlight() {
+    final all = _commands?.call() ?? const <DeviceCommandStatus>[];
+    final own = [
+      for (final s in all)
+        if (!s.kind.fromUnit) s
+    ]..sort((a, b) => (a.mac == safrBroadcastMac ? 0 : 1)
+        .compareTo(b.mac == safrBroadcastMac ? 0 : 1));
+    return [
+      for (final s in own) (mac: s.mac, wire: s.wire, by: s.by, note: s.note),
+    ];
+  }
+
   void _maybeSnapshot() {
     final now = _clock();
     final last = _lastSnapshotAt;
@@ -450,7 +479,13 @@ class CentralMirrorPublisher {
     final nodes = _nodes();
     final sent = _publish(
       mirrorStateTopic(id),
-      encodeMirrorState(seq: ++_stateSeq, at: now, link: link, nodes: nodes),
+      encodeMirrorState(
+        seq: ++_stateSeq,
+        at: now,
+        link: link,
+        nodes: nodes,
+        commands: _commandsInFlight(),
+      ),
       retain: false,
       qos: 1,
     );
@@ -477,6 +512,31 @@ class CentralMirrorPublisher {
       _onWatchers?.call(const []);
     }
     _publishAlarms(force: true);
+    _publishTests(force: true);
+  }
+
+  /// The system test running now, or the last ones, changed: the retained
+  /// `test` message is written again (with nobody watching too — a phone
+  /// opened or reloaded in the middle of a test reads it on subscribing).
+  void onSystemTests(SystemTestRun? running, List<SystemTestRun> recent) {
+    _testRunning = running;
+    _testsRecent = recent;
+    _publishTests(force: false);
+  }
+
+  void _publishTests({required bool force}) {
+    final signature = mirrorTestsSignature(_testRunning, _testsRecent);
+    if (!force && signature == _testsSignature) return;
+    final id = _identityId();
+    if (id == null) return;
+    final sent = _publish(
+      mirrorTestTopic(id),
+      encodeMirrorTests(
+          at: _clock(), running: _testRunning, recent: _testsRecent),
+      retain: true,
+      qos: 1,
+    );
+    if (sent) _testsSignature = signature;
   }
 
   void _publishAlarms({required bool force}) {
@@ -522,6 +582,7 @@ final centralMirrorPublisherProvider = Provider<void>((ref) {
     },
     nodes: () => ref.read(topologyProvider),
     link: () => ref.read(serialLinkProvider).name,
+    commands: () => ref.read(deviceCommandProvider).values.toList(),
     // Read once a second while a user is watching, never listened to: with
     // nobody watching the mirror does not touch the update's providers.
     ota: () => (
@@ -595,6 +656,9 @@ final centralMirrorPublisherProvider = Provider<void>((ref) {
   });
   ref.listen(topologyProvider, (_, __) => publisher.onMapChanged());
   ref.listen(serialLinkProvider, (_, __) => publisher.onMapChanged());
+  ref.listen<SystemTestsState>(systemTestControllerProvider, (_, next) {
+    publisher.onSystemTests(next.running, next.recent);
+  }, fireImmediately: true);
   ref.listen(latchedAlarmsProvider, (_, next) {
     final latched = next.valueOrNull;
     if (latched != null) publisher.onAlarms(latched.map(_alarmOf).toList());

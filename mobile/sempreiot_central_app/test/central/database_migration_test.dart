@@ -4,6 +4,7 @@ import 'package:drift/drift.dart' show Value, driftRuntimeOptions;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sempreiot_central_app/core/database/app_database.dart';
+import 'package:sempreiot_central_app/features/central/domain/system_test/system_test_run.dart';
 
 const _unitA = '5A:46:52:00:00:02';
 
@@ -65,7 +66,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 12);
+    expect(version, 13);
   });
 
   test('schema v10 -> v11 adds the firmware update history, rows kept',
@@ -116,11 +117,10 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 12);
+    expect(version, 13);
   });
 
-  test('schema v11 -> v12 adds where the image came from, rows kept',
-      () async {
+  test('schema v11 -> v12 adds where the image came from, rows kept', () async {
     final dir = await Directory.systemTemp.createTemp('siot_migr_');
     addTearDown(() => dir.delete(recursive: true));
     final file = File('${dir.path}/sempreiot.sqlite');
@@ -162,6 +162,54 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 12);
+    expect(version, 13);
+  });
+
+  test('schema v12 -> v13 adds the system tests, rows kept', () async {
+    final dir = await Directory.systemTemp.createTemp('siot_migr_');
+    addTearDown(() => dir.delete(recursive: true));
+    final file = File('${dir.path}/sempreiot.sqlite');
+
+    final fresh = AppDatabase.forTesting(NativeDatabase(file));
+    await fresh.into(fresh.otaRuns).insert(OtaRunsCompanion.insert(
+          runId: '0011223344556677',
+          startedAt: DateTime.utc(2026, 10, 2, 15),
+          startedBy: 'admin',
+          allPhases: true,
+          target: '0.2.6',
+          families: 'board,node',
+        ));
+    await fresh.close();
+
+    final upgraded = AppDatabase.forTesting(NativeDatabase(file, setup: (raw) {
+      raw.execute('DROP TABLE system_tests');
+      raw.execute('PRAGMA user_version = 12');
+    }));
+    addTearDown(upgraded.close);
+
+    expect(await upgraded.select(upgraded.otaRuns).get(), hasLength(1));
+    final run = SystemTestRun(
+      id: 'abc',
+      startedAt: DateTime.utc(2026, 10, 14, 15),
+      verdict: SystemTestVerdict.running,
+      units: const [
+        SystemTestUnit(mac: _unitA, outcome: SystemTestOutcome.pending),
+      ],
+    );
+    await upgraded.saveSystemTest(run);
+    // Rewritten as it moves: still one row.
+    await upgraded.saveSystemTest(run.copyWith(
+      verdict: SystemTestVerdict.passed,
+      endedAt: DateTime.utc(2026, 10, 14, 15, 1),
+    ));
+    final back = await upgraded.recentSystemTests();
+    expect(back.single.id, 'abc');
+    expect(back.single.verdict, SystemTestVerdict.passed);
+    expect(back.single.units.single.mac, _unitA);
+    final version = await upgraded
+        .customSelect('PRAGMA user_version')
+        .map((row) => row.read<int>('user_version'))
+        .getSingle();
+    expect(version, 13);
   });
 }

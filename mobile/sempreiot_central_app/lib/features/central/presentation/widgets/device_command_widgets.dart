@@ -210,5 +210,7 @@ String commandOutcomeLabel(DeviceCommandStatus s) => switch (s.step) {
       DeviceCommandStep.delivered || DeviceCommandStep.answered => 'Confirmado',
       DeviceCommandStep.failed => s.note == DeviceCommandTracker.missingNote
           ? 'Sem comunicação'
-          : 'Sem resposta',
+          : s.note == DeviceCommandTracker.cancelledNote
+              ? 'Cancelado'
+              : 'Sem resposta',
     };

@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../../../core/database/app_database.dart' show OtaRun, OtaRunUnit;
 import '../domain/ota/firmware_release.dart';
 import '../domain/safr/safr_product.dart';
+import '../domain/system_test/system_test_run.dart';
 import '../domain/safr/safr_v2_frame.dart';
 import '../domain/safr/safr_v2_payloads.dart';
 import 'device_update_state.dart';
@@ -28,6 +29,10 @@ String mirrorFramesTopic(String identityId) => '$identityId/frames';
 
 /// Central → cloud, always, retained: the alarms held on the panel.
 String mirrorAlarmTopic(String identityId) => '$identityId/alarm';
+
+/// Central → cloud, always, retained: the system test running now and the
+/// last few (§4.7).
+String mirrorTestTopic(String identityId) => '$identityId/test';
 
 /// Central → cloud, only while watched: the firmware update that runs (or
 /// the last one), and the image on its way to the board.
@@ -244,12 +249,19 @@ String encodeMirrorIdentify(String mac, {String? sub, String? name}) =>
 
 // ── state ───────────────────────────────────────────────────────────────────
 
+/// A command in flight on the central, as the snapshot carries it:
+/// `DeviceCommandStatus.wire` (kind, step, waits for the wake), who started
+/// it from a phone, and its note (a broadcast's tally, a unit's "sem
+/// comunicação" / "sem resposta").
+typedef MirrorCommand = ({String mac, int wire, String? by, String? note});
+
 class MirrorState {
   const MirrorState({
     required this.seq,
     required this.at,
     required this.link,
     required this.nodes,
+    this.commands = const [],
   });
 
   final int seq;
@@ -260,6 +272,12 @@ class MirrorState {
   /// The central's board link (`SerialLinkStatus` name).
   final String link;
   final List<TopologyNode> nodes;
+
+  /// Every command of the tablet still on the map (a system test with its
+  /// units, an Identificar …), the broadcast first: a phone joining in the
+  /// middle of a test starts with the whole picture, not just what moves
+  /// from then on (2026-10-14).
+  final List<MirrorCommand> commands;
 }
 
 Map<String, dynamic> _unitToJson(TopologyNode n, {bool volatile = true}) => {
@@ -295,6 +313,7 @@ String encodeMirrorState({
   required DateTime at,
   required String link,
   required List<TopologyNode> nodes,
+  List<MirrorCommand> commands = const [],
 }) =>
     jsonEncode({
       'v': mirrorVersion,
@@ -302,7 +321,30 @@ String encodeMirrorState({
       'at': at.toUtc().toIso8601String(),
       'link': link,
       'units': [for (final n in nodes) _unitToJson(n)],
+      if (commands.isNotEmpty)
+        'commands': [
+          for (final c in commands)
+            {
+              'mac': c.mac,
+              'wire': c.wire,
+              if (c.by != null) 'by': c.by,
+              if (c.note != null) 'note': c.note,
+            },
+        ],
     });
+
+MirrorCommand? _commandFromJson(Object? raw) {
+  if (raw is! Map) return null;
+  final mac = raw['mac'];
+  final wire = raw['wire'];
+  if (mac is! String || wire is! num) return null;
+  return (
+    mac: mac,
+    wire: wire.toInt(),
+    by: raw['by'] as String?,
+    note: raw['note'] as String?,
+  );
+}
 
 /// What a snapshot says, without what changes on every heartbeat (the last
 /// seen time, the dBm): two snapshots with the same signature show the same
@@ -358,6 +400,7 @@ MirrorState? decodeMirrorState(String payload) {
     final units = map['units'];
     final at = DateTime.tryParse(map['at'] as String? ?? '');
     if (units is! List || at == null) return null;
+    final commands = map['commands'];
     return MirrorState(
       seq: (map['seq'] as num?)?.toInt() ?? 0,
       at: at,
@@ -365,6 +408,11 @@ MirrorState? decodeMirrorState(String payload) {
       nodes: [
         for (final u in units)
           if (_unitFromJson(u, at) case final node?) node,
+      ],
+      commands: [
+        if (commands is List)
+          for (final c in commands)
+            if (_commandFromJson(c) case final command?) command,
       ],
     );
   } catch (_) {
@@ -496,6 +544,67 @@ MirrorFrames? decodeMirrorFrames(String payload) {
                 arg: (e[2] as num?)?.toInt() ?? 0,
                 text: e.length > 3 && e[3] is String ? e[3] as String : null,
               ),
+      ],
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+// ── system tests ────────────────────────────────────────────────────────────
+
+/// The retained `test` message: the test running now (null = none) and
+/// the last tests, newest first.
+class MirrorTests {
+  const MirrorTests({required this.at, this.running, this.recent = const []});
+  final DateTime at;
+  final SystemTestRun? running;
+  final List<SystemTestRun> recent;
+}
+
+/// How many past tests ride the retained message (the tablet keeps them
+/// all; a phone sees these).
+const mirrorTestsRecent = 10;
+
+String encodeMirrorTests({
+  required DateTime at,
+  SystemTestRun? running,
+  List<SystemTestRun> recent = const [],
+}) =>
+    jsonEncode({
+      'v': mirrorVersion,
+      'at': at.toUtc().toIso8601String(),
+      if (running != null) 'running': running.toJson(),
+      'recent': [
+        for (final r in recent.take(mirrorTestsRecent)) r.toJson(),
+      ],
+    });
+
+/// What the message says without the time it was published: the same
+/// tests = the same message, so it is not written again.
+String mirrorTestsSignature(
+        SystemTestRun? running, List<SystemTestRun> recent) =>
+    jsonEncode({
+      if (running != null) 'running': running.toJson(),
+      'recent': [
+        for (final r in recent.take(mirrorTestsRecent)) r.toJson(),
+      ],
+    });
+
+MirrorTests? decodeMirrorTests(String payload) {
+  try {
+    final map = jsonDecode(payload);
+    if (map is! Map || map['v'] != mirrorVersion) return null;
+    final at = DateTime.tryParse(map['at'] as String? ?? '');
+    if (at == null) return null;
+    final recent = map['recent'];
+    return MirrorTests(
+      at: at,
+      running: SystemTestRun.fromJson(map['running']),
+      recent: [
+        if (recent is List)
+          for (final r in recent)
+            if (SystemTestRun.fromJson(r) case final run?) run,
       ],
     );
   } catch (_) {

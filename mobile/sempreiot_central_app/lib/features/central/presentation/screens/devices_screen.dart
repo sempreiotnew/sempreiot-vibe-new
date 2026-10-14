@@ -9,7 +9,7 @@ import '../../application/root_election_provider.dart';
 import '../../application/topology_provider.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
 import '../widgets/device_avatar.dart';
-import '../widgets/network_3d/device_3d_chip.dart' show DeviceOfflineBadge;
+
 import 'device_settings_screen.dart';
 
 enum _Filter { all, alarm, offline, sleeping }
@@ -379,7 +379,7 @@ class _DeviceCard extends StatelessWidget {
                         spin: true,
                       ),
                       // Without communication: said in words, top right —
-                      // the same tag as on Rede 3D.
+                      // the same tag as on the Rede map.
                       if (!node.online)
                         const Positioned(
                           right: -22,

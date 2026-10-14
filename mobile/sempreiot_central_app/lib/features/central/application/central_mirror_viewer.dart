@@ -158,7 +158,7 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
     required SafrTrafficBus traffic,
     String? Function()? accountName,
     void Function(String mac, int seconds)? onIdentify,
-    void Function(String mac, int wire, String? by)? onCommand,
+    void Function(String mac, int wire, String? by, {String? note})? onCommand,
     DateTime Function()? clock,
   })  : _repo = repo,
         _onCommand = onCommand,
@@ -185,8 +185,10 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
   final void Function(String mac, int seconds)? _onIdentify;
 
   /// A command to a unit moved on, on the central (Identificar, Testar …):
-  /// this phone's map shows the same checks.
-  final void Function(String mac, int wire, String? by)? _onCommand;
+  /// this phone's map shows the same checks. Also every command a snapshot
+  /// carries, so a phone joining mid-test gets the whole picture.
+  final void Function(String mac, int wire, String? by, {String? note})?
+      _onCommand;
   final DateTime Function() _clock;
 
   /// How long a phone waits for the central to say it heard an Identificar
@@ -340,6 +342,13 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
       link: snapshot.link,
       snapshotAt: snapshot.at,
     );
+    // The commands on the map at that moment, the broadcast first (the
+    // central orders them so; a step this phone already passed is ignored
+    // by the tracker, so a snapshot older than the events never goes
+    // back).
+    for (final c in snapshot.commands) {
+      _onCommand?.call(c.mac, c.wire, c.by, note: c.note);
+    }
   }
 
   void _onOta(String payload) {
@@ -627,10 +636,13 @@ final StateNotifierProvider<CentralMirrorViewer, CentralMirrorView>
     accountName: () => ref.read(authNotifierProvider).valueOrNull?.userId,
     onIdentify: (mac, seconds) =>
         ref.read(deviceLedProvider).identify(mac, seconds),
-    onCommand: (mac, wire, by) {
+    onCommand: (mac, wire, by, {note}) {
       final s =
           DeviceCommandStatus.fromWire(mac, wire, by: by, at: DateTime.now());
-      if (s != null) ref.read(deviceCommandProvider.notifier).applyRemote(s);
+      if (s == null) return;
+      ref
+          .read(deviceCommandProvider.notifier)
+          .applyRemote(note == null ? s : s.copyWith(note: note));
     },
   );
   if (id == null) return viewer;

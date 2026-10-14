@@ -2,12 +2,13 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 
 import '../../../domain/safr/safr_product.dart';
 import 'device_models.g.dart';
 
-/// A product's 3D model as the app draws it (Rede 3D, Dispositivos,
+/// A product's 3D model as the app draws it (Rede, Dispositivos,
 /// Dispositivo): pre-rendered in Blender by tool/blender/factory.sh — no 3D
 /// engine at runtime. The list is generated: [deviceModelSpecs].
 class DeviceModelSpec {
@@ -34,7 +35,8 @@ class DeviceModelSpec {
   /// own or is not reported; null = only [productCodes].
   final SafrProductFamily? familyFallback;
 
-  /// Every turn × tilt of the Rede 3D camera.
+  /// Every turn × tilt of a map camera (rendered by the factory; not
+  /// drawn since the Rede 3D view was removed, 2026-10-14).
   final String atlas;
 
   /// One turn at a fixed tilt in fine steps (the spinning Dispositivos card).
@@ -91,8 +93,8 @@ const deviceModelVisualWeight = 0.79;
 
 /// Side of the frame to draw so the model has [deviceModelVisualWeight] at
 /// layout size [size] (px).
-double deviceModelBox(DeviceModelSpec spec, DeviceModelFrames frames,
-        double size) =>
+double deviceModelBox(
+        DeviceModelSpec spec, DeviceModelFrames frames, double size) =>
     size *
     deviceModelVisualWeight *
     spec.scale /
@@ -169,23 +171,6 @@ class DeviceModelFrames {
     );
   }
 
-  /// The atlas frame closest to the camera's turn and tilt (radians).
-  /// Angles follow [OrbitCamera]: yaw turns around the vertical, pitch > 0
-  /// = camera above; the model faces the viewer at yaw 0, pitch 0.
-  int frameFor(double yaw, double pitch) {
-    final step = 360 / yaws.length;
-    final deg = (yaw * 180 / math.pi) % 360;
-    final yi = (deg / step).round() % yaws.length;
-    final pd = pitch * 180 / math.pi;
-    var pi = 0;
-    for (var i = 1; i < pitches.length; i++) {
-      if ((pitches[i] - pd).abs() < (pitches[pi] - pd).abs()) pi = i;
-    }
-    return pi * yaws.length + yi;
-  }
-
-  Rect source(int frame) => _cell(frame, yaws.length);
-
   Rect spinSource(int i) => _cell(i, spinCols);
 
   Rect _cell(int i, int cols) => Rect.fromLTWH(((i % cols) * size).toDouble(),
@@ -233,33 +218,23 @@ class ModelPose {
   int get hashCode => Object.hash(image, a, b, t, led);
 }
 
-/// A model loaded: its sheets and frame data.
+/// A model loaded: its spin sheet and frame data. (The factory also
+/// renders an atlas of every camera angle for the Rede 3D view that was
+/// removed on 2026-10-14; it is neither loaded nor drawn any more.)
 class DeviceModelSprites {
-  DeviceModelSprites._(
-      this.spec, this.atlas, this.spin, this.glow, this.spinGlow, this.frames);
+  DeviceModelSprites._(this.spec, this.spin, this.spinGlow, this.frames);
 
   final DeviceModelSpec spec;
-  final ui.Image atlas, spin;
+  final ui.Image spin;
 
   /// Alarm lights; null when the model has none.
-  final ui.Image? glow, spinGlow;
+  final ui.Image? spinGlow;
   final DeviceModelFrames frames;
 
-  bool get hasAlarmLights => glow != null;
+  bool get hasAlarmLights => spinGlow != null;
 
   /// Frame side for layout size [size] — see [deviceModelBox].
   double frameBox(double size) => deviceModelBox(spec, frames, size);
-
-  /// The Rede 3D view: the nearest atlas frame for the camera.
-  ModelPose mapPose(double yaw, double pitch) {
-    final f = frames.frameFor(yaw, pitch);
-    return ModelPose(
-      image: atlas,
-      glow: glow,
-      a: frames.source(f),
-      led: frames.markers['led']?[f],
-    );
-  }
 
   /// The spinning / turned view at the spin tilt: two neighbouring frames
   /// blended, the LED between their two positions.
@@ -285,10 +260,37 @@ class DeviceModelSprites {
   }
 
   static final _cache = <String, Future<DeviceModelSprites>>{};
+  static final _loaded = <String, DeviceModelSprites>{};
 
   /// Loaded once per model.
   static Future<DeviceModelSprites> load(DeviceModelSpec spec) =>
-      _cache[spec.slug] ??= _load(spec);
+      _cache[spec.slug] ??= (loader ?? _load)(spec).then((s) {
+        _loaded[spec.slug] = s;
+        return s;
+      });
+
+  /// Tests: what [load] runs instead of reading the bundle.
+  @visibleForTesting
+  static Future<DeviceModelSprites> Function(DeviceModelSpec spec)? loader;
+
+  /// The model when it is already loaded — the same frame it is asked
+  /// for, no circle in between; null while it loads or before.
+  static DeviceModelSprites? cached(DeviceModelSpec spec) => _loaded[spec.slug];
+
+  /// Loads every model the app can draw, so the first map or list that
+  /// shows one has it at once. Errors are the models' own: a model that
+  /// fails to load stays the circle.
+  static Future<void> preloadAll() => Future.wait([
+        for (final spec in deviceModelSpecs)
+          load(spec).then((_) {}, onError: (_) {}),
+      ]);
+
+  /// Tests: forget every loaded model.
+  @visibleForTesting
+  static void resetCache() {
+    _cache.clear();
+    _loaded.clear();
+  }
 
   static Future<DeviceModelSprites> _load(DeviceModelSpec spec) async {
     Future<ui.Image> image(String path) async {
@@ -299,9 +301,7 @@ class DeviceModelSprites {
 
     return DeviceModelSprites._(
       spec,
-      await image(spec.atlas),
       await image(spec.spin),
-      spec.glow == null ? null : await image(spec.glow!),
       spec.spinGlow == null ? null : await image(spec.spinGlow!),
       DeviceModelFrames.parse(await rootBundle.loadString(spec.frames)),
     );

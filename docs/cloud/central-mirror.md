@@ -53,6 +53,7 @@ alarms held on the panel, always** (decided 2026-10-03).
 | `{id}/will` | central → cloud | yes | always (exists) | online / offline, wifi, usb, mesh |
 | `{id}/storage` | central → cloud | yes | always (exists) | disk usage |
 | `{id}/alarm` | central → cloud | **yes** | **always**: every change of the held alarms, and every new MQTT session | the alarms held on the panel (§4.5) |
+| `{id}/test` | central → cloud | **yes** | **always**: every change of the running system test or of the history, and every new MQTT session | the system test running now and the last 10 (§4.7) |
 | `{id}` | phone → central | no | while a phone has the central open | `watch` ping (§3) |
 | `{id}/state` | central → cloud | no | watched: on hello, then on change | snapshot of every unit (§4.1) |
 | `{id}/frames` | central → cloud | no | watched: every 250 ms if anything moved | frame movements (§4.2) |
@@ -182,6 +183,14 @@ then -1, the unit is counted "aguardando o primeiro sinal" and not drawn in the 
 `link` is the board link (`serialLinkProvider`): with the cable down every unit is offline on the
 phone too.
 
+`commands` (2026-10-14, absent when there is none): every command of the tablet still on the map —
+a system test (`FF:FF:FF:FF:FF:FF`, first) with each of its units, an Identificar, a Rearmar — as
+`{"mac":"…","wire":<DeviceCommandStatus.wire>,"by":"<phone account>","note":"2 confirmaram · 1 pendente"}`.
+The steps still travel as `command` events (§4.2) as they happen; the snapshot is for a phone that
+joins in the middle of a test (or asks for the snapshot again after a lost batch): it starts with
+the clocks, the ticks and the Central's tally, not only with what moves from then on. The tracker on
+the phone ignores a step it has already passed, so a snapshot older than the events never goes back.
+
 When it is published, while watched:
 
 - on `hello`;
@@ -295,6 +304,32 @@ script).
   `sendOtaCancel` (the phone). Tests: `test/central/remote_ota_test.dart`, the "from a phone" group
   of `test/ota/device_update_controller_test.dart`, `test/central/central_mirror_screen_test.dart`.
 
+### 4.7 `test` — the system test (2026-10-14)
+
+```json
+{"v":1,"at":"2026-10-14T18:42:05.236Z",
+ "running":{"id":"63f2…","started":"2026-10-14T18:41:50.000Z","verdict":"running","boardAcked":true,
+            "units":[{"mac":"AA:BB:…","name":"Sirene Hall","outcome":"confirmed","at":"…"},
+                     {"mac":"CC:DD:…","name":"Detector Cozinha","outcome":"pendingWake"}]},
+ "recent":[{"id":"…","started":"…","ended":"…","verdict":"passed","units":[…]}, …]}
+```
+
+`running` (absent = no test runs) and `recent` (the last 10, newest first) are `SystemTestRun`
+(`domain/system_test/system_test_run.dart`): `verdict` = `running` / `passed` / `failed` /
+`cancelled`; a unit's `outcome` = `pending` / `pendingWake` (a battery detector, on its next wake) /
+`confirmed` / `noAnswer` / `missing` (offline when the test started) / `cancelled`; `by` = the phone
+account that started it (absent = the tablet). Retained, QoS 1, written on every change of either
+and on every new MQTT session — **with nobody watching too**, like `alarm`: a phone that opens the
+central, or is reloaded, in the middle of a test reads it the moment it subscribes, whatever the
+timing of `state` and `frames`. On the phone it **seeds the command tracker** (the map's clocks and
+ticks, the Central's tally) through the same door as the `command` events, so nothing already passed
+goes back; the Central's popover lists it under "Últimos testes" and the report sheet opens by
+itself when a running test ends, on the tablet and on the phone alike. Cancelling is the tablet's
+alone (the popover's "Cancelar teste"); a phone only looks.
+
+Size: about 90 bytes per unit per run — 11 runs × 50 units ≈ 50 KB (AWS limit 128 KB; the tablet
+keeps every run in its database, the message carries the last 10).
+
 ### 4.5 `alarm` — the alarms held on the panel
 
 ```json
@@ -337,7 +372,7 @@ Menu and actions — what a user gets:
 
 | Item on the tablet | On the phone | Why |
 |---|---|---|
-| Principal, Dispositivos, Rede (and Rede 3D) | shown | the mirror |
+| Principal, Dispositivos, Rede | shown | the mirror |
 | Armazenamento | shown (exists) | already published |
 | Informações | not yet | the central does not publish it yet |
 | Atualizar dispositivos | shown, **view only** — no choosing, start, pause, cancel; no "Firmwares no tablet" | updates start on site |
@@ -379,6 +414,7 @@ watching costs about three cents; a second phone on the same central adds only i
 | **Central policy**: publish on `state`, `frames`, `ota`, `ota/*`, without retain | done (`lambda/central/policies.mjs`) | **applied 2026-10-03** (`Central_central-002` v7, `Central_central-003` v8) |
 | **Rule `telemetry_2` disabled** | — | **applied 2026-10-03** |
 | **Central policy**: publish **and retain** on `alarm` | done (`lambda/central/policies.mjs`) | **applied 2026-10-03** |
+| **Central policy**: publish **and retain** on `test` (§4.7) | done (`lambda/central/policies.mjs`, 2026-10-14) | **applied 2026-10-14** with `tools/cloud_test_topic_policy.sh` (`Central_central-003` v11, `Central_central-002` v10). It had to go BEFORE the build of 2026-10-14 reached a tablet — without it the tablet is dropped the moment it connects (it publishes `test` right after `alarm`), reconnects and is dropped again: seen on the bench 2026-10-14 as "wifi: limited" flapping |
 
 **A policy goes live before the build that needs it:** AWS IoT closes the connection of a client
 that publishes where its policy does not allow. A tablet whose build publishes a topic its policy

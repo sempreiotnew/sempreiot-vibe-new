@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sempreiot_central_app/core/database/app_database.dart'
-    show OtaRun, OtaRunUnit;
+    show OtaRun, OtaRunUnit, safrBroadcastMac;
 import 'package:sempreiot_central_app/features/central/application/central_mirror_codec.dart';
 import 'package:sempreiot_central_app/features/central/application/device_command_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/central_mirror_publisher.dart';
@@ -247,7 +247,8 @@ void main() {
       final kept = decodeMirrorOtaHistory(payload)!;
       expect(kept.length, inInclusiveRange(1, 399));
 
-      expect(isMirrorOtaHistoryRequest(encodeMirrorOtaHistoryRequest()), isTrue);
+      expect(
+          isMirrorOtaHistoryRequest(encodeMirrorOtaHistoryRequest()), isTrue);
       expect(isMirrorOtaHistoryRequest(encodeMirrorWatch()), isFalse);
       expect(decodeMirrorWatch(encodeMirrorOtaHistoryRequest()), isNull);
     });
@@ -307,6 +308,54 @@ void main() {
       expect(n.productCode, 3);
       expect(n.hwRev, 1);
       expect(n.fwVersion, '0.2.1');
+    });
+
+    test('the commands on the map ride the snapshot (2026-10-14)', () {
+      final test = DeviceCommandStatus(
+        mac: safrBroadcastMac,
+        kind: DeviceCommandKind.test,
+        step: DeviceCommandStep.boardAck,
+        startedAt: DateTime.utc(2026, 10, 14),
+        note: '1 confirmou · 1 pendente',
+      );
+      final unit = DeviceCommandStatus(
+        mac: leafMac,
+        kind: DeviceCommandKind.test,
+        step: DeviceCommandStep.sending,
+        startedAt: DateTime.utc(2026, 10, 14),
+        waitsForWake: true,
+        by: 'ana@x.com',
+      );
+      final decoded = decodeMirrorState(encodeMirrorState(
+        seq: 1,
+        at: DateTime.utc(2026, 10, 14),
+        link: 'connected',
+        nodes: [node(boardMac, SafrNodeRole.root, 0)],
+        commands: [
+          (mac: test.mac, wire: test.wire, by: null, note: test.note),
+          (mac: unit.mac, wire: unit.wire, by: unit.by, note: null),
+        ],
+      ))!;
+      expect(decoded.commands, [
+        (mac: safrBroadcastMac, wire: test.wire, by: null, note: test.note),
+        (mac: leafMac, wire: unit.wire, by: 'ana@x.com', note: null),
+      ]);
+      final back = DeviceCommandStatus.fromWire(
+          leafMac, decoded.commands[1].wire,
+          at: DateTime.utc(2026, 10, 14))!;
+      expect(back.kind, DeviceCommandKind.test);
+      expect(back.step, DeviceCommandStep.sending);
+      expect(back.waitsForWake, isTrue);
+      // Older snapshots say nothing of commands: none, not an error.
+      expect(
+          decodeMirrorState(encodeMirrorState(
+            seq: 1,
+            at: DateTime.utc(2026, 10, 14),
+            link: 'connected',
+            nodes: const [],
+          ))!
+              .commands,
+          isEmpty);
     });
 
     test('a batch comes back as the same ticks, in order', () {
@@ -396,13 +445,23 @@ void main() {
         ticks: const [],
         events: const [
           (kind: MirrorEventKind.identify, mac: rootMac, arg: 10, text: null),
-          (kind: MirrorEventKind.identifyFailed, mac: leafMac, arg: 0, text: null),
+          (
+            kind: MirrorEventKind.identifyFailed,
+            mac: leafMac,
+            arg: 0,
+            text: null
+          ),
         ],
       ))!;
       expect(frames.ticks, isEmpty);
       expect(frames.events, const [
         (kind: MirrorEventKind.identify, mac: rootMac, arg: 10, text: null),
-        (kind: MirrorEventKind.identifyFailed, mac: leafMac, arg: 0, text: null),
+        (
+          kind: MirrorEventKind.identifyFailed,
+          mac: leafMac,
+          arg: 0,
+          text: null
+        ),
       ]);
       // A batch without events says nothing about them.
       expect(
@@ -447,6 +506,7 @@ void main() {
     late int historyReads;
     late List<({String mac, int seconds, String by})> identifySent;
     late bool rootAcks;
+    late List<DeviceCommandStatus> inFlight;
     late CentralMirrorPublisher publisher;
 
     void advance(Duration d) => now = now.add(d);
@@ -472,7 +532,9 @@ void main() {
       historyReads = 0;
       identifySent = [];
       rootAcks = true;
+      inFlight = [];
       publisher = CentralMirrorPublisher(
+        commands: () => inFlight,
         identify: (mac, seconds, by) async {
           identifySent.add((mac: mac, seconds: seconds, by: by));
           // What the tablet does on the root's ACK: the blink starts.
@@ -566,8 +628,7 @@ void main() {
       expect(publisher.watched, isTrue);
     });
 
-    test('a second phone\'s hello brings the snapshot again, one a second',
-        () {
+    test('a second phone\'s hello brings the snapshot again, one a second', () {
       publisher.onCommand(encodeMirrorWatch(hello: true));
       publisher.pump();
       expect(on(mirrorStateTopic(id)), hasLength(1));
@@ -645,8 +706,7 @@ void main() {
       expect(sent.where((m) => m.topic == mirrorFramesTopic(id)).first.qos, 0);
     });
 
-    test('alarms are sent with nobody watching, retained, once per change',
-        () {
+    test('alarms are sent with nobody watching, retained, once per change', () {
       final alarm = MirrorAlarm(
           mac: leafMac, name: 'Hall', since: DateTime.utc(2026, 10, 3, 21));
       publisher.onAlarms(const []);
@@ -672,7 +732,11 @@ void main() {
 
       mqttUp = true;
       publisher.onConnected();
-      expect(decodeMirrorAlarms(on(mirrorAlarmTopic(id)).single)!.alarms.single.mac,
+      expect(
+          decodeMirrorAlarms(on(mirrorAlarmTopic(id)).single)!
+              .alarms
+              .single
+              .mac,
           leafMac);
 
       // Every new session writes the retained list again: it is what a
@@ -721,7 +785,9 @@ void main() {
               .percent,
           12);
       expect(
-          sent.where((m) => m.topic == mirrorOtaTopic(id)).every((m) => !m.retain),
+          sent
+              .where((m) => m.topic == mirrorOtaTopic(id))
+              .every((m) => !m.retain),
           isTrue);
     });
 
@@ -756,7 +822,8 @@ void main() {
       publisher.onCommand(encodeMirrorOtaHistoryRequest());
       await pumpEventQueue();
       expect(historyReads, 1);
-      final runs = decodeMirrorOtaHistory(on(mirrorOtaHistoryTopic(id)).single)!;
+      final runs =
+          decodeMirrorOtaHistory(on(mirrorOtaHistoryTopic(id)).single)!;
       expect(runs.single.$1.runId, 'aaaa');
     });
 
@@ -782,7 +849,12 @@ void main() {
       publisher.pump();
       expect(eventsSent(), [
         // "heard you", so the phone knows the central is answering …
-        (kind: MirrorEventKind.identifySending, mac: rootMac, arg: 0, text: null),
+        (
+          kind: MirrorEventKind.identifySending,
+          mac: rootMac,
+          arg: 0,
+          text: null
+        ),
         // … then the blink itself, on the root's confirmation.
         (
           kind: MirrorEventKind.identify,
@@ -816,6 +888,41 @@ void main() {
           text: 'ana@x.com',
         ),
       ]);
+    });
+
+    test(
+        'a phone joining mid-test gets the test with its snapshot: the '
+        'broadcast first, then its units, the tablet\'s commands only '
+        '(2026-10-14)', () {
+      final t0 = now;
+      inFlight = [
+        DeviceCommandStatus(
+          mac: rootMac,
+          kind: DeviceCommandKind.test,
+          step: DeviceCommandStep.sending,
+          startedAt: t0,
+        ),
+        DeviceCommandStatus(
+          mac: safrBroadcastMac,
+          kind: DeviceCommandKind.test,
+          step: DeviceCommandStep.boardAck,
+          startedAt: t0,
+          note: '0 confirmaram · 1 pendente',
+        ),
+        // What a unit sent: the phone derives it from the ticks.
+        DeviceCommandStatus(
+          mac: boardMac,
+          kind: DeviceCommandKind.unitEvent,
+          step: DeviceCommandStep.boardAck,
+          startedAt: t0,
+        ),
+      ];
+      publisher.onCommand(encodeMirrorWatch(hello: true));
+      publisher.pump();
+      final state = decodeMirrorState(on(mirrorStateTopic(id)).single)!;
+      expect(state.commands.map((c) => c.mac), [safrBroadcastMac, rootMac]);
+      expect(state.commands.first.note, '0 confirmaram · 1 pendente');
+      expect(state.commands.first.wire, inFlight[1].wire);
     });
 
     test('Identificar on the tablet itself blinks on the phones too', () {
@@ -926,7 +1033,8 @@ void main() {
       publisher.pump();
 
       // Ana leaves the central: Bia still watches, the stream goes on.
-      publisher.onCommand(encodeMirrorUnwatch(sub: 'sub-ana', name: 'ana@x.com'));
+      publisher
+          .onCommand(encodeMirrorUnwatch(sub: 'sub-ana', name: 'ana@x.com'));
       expect(publisher.watchers.map((w) => w.name), ['bia@x.com']);
       expect(publisher.watched, isTrue);
 
@@ -1040,6 +1148,43 @@ void main() {
       expect(viewer.state.live, isFalse);
     });
 
+    test('a snapshot\'s commands are applied as the events are (2026-10-14)',
+        () async {
+      final seen = <(String, int, String?, String?)>[];
+      viewer.dispose();
+      viewer = CentralMirrorViewer(
+        centralId: id,
+        repo: repo,
+        traffic: bus,
+        onCommand: (mac, wire, by, {note}) => seen.add((mac, wire, by, note)),
+        clock: () => now,
+      );
+      viewer.onConnected();
+      final test = DeviceCommandStatus(
+        mac: safrBroadcastMac,
+        kind: DeviceCommandKind.test,
+        step: DeviceCommandStep.boardAck,
+        startedAt: now,
+      );
+      repo.deliver(
+          mirrorStateTopic(id),
+          encodeMirrorState(
+            seq: 1,
+            at: now,
+            link: 'connected',
+            nodes: [node(boardMac, SafrNodeRole.root, 0)],
+            commands: [
+              (mac: test.mac, wire: test.wire, by: null, note: '1 pendente'),
+              (mac: rootMac, wire: test.wire - 1, by: 'ana@x.com', note: null),
+            ],
+          ));
+      await pumpEventQueue();
+      expect(seen, [
+        (safrBroadcastMac, test.wire, null, '1 pendente'),
+        (rootMac, test.wire - 1, 'ana@x.com', null),
+      ]);
+    });
+
     test('the central coming back online gets a hello at once', () {
       viewer.onConnected();
       viewer.setCentralOnline(true);
@@ -1127,8 +1272,8 @@ void main() {
       viewer.dispose();
     });
 
-    String events(int seq, List<MirrorEvent> events) => encodeMirrorFrames(
-        seq: seq, t0: now, ticks: const [], events: events);
+    String events(int seq, List<MirrorEvent> events) =>
+        encodeMirrorFrames(seq: seq, t0: now, ticks: const [], events: events);
 
     test('Identificar: asked to the central, confirmed by its blink event',
         () async {
@@ -1140,9 +1285,11 @@ void main() {
       expect(cmd.name, 'ana@x.com');
       expect(blinks, isEmpty); // not before the root confirms
 
-      repo.deliver(mirrorFramesTopic(id), events(1, const [
-        (kind: MirrorEventKind.identify, mac: rootMac, arg: 10, text: null),
-      ]));
+      repo.deliver(
+          mirrorFramesTopic(id),
+          events(1, const [
+            (kind: MirrorEventKind.identify, mac: rootMac, arg: 10, text: null),
+          ]));
       expect(await outcome, MirrorIdentifyOutcome.confirmed);
       expect(blinks, [(mac: rootMac, seconds: 10)]);
     });
@@ -1153,13 +1300,15 @@ void main() {
         centralId: id,
         repo: repo,
         traffic: bus,
-        onCommand: (mac, wire, by) => seen.add((mac, wire, by)),
+        onCommand: (mac, wire, by, {note}) => seen.add((mac, wire, by)),
         clock: () => now,
       );
       v.onConnected();
-      repo.deliver(mirrorFramesTopic(id), events(1, const [
-        (kind: MirrorEventKind.command, mac: rootMac, arg: 18, text: 'ana'),
-      ]));
+      repo.deliver(
+          mirrorFramesTopic(id),
+          events(1, const [
+            (kind: MirrorEventKind.command, mac: rootMac, arg: 18, text: 'ana'),
+          ]));
       await pumpEventQueue();
       expect(seen, [(rootMac, 18, 'ana')]);
       v.dispose();
@@ -1167,9 +1316,11 @@ void main() {
 
     test('an Identificar started on the tablet blinks here too', () async {
       viewer.onConnected();
-      repo.deliver(mirrorFramesTopic(id), events(1, const [
-        (kind: MirrorEventKind.identify, mac: rootMac, arg: 10, text: null),
-      ]));
+      repo.deliver(
+          mirrorFramesTopic(id),
+          events(1, const [
+            (kind: MirrorEventKind.identify, mac: rootMac, arg: 10, text: null),
+          ]));
       await pumpEventQueue();
       expect(blinks, [(mac: rootMac, seconds: 10)]);
     });
@@ -1177,9 +1328,16 @@ void main() {
     test('Identificar the central could not confirm', () async {
       viewer.onConnected();
       final outcome = viewer.sendIdentify(rootMac);
-      repo.deliver(mirrorFramesTopic(id), events(1, const [
-        (kind: MirrorEventKind.identifyFailed, mac: rootMac, arg: 0, text: null),
-      ]));
+      repo.deliver(
+          mirrorFramesTopic(id),
+          events(1, const [
+            (
+              kind: MirrorEventKind.identifyFailed,
+              mac: rootMac,
+              arg: 0,
+              text: null
+            ),
+          ]));
       expect(await outcome, MirrorIdentifyOutcome.notConfirmed);
       expect(blinks, isEmpty);
     });
@@ -1202,9 +1360,16 @@ void main() {
       viewer.onConnected();
       MirrorIdentifyOutcome? result;
       viewer.sendIdentify(rootMac).then((o) => result = o);
-      repo.deliver(mirrorFramesTopic(id), events(1, const [
-        (kind: MirrorEventKind.identifySending, mac: rootMac, arg: 0, text: null),
-      ]));
+      repo.deliver(
+          mirrorFramesTopic(id),
+          events(1, const [
+            (
+              kind: MirrorEventKind.identifySending,
+              mac: rootMac,
+              arg: 0,
+              text: null
+            ),
+          ]));
       await tester.pump(const Duration(seconds: 14));
       expect(result, isNull); // heard: the short wait no longer applies
       await tester.pump(const Duration(seconds: 2));

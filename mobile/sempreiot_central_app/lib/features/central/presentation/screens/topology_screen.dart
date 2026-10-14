@@ -5,13 +5,17 @@ import '../../../../core/theme/theme_ext.dart';
 import '../../application/board_sync_provider.dart';
 import '../../application/central_mirror_viewer.dart';
 import '../../application/root_election_provider.dart';
+import '../../application/system_test_provider.dart';
 import '../../application/topology_provider.dart';
 import '../widgets/board_sync_banner.dart';
 import '../widgets/device_menu.dart';
 import '../widgets/mesh_map.dart';
 import '../widgets/mesh_status_bar.dart';
 import '../widgets/device_update_rede_line.dart';
+import '../widgets/link_down_banner.dart';
+import '../widgets/network_3d/device_model_sprites.dart';
 import '../widgets/root_election_banner.dart';
+import '../widgets/system_test_sheets.dart';
 
 /// Rede — live map of the fire-alarm mesh (the map itself: [MeshMap]),
 /// with the status strip on top, under it the root election and the board
@@ -28,7 +32,23 @@ class TopologyScreen extends ConsumerStatefulWidget {
 
 class _TopologyScreenState extends ConsumerState<TopologyScreen> {
   @override
+  void initState() {
+    super.initState();
+    // Every product's model, loaded once: a unit is drawn as its model
+    // from its first frame on, not as a circle for a second or two.
+    DeviceModelSprites.preloadAll();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // A test that was running ended: its report opens by itself, on the
+    // tablet and on a phone that was watching alike.
+    ref.listen<SystemTestsState>(systemTestsViewProvider, (prev, next) {
+      final was = prev?.running;
+      if (was == null || next.running != null) return;
+      final ended = next.recent.where((r) => r.id == was.id).firstOrNull;
+      if (ended != null && mounted) showSystemTestReport(context, ended);
+    });
     // The board (layer 0) is folded into the CENTRAL chip, not drawn as its
     // own node; the mesh (layer 1+) hangs off the central directly.
     final allNodes = ref.watch(topologyProvider);
@@ -57,9 +77,11 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
               ? null
               : () => ref.read(boardSyncProvider.notifier).start(),
           syncing: sync.phase == BoardSyncPhase.syncing,
-          show3d: true,
           electionPill: false,
         ),
+        // The board's link is down: said here, in words, before anything
+        // on the map is read as live.
+        const LinkDownBanner(),
         RootElectionBanner(election: election, nodes: nodes),
         if (!viewOnly)
           BoardSyncBanner(

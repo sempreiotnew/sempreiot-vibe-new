@@ -20,6 +20,7 @@ import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_paylo
 import 'package:sempreiot_central_app/features/central/presentation/screens/device_update_screen.dart';
 import 'package:sempreiot_central_app/features/central/presentation/screens/devices_screen.dart';
 import 'package:sempreiot_central_app/features/central/presentation/screens/topology_screen.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/link_down_banner.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/device_command_widgets.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/mirror_watchers_button.dart';
 import 'package:sempreiot_central_app/presentation/screens/main/widgets/main_app_bar.dart';
@@ -169,14 +170,48 @@ void main() {
   };
 
   for (final s in sizes.entries) {
-    testWidgets('Rede: the map, 3D, no clear and no commands — ${s.key}',
+    testWidgets('Rede: the map, no clear and no commands — ${s.key}',
         (tester) async {
       await pump(tester, s.value,
           const Scaffold(body: TopologyScreen(embedded: true)));
       expect(tester.takeException(), isNull);
       expect(find.text('Sirene Corredor'), findsOneWidget);
-      expect(find.byTooltip('Ver em 3D (protótipo)'), findsOneWidget);
       expect(find.byTooltip('Sincronizar com a placa'), findsNothing);
+      // Live, with the central's cable in: no banner of any kind.
+      expect(find.byKey(LinkDownBanner.bannerKey), findsNothing);
+
+      // The phone's own states, each said as itself — never as the
+      // central's cable (2026-10-14).
+      viewer.onDisconnected();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.textContaining('Sem conexão com a nuvem', findRichText: true),
+          findsOneWidget);
+      viewer.onConnected();
+      viewer.setCentralOnline(false);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.textContaining('Central offline', findRichText: true),
+          findsOneWidget);
+      viewer.setCentralOnline(true);
+      repo.deliver(
+        mirrorStateTopic(id),
+        encodeMirrorState(
+            seq: 2, at: DateTime.now(), link: 'disconnected', nodes: units),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.textContaining('Central sem a placa', findRichText: true),
+          findsOneWidget);
+      repo.deliver(
+        mirrorStateTopic(id),
+        encodeMirrorState(
+            seq: 3, at: DateTime.now(), link: 'connected', nodes: units),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(LinkDownBanner.bannerKey), findsNothing);
+      expect(tester.takeException(), isNull);
 
       await tester.tap(find.text('Sirene Corredor'));
       // The popover opens: a frame to lay it out, then its animation.

@@ -5,7 +5,6 @@ import '../../../../core/theme/theme_ext.dart';
 import '../../../../core/utils/relative_time.dart';
 import '../../application/root_election_provider.dart';
 import '../../application/topology_provider.dart';
-import '../screens/network_3d_screen.dart';
 import 'device_avatar.dart';
 
 // ── Status bar ───────────────────────────────────────────────────────────────
@@ -17,7 +16,6 @@ class MeshStatusBar extends StatelessWidget {
     required this.election,
     this.onSync,
     this.syncing = false,
-    this.show3d,
     this.leading = const [],
     this.electionPill = true,
   });
@@ -26,16 +24,11 @@ class MeshStatusBar extends StatelessWidget {
 
   /// "Sincronizar com a placa" lives here, not floating over the canvas, so
   /// it can never collide with the zoom controls on a short landscape
-  /// screen. Null: no sync button — and no 3D button either, unless
-  /// [show3d].
+  /// screen. Null: no sync button (a user's phone viewing a central).
   final VoidCallback? onSync;
 
   /// A sync is running: the icon turns.
   final bool syncing;
-
-  /// The 3D button; null = shown with the sync button. True with no
-  /// [onSync]: a user's phone viewing a central — it may look, not sync.
-  final bool? show3d;
 
   /// Pills ahead of the counts (an update in progress, say).
   final List<Widget> leading;
@@ -144,26 +137,8 @@ class MeshStatusBar extends StatelessWidget {
                 ),
               ],
             ),
-          if (show3d ?? onSync != null) ...[
-            const SizedBox(width: 10),
-            // PROTOTYPE: the same network as a 3D cloud (network_3d_screen).
-            IconButton(
-              tooltip: 'Ver em 3D (protótipo)',
-              style: IconButton.styleFrom(
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                fixedSize: const Size(30, 30),
-                minimumSize: const Size(30, 30),
-                padding: EdgeInsets.zero,
-                foregroundColor: AppColors.secondary,
-              ),
-              icon: const Icon(Icons.view_in_ar_rounded, size: 20),
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const Network3dScreen()),
-              ),
-            ),
-          ],
           if (onSync != null) ...[
-            const SizedBox(width: 6),
+            const SizedBox(width: 10),
             IconButton(
               tooltip: 'Sincronizar com a placa',
               // M3 pads the tap target to 48 px, which alone made the strip

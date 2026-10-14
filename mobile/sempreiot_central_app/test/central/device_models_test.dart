@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -9,7 +10,6 @@ import 'package:sempreiot_central_app/features/central/application/topology_prov
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_product.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/device_avatar.dart';
-import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_3d_chip.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_model_painter.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_model_sprites.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_models.g.dart';
@@ -97,8 +97,7 @@ void main() {
       }
     });
 
-    test('the siren lights up and rings in alarm, the detector does not',
-        () {
+    test('the siren lights up and rings in alarm, the detector does not', () {
       final siren = deviceModelSpecs.firstWhere((s) => s.slug == 'siren');
       final detector =
           deviceModelSpecs.firstWhere((s) => s.slug == 'smoke_detector');
@@ -144,14 +143,11 @@ void main() {
         '[0.4,0.4,1]]},"spin":{"pitch":15,"yaws":[0,120,240],"cols":2,'
         '"markers":{"led":[[0.2,0.5,1],[0.6,0.5,1],[0.4,0.5,0]]}}}';
 
-    test('parses markers and picks the nearest atlas frame', () {
+    test('parses the markers of every frame', () {
       final f = DeviceModelFrames.parse(json);
       expect(f.frameCount, 8);
       expect(f.markers['led']![2].visible, isFalse);
-      expect(f.frameFor(0, 0), 0);
-      expect(f.frameFor(3.14159 / 2, 0), 1);
-      expect(f.frameFor(-3.14159 / 2, 0.7), 4 + 3);
-      expect(f.source(5), const Rect.fromLTWH(10, 10, 10, 10));
+      expect(f.spinMarkers['led']!.length, 3);
     });
 
     test('the spin blends the two frames around the angle', () {
@@ -166,8 +162,7 @@ void main() {
   });
 
   group('DeviceModelAvatar (Dispositivos, Dispositivo)', () {
-    TopologyNode unit(int? product,
-            {bool leaf = false, bool alarm = false}) =>
+    TopologyNode unit(int? product, {bool leaf = false, bool alarm = false}) =>
         TopologyNode(
           mac: '5A:46:52:00:00:01',
           role: leaf ? SafrNodeRole.leaf : SafrNodeRole.node,
@@ -196,10 +191,7 @@ void main() {
             child: Scaffold(
               body: Center(
                 child: DeviceModelAvatar(
-                    node: node,
-                    size: 72,
-                    spin: spin,
-                    interactive: interactive),
+                    node: node, size: 72, spin: spin, interactive: interactive),
               ),
             ),
           ),
@@ -228,8 +220,7 @@ void main() {
       expect(find.byType(DeviceAvatar), findsOneWidget);
     });
 
-    testWidgets('a siren is drawn as its model, with its LED',
-        (tester) async {
+    testWidgets('a siren is drawn as its model, with its LED', (tester) async {
       await tester.runAsync(() => DeviceModelSprites.load(spec('siren')));
       await show(tester, unit(0x0201));
       await settleModel(tester);
@@ -270,7 +261,8 @@ void main() {
       expect(painter(tester).pose, first);
     });
 
-    testWidgets('on Dispositivo it stands still; a drag turns it back and '
+    testWidgets(
+        'on Dispositivo it stands still; a drag turns it back and '
         'forth, a double tap puts it back', (tester) async {
       await tester.runAsync(() => DeviceModelSprites.load(spec('siren')));
       await show(tester, unit(0x0201), interactive: true);
@@ -336,7 +328,8 @@ void main() {
       final siren = deviceModelSpecs.firstWhere((s) => s.slug == 'siren');
       await tester.runAsync(() => DeviceModelSprites.load(siren));
       final off = unit(0x0201, online: false);
-      await show(tester, off, DeviceModelAvatar(node: off, size: 72, spin: true));
+      await show(
+          tester, off, DeviceModelAvatar(node: off, size: 72, spin: true));
       await tester.runAsync(() => Future<void>.delayed(Duration.zero));
       await tester.pump(const Duration(milliseconds: 700));
       // One layer for the whole model: both frames of the turn are drawn
@@ -349,18 +342,89 @@ void main() {
       await tester.pump(const Duration(milliseconds: 700));
       expect(modelPaint(), paintsExactlyCountTimes(#saveLayer, 0));
     });
+  });
 
-    testWidgets('Rede 3D: OFFLINE over a unit without communication, no ring',
+  group('loading (2026-10-14)', () {
+    TopologyNode unit(int product) => TopologyNode(
+          mac: '5A:46:52:00:00:09',
+          role: SafrNodeRole.node,
+          layer: 2,
+          parentMac: '00:00:00:00:00:B0',
+          rssi: -60,
+          batteryPct: null,
+          online: true,
+          lastSeenAt: DateTime.now().toUtc(),
+          alarmLatched: false,
+          productCode: product,
+        );
+
+    Future<void> show(WidgetTester tester, TopologyNode node) =>
+        tester.pumpWidget(ProviderScope(
+          overrides: [
+            deviceLedProvider.overrideWith((ref) => DeviceLedEngine(
+                traffic: const Stream.empty(), nodes: () => [node])),
+          ],
+          child: MaterialApp(
+              home:
+                  Scaffold(body: Center(child: DeviceModelAvatar(node: node)))),
+        ));
+
+    Finder modelPaint() => find.byWidgetPredicate(
+        (w) => w is CustomPaint && w.painter is DeviceModelPainter);
+
+    testWidgets(
+        'while its model loads a unit is the circle with a thin ring '
+        'turning on it; the model then fades in and the ring goes',
         (tester) async {
-      final off = unit(0x0203, online: false); // I/O: no model, the sphere
-      await show(tester, off,
-          Device3dChip(node: off, light: Alignment.topLeft));
-      expect(find.text('OFFLINE'), findsOneWidget);
-      expect(find.byType(DeviceLedDot), findsOneWidget);
+      final spec = deviceModelSpecs.firstWhere((s) => s.slug == 'push_button');
+      // The real sprites, read outside the test's fake clock; then
+      // forgotten, so the widget meets a model that is still loading and
+      // gets it the moment the gate opens.
+      DeviceModelSprites.resetCache();
+      late DeviceModelSprites real;
+      await tester.runAsync(() async {
+        real = await DeviceModelSprites.load(spec);
+      });
+      DeviceModelSprites.resetCache();
+      final gate = Completer<DeviceModelSprites>();
+      DeviceModelSprites.loader = (_) => gate.future;
+      addTearDown(() => DeviceModelSprites.loader = null);
 
-      final on = unit(0x0203, online: true);
-      await show(tester, on, Device3dChip(node: on, light: Alignment.topLeft));
-      expect(find.text('OFFLINE'), findsNothing);
+      final n = unit(0x0202);
+      await show(tester, n);
+      expect(find.byKey(deviceModelLoadingKey), findsOneWidget,
+          reason: 'a model is on its way');
+      expect(find.byType(DeviceAvatar), findsOneWidget);
+      expect(modelPaint(), findsNothing);
+
+      gate.complete(real);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(modelPaint(), findsOneWidget);
+      expect(find.byKey(deviceModelLoadingKey), findsNothing);
+      expect(find.byType(DeviceAvatar), findsNothing, reason: 'faded out');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a model already loaded is drawn at once: no circle, no ring',
+        (tester) async {
+      final n = unit(0x0202);
+      expect(
+          DeviceModelSprites.cached(
+              deviceModelSpecs.firstWhere((s) => s.slug == 'push_button')),
+          isNotNull);
+      await show(tester, n);
+      expect(find.byKey(deviceModelLoadingKey), findsNothing);
+      expect(find.byType(DeviceAvatar), findsNothing);
+      expect(modelPaint(), findsOneWidget);
+    });
+
+    testWidgets(
+        'a product with no model has no ring: the circle is its picture',
+        (tester) async {
+      await show(tester, unit(0x0203)); // I/O module: no model
+      expect(find.byKey(deviceModelLoadingKey), findsNothing);
+      expect(find.byType(DeviceAvatar), findsOneWidget);
     });
   });
 }

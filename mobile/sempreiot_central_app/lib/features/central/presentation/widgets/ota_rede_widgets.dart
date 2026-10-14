@@ -141,10 +141,12 @@ class OtaTabletChip extends StatelessWidget {
 String firmwareTagText(String version) =>
     version.startsWith('v') || version.startsWith('V') ? version : 'v$version';
 
-/// The firmware a unit runs, small, under its name on a Rede map. Nothing
-/// at all when the unit never reported one and nothing waits for it. The
-/// marker beside it says an image of the unit's family is stored on the
-/// board and was NOT delivered: the unit still runs the version shown.
+/// The firmware a unit runs, as a small pill at the bottom right of its
+/// avatar on the Rede map (the Central's too): a chip icon and the version
+/// in the accent colour on a tinted ground. Nothing at all when the unit
+/// never reported one and nothing waits for it. The marker beside it says
+/// an image of the unit's family is stored on the board and was NOT
+/// delivered: the unit still runs the version shown.
 class FirmwareTag extends StatelessWidget {
   const FirmwareTag({super.key, required this.version, this.pending});
 
@@ -153,6 +155,9 @@ class FirmwareTag extends StatelessWidget {
 
   /// The version that waits on the board; null = none.
   final String? pending;
+
+  /// The pill's height (layout around it counts on it).
+  static const height = 15.0;
 
   @override
   Widget build(BuildContext context) {
@@ -166,34 +171,57 @@ class FirmwareTag extends StatelessWidget {
         if (waits != null) otaPendingText(waits),
       ].join(', '),
       excludeSemantics: true,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          if (runs != null)
-            Flexible(
-              child: Text(
-                firmwareTagText(runs),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: context.textSecondary,
-                  fontSize: 8,
-                  fontWeight: FontWeight.w600,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ),
-          if (waits != null) ...[
-            if (runs != null) const SizedBox(width: 3),
-            const Icon(
-              Icons.inventory_2_outlined,
-              key: ValueKey('fw-pending'),
-              size: 9,
-              color: AppColors.warning,
+      child: Container(
+        height: height,
+        padding: const EdgeInsets.symmetric(horizontal: 5),
+        decoration: BoxDecoration(
+          color: Color.alphaBlend(AppColors.secondary.withValues(alpha: 0.14),
+              context.surfaceColor),
+          borderRadius: BorderRadius.circular(height / 2),
+          border:
+              Border.all(color: AppColors.secondary.withValues(alpha: 0.55)),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.secondary.withValues(alpha: 0.18),
+              blurRadius: 5,
             ),
           ],
-        ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (runs != null) ...[
+              const Icon(Icons.memory_rounded,
+                  size: 8.5, color: AppColors.secondary),
+              const SizedBox(width: 2.5),
+              Flexible(
+                child: Text(
+                  firmwareTagText(runs),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.secondary,
+                    fontSize: 8.5,
+                    height: 1.0,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.2,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            ],
+            if (waits != null) ...[
+              if (runs != null) const SizedBox(width: 3),
+              const Icon(
+                Icons.inventory_2_outlined,
+                key: ValueKey('fw-pending'),
+                size: 9,
+                color: AppColors.warning,
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

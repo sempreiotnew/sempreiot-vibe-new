@@ -115,6 +115,58 @@ void main() {
     expect(find.text(root), findsOneWidget);
   });
 
+  group('a dead unit is never a hop (2026-10-14)', () {
+    const a = '5A:46:52:00:00:0A', b = '5A:46:52:00:00:0B';
+    const c = '5A:46:52:00:00:0C';
+    // central ─ root ─ a (dead) ─ b (alive, still says a) ─ c (alive)
+    final byMac = {
+      for (final n in [
+        node(root, 1, SafrNodeRole.root, board),
+        node(a, 2, SafrNodeRole.node, root, online: false),
+        node(b, 3, SafrNodeRole.node, a),
+        node(c, 4, SafrNodeRole.node, b),
+      ])
+        n.mac: n
+    };
+
+    test(
+        'a live unit under a dead parent hangs off the nearest live '
+        'ancestor, as a presumed link', () {
+      final t = meshLinkTargetOf(byMac[b]!, byMac, board);
+      expect(t, isNotNull);
+      expect(t!.key, root);
+      expect(t.presumed, isTrue);
+    });
+
+    test('a live unit under a live parent keeps its real link', () {
+      final t = meshLinkTargetOf(byMac[c]!, byMac, board)!;
+      expect(t.key, b);
+      expect(t.presumed, isFalse);
+    });
+
+    test('the dead unit keeps its last known parent (a ghost line)', () {
+      final t = meshLinkTargetOf(byMac[a]!, byMac, board)!;
+      expect(t.key, root);
+      expect(t.presumed, isFalse);
+    });
+
+    test('nothing live above it: the central, presumed', () {
+      final lone = {
+        root: node(root, 1, SafrNodeRole.root, board, online: false),
+        b: node(b, 2, SafrNodeRole.node, root),
+      };
+      final t = meshLinkTargetOf(lone[b]!, lone, board)!;
+      expect(t.key, '@central');
+      expect(t.presumed, isTrue);
+    });
+
+    test('the root hangs off the central; an unknown parent is no link', () {
+      expect(meshLinkTargetOf(byMac[root]!, byMac, board)!.key, '@central');
+      final stray = node('5A:46:52:00:00:0F', 3, SafrNodeRole.node, 'ZZ:00');
+      expect(meshLinkTargetOf(stray, byMac, board), isNull);
+    });
+  });
+
   testWidgets(
       'every unit is drawn as its 3D model; one without communication says '
       'OFFLINE (2026-10-05)', (tester) async {

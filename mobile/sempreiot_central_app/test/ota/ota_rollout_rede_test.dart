@@ -22,7 +22,6 @@ import 'package:sempreiot_central_app/features/central/data/services/firmware_li
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_product.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
 import 'package:sempreiot_central_app/features/central/presentation/screens/device_update_screen.dart';
-import 'package:sempreiot_central_app/features/central/presentation/screens/network_3d_screen.dart';
 import 'package:sempreiot_central_app/features/central/presentation/screens/topology_screen.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/device_avatar.dart';
 
@@ -271,7 +270,6 @@ void main() {
 
   final screens = <String, Widget Function()>{
     'Rede': () => const TopologyScreen(),
-    'Rede 3D': () => const Network3dScreen(),
   };
 
   // Rede is the alarm view: a rollout is drawn on "Atualizar dispositivos"

@@ -33,9 +33,8 @@ String deviceRoleLabel(TopologyNode node) => node.layer == 0
 /// A unit that is being updated reads "Atualizando" — never "Sem
 /// comunicação": it is silent while it restarts into its new firmware
 /// (protocol §13.4).
-String deviceStateLabel(TopologyNode node) => node.updating
-    ? 'Atualizando'
-    : _deviceStateLabel(node);
+String deviceStateLabel(TopologyNode node) =>
+    node.updating ? 'Atualizando' : _deviceStateLabel(node);
 
 String _deviceStateLabel(TopologyNode node) => node.online
     ? (node.sleeping
@@ -136,46 +135,90 @@ class DeviceAvatar extends StatelessWidget {
           left: (diameter - 10 * k) / 2,
           child: DeviceLedDot(node: node, size: 10 * k),
         ),
-        if (node.alarmLatched)
-          const Positioned(
-            right: -10,
-            bottom: -7,
-            child: _Badge(
-              label: 'ALARME',
-              background: AppColors.error,
-              foreground: Colors.white,
-              glow: AppColors.error,
-            ),
-          ),
+        if (node.alarmLatched) const DeviceAlarmBadge(),
         if (isRoot || isCandidate)
-          Positioned(
-            left: isCandidate ? -18 : -8,
-            bottom: -7,
-            child: isRoot
-                ? const _Badge(
-                    label: 'ROOT',
-                    background: AppColors.warning,
-                    foreground: Colors.black,
-                    glow: AppColors.warning,
-                  )
-                : _Badge(
-                    label: 'CANDIDATO',
-                    background: AppColors.warning.withValues(alpha: 0.18),
-                    foreground: AppColors.warning,
-                    border: AppColors.warning.withValues(alpha: 0.7),
-                  ),
-          ),
+          DeviceRoleBadge(isRoot: isRoot, width: diameter),
       ],
     );
   }
 }
+
+/// ALARME at the bottom left of a unit's avatar (the bottom right is the
+/// firmware's on the Rede map).
+class DeviceAlarmBadge extends StatelessWidget {
+  const DeviceAlarmBadge({super.key});
+
+  @override
+  Widget build(BuildContext context) => const Positioned(
+        left: -10,
+        bottom: -7,
+        child: _Badge(
+          label: 'ALARME',
+          background: AppColors.error,
+          foreground: Colors.white,
+          glow: AppColors.error,
+        ),
+      );
+}
+
+/// ROOT / CANDIDATO above a unit's avatar, centred — on top, where no
+/// neighbour, tick, version or name can run over it. Decided by
+/// root_election_provider, never by the unit's own claim.
+class DeviceRoleBadge extends StatelessWidget {
+  const DeviceRoleBadge({super.key, required this.isRoot, required this.width});
+
+  final bool isRoot;
+
+  /// The avatar's width: the badge is centred over it.
+  final double width;
+
+  @override
+  Widget build(BuildContext context) => Positioned(
+        top: -16,
+        left: 0,
+        width: width,
+        child: Center(
+          child: isRoot
+              ? const _Badge(
+                  label: 'ROOT',
+                  background: AppColors.warning,
+                  foreground: Colors.black,
+                  glow: AppColors.warning,
+                )
+              : _Badge(
+                  label: 'CANDIDATO',
+                  background: AppColors.warning.withValues(alpha: 0.18),
+                  foreground: AppColors.warning,
+                  border: AppColors.warning.withValues(alpha: 0.7),
+                ),
+        ),
+      );
+}
+
+/// OFFLINE over a unit the central does not hear: the word, not a colour
+/// to decode. The unit itself is drawn faded, its LED dark.
+class DeviceOfflineBadge extends StatelessWidget {
+  const DeviceOfflineBadge({super.key});
+
+  @override
+  Widget build(BuildContext context) => _Badge(
+        label: 'OFFLINE',
+        background: AppColors.error.withValues(alpha: 0.16),
+        foreground: AppColors.error,
+        border: AppColors.error.withValues(alpha: 0.7),
+      );
+}
+
+/// The thin ring that turns around a unit's circle while its 3D model
+/// loads — a quiet "its picture is on its way", nothing more.
+const deviceModelLoadingKey = ValueKey('model-loading');
 
 /// Opacity of a unit's LED dot when the LED is on the far side of its 3D
 /// model: still clearly showing its status, a little dimmed for depth.
 const deviceLedAwayOpacity = 0.75;
 
 /// A device drawn as its product's 3D model (system reference §2.1.1 —
-/// the same Blender renders as Rede 3D), as rendered (no outline), with
+/// the Blender renders of the model factory), as rendered (no outline), with
 /// everything [DeviceAvatar] shows: the LED on the model's LED (always
 /// visible), the sleeping moon and the ALARME / ROOT / CANDIDATO badges (no
 /// status dot: Dispositivos says the state on the card). In ALARME a siren
@@ -224,18 +267,21 @@ class _DeviceModelAvatarState extends State<DeviceModelAvatar>
 
   /// Seconds since the clock started; drives the spin and the alarm.
   final _clock = ValueNotifier<double>(0);
-  late final Ticker _ticker = createTicker(
-      (elapsed) => _clock.value = elapsed.inMicroseconds / 1e6);
+  late final Ticker _ticker =
+      createTicker((elapsed) => _clock.value = elapsed.inMicroseconds / 1e6);
 
   void _resolve() {
-    final spec = deviceModelFor(widget.node.productCode,
-        isLeaf: widget.node.isLeaf);
+    final spec =
+        deviceModelFor(widget.node.productCode, isLeaf: widget.node.isLeaf);
     if (spec?.slug == _spec?.slug && (_future != null || spec == null)) {
       return;
     }
     _spec = spec;
-    _sprites = null;
+    // Already loaded (another card, the map, the preload): drawn at once —
+    // no circle, no ring, no fade.
+    _sprites = spec == null ? null : DeviceModelSprites.cached(spec);
     _future = spec == null ? null : DeviceModelSprites.load(spec);
+    if (_sprites != null) return;
     _future?.then((s) {
       if (!mounted || _spec?.slug != s.spec.slug) return;
       setState(() => _sprites = s);
@@ -283,23 +329,55 @@ class _DeviceModelAvatarState extends State<DeviceModelAvatar>
   Widget build(BuildContext context) {
     final sprites = _sprites;
     _syncTicker();
+    final Widget shown;
     if (sprites == null) {
-      return DeviceAvatar(
+      final circle = DeviceAvatar(
+        key: const ValueKey('model-circle'),
         node: widget.node,
         isRoot: widget.isRoot,
         isCandidate: widget.isCandidate,
         diameter: widget.size,
       );
+      // No model for this product: the circle is its picture. A model on
+      // its way: the circle a little quieter, with a thin ring turning on
+      // its rim — the picture is loading, nothing is wrong.
+      shown = _future == null
+          ? circle
+          : Stack(
+              key: const ValueKey('model-loading-stack'),
+              clipBehavior: Clip.none,
+              children: [
+                Opacity(opacity: 0.72, child: circle),
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: CircularProgressIndicator(
+                      key: deviceModelLoadingKey,
+                      strokeWidth: 1.2,
+                      color: AppColors.secondary.withValues(alpha: 0.6),
+                      backgroundColor: Colors.transparent,
+                    ),
+                  ),
+                ),
+              ],
+            );
+    } else {
+      shown = ValueListenableBuilder<double>(
+        key: ValueKey('model-${sprites.spec.slug}'),
+        valueListenable: _clock,
+        builder: (context, t, _) => _model(context, sprites, t),
+      );
     }
-    final model = ValueListenableBuilder<double>(
-      valueListenable: _clock,
-      builder: (context, t, _) => _model(context, sprites, t),
+    // The model fades in over the circle when it arrives.
+    final model = AnimatedSwitcher(
+      duration: const Duration(milliseconds: 280),
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      child: shown,
     );
     if (!widget.interactive) return model;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onHorizontalDragUpdate: (d) =>
-          setState(() => _yaw -= d.delta.dx * 0.018),
+      onHorizontalDragUpdate: (d) => setState(() => _yaw -= d.delta.dx * 0.018),
       onDoubleTap: () => setState(() => _yaw = DeviceModelAvatar.restYaw),
       child: model,
     );
@@ -348,9 +426,8 @@ class _DeviceModelAvatarState extends State<DeviceModelAvatar>
             left: led == null
                 ? (size - 10 * k) / 2
                 : dst.left + led.at.dx * dst.width - 5 * k,
-            top: led == null
-                ? -3 * k
-                : dst.top + led.at.dy * dst.height - 5 * k,
+            top:
+                led == null ? -3 * k : dst.top + led.at.dy * dst.height - 5 * k,
             child: Opacity(
               opacity: led == null || led.visible ? 1 : deviceLedAwayOpacity,
               child: DeviceLedDot(node: node, size: 10 * k),
@@ -374,35 +451,9 @@ class _DeviceModelAvatarState extends State<DeviceModelAvatar>
                 ),
               ),
             ),
-          if (node.alarmLatched)
-            const Positioned(
-              right: -10,
-              bottom: -7,
-              child: _Badge(
-                label: 'ALARME',
-                background: AppColors.error,
-                foreground: Colors.white,
-                glow: AppColors.error,
-              ),
-            ),
+          if (node.alarmLatched) const DeviceAlarmBadge(),
           if (widget.isRoot || widget.isCandidate)
-            Positioned(
-              left: widget.isCandidate ? -18 : -8,
-              bottom: -7,
-              child: widget.isRoot
-                  ? const _Badge(
-                      label: 'ROOT',
-                      background: AppColors.warning,
-                      foreground: Colors.black,
-                      glow: AppColors.warning,
-                    )
-                  : _Badge(
-                      label: 'CANDIDATO',
-                      background: AppColors.warning.withValues(alpha: 0.18),
-                      foreground: AppColors.warning,
-                      border: AppColors.warning.withValues(alpha: 0.7),
-                    ),
-            ),
+            DeviceRoleBadge(isRoot: widget.isRoot, width: size),
           if (widget.interactive && !node.alarmLatched)
             Positioned(
               right: -4 * k,

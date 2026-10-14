@@ -3728,6 +3728,362 @@ class OtaRunUnitsCompanion extends UpdateCompanion<OtaRunUnit> {
   }
 }
 
+class $SystemTestsTable extends SystemTests
+    with TableInfo<$SystemTestsTable, SystemTest> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $SystemTestsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _testIdMeta = const VerificationMeta('testId');
+  @override
+  late final GeneratedColumn<String> testId = GeneratedColumn<String>(
+      'test_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _startedAtMeta =
+      const VerificationMeta('startedAt');
+  @override
+  late final GeneratedColumn<DateTime> startedAt = GeneratedColumn<DateTime>(
+      'started_at', aliasedName, false,
+      type: DriftSqlType.dateTime, requiredDuringInsert: true);
+  static const VerificationMeta _endedAtMeta =
+      const VerificationMeta('endedAt');
+  @override
+  late final GeneratedColumn<DateTime> endedAt = GeneratedColumn<DateTime>(
+      'ended_at', aliasedName, true,
+      type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  static const VerificationMeta _startedByMeta =
+      const VerificationMeta('startedBy');
+  @override
+  late final GeneratedColumn<String> startedBy = GeneratedColumn<String>(
+      'started_by', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _verdictMeta =
+      const VerificationMeta('verdict');
+  @override
+  late final GeneratedColumn<String> verdict = GeneratedColumn<String>(
+      'verdict', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _runJsonMeta =
+      const VerificationMeta('runJson');
+  @override
+  late final GeneratedColumn<String> runJson = GeneratedColumn<String>(
+      'run_json', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns =>
+      [testId, startedAt, endedAt, startedBy, verdict, runJson];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'system_tests';
+  @override
+  VerificationContext validateIntegrity(Insertable<SystemTest> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('test_id')) {
+      context.handle(_testIdMeta,
+          testId.isAcceptableOrUnknown(data['test_id']!, _testIdMeta));
+    } else if (isInserting) {
+      context.missing(_testIdMeta);
+    }
+    if (data.containsKey('started_at')) {
+      context.handle(_startedAtMeta,
+          startedAt.isAcceptableOrUnknown(data['started_at']!, _startedAtMeta));
+    } else if (isInserting) {
+      context.missing(_startedAtMeta);
+    }
+    if (data.containsKey('ended_at')) {
+      context.handle(_endedAtMeta,
+          endedAt.isAcceptableOrUnknown(data['ended_at']!, _endedAtMeta));
+    }
+    if (data.containsKey('started_by')) {
+      context.handle(_startedByMeta,
+          startedBy.isAcceptableOrUnknown(data['started_by']!, _startedByMeta));
+    }
+    if (data.containsKey('verdict')) {
+      context.handle(_verdictMeta,
+          verdict.isAcceptableOrUnknown(data['verdict']!, _verdictMeta));
+    } else if (isInserting) {
+      context.missing(_verdictMeta);
+    }
+    if (data.containsKey('run_json')) {
+      context.handle(_runJsonMeta,
+          runJson.isAcceptableOrUnknown(data['run_json']!, _runJsonMeta));
+    } else if (isInserting) {
+      context.missing(_runJsonMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {testId};
+  @override
+  SystemTest map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return SystemTest(
+      testId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}test_id'])!,
+      startedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}started_at'])!,
+      endedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}ended_at']),
+      startedBy: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}started_by']),
+      verdict: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}verdict'])!,
+      runJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}run_json'])!,
+    );
+  }
+
+  @override
+  $SystemTestsTable createAlias(String alias) {
+    return $SystemTestsTable(attachedDatabase, alias);
+  }
+}
+
+class SystemTest extends DataClass implements Insertable<SystemTest> {
+  final String testId;
+  final DateTime startedAt;
+  final DateTime? endedAt;
+
+  /// Who started it from a phone; null = the tablet itself.
+  final String? startedBy;
+
+  /// `SystemTestVerdict` name: 'running' | 'passed' | 'failed' | 'cancelled'.
+  final String verdict;
+
+  /// `SystemTestRun.toJson()`: the units with their outcomes.
+  final String runJson;
+  const SystemTest(
+      {required this.testId,
+      required this.startedAt,
+      this.endedAt,
+      this.startedBy,
+      required this.verdict,
+      required this.runJson});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['test_id'] = Variable<String>(testId);
+    map['started_at'] = Variable<DateTime>(startedAt);
+    if (!nullToAbsent || endedAt != null) {
+      map['ended_at'] = Variable<DateTime>(endedAt);
+    }
+    if (!nullToAbsent || startedBy != null) {
+      map['started_by'] = Variable<String>(startedBy);
+    }
+    map['verdict'] = Variable<String>(verdict);
+    map['run_json'] = Variable<String>(runJson);
+    return map;
+  }
+
+  SystemTestsCompanion toCompanion(bool nullToAbsent) {
+    return SystemTestsCompanion(
+      testId: Value(testId),
+      startedAt: Value(startedAt),
+      endedAt: endedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(endedAt),
+      startedBy: startedBy == null && nullToAbsent
+          ? const Value.absent()
+          : Value(startedBy),
+      verdict: Value(verdict),
+      runJson: Value(runJson),
+    );
+  }
+
+  factory SystemTest.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return SystemTest(
+      testId: serializer.fromJson<String>(json['testId']),
+      startedAt: serializer.fromJson<DateTime>(json['startedAt']),
+      endedAt: serializer.fromJson<DateTime?>(json['endedAt']),
+      startedBy: serializer.fromJson<String?>(json['startedBy']),
+      verdict: serializer.fromJson<String>(json['verdict']),
+      runJson: serializer.fromJson<String>(json['runJson']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'testId': serializer.toJson<String>(testId),
+      'startedAt': serializer.toJson<DateTime>(startedAt),
+      'endedAt': serializer.toJson<DateTime?>(endedAt),
+      'startedBy': serializer.toJson<String?>(startedBy),
+      'verdict': serializer.toJson<String>(verdict),
+      'runJson': serializer.toJson<String>(runJson),
+    };
+  }
+
+  SystemTest copyWith(
+          {String? testId,
+          DateTime? startedAt,
+          Value<DateTime?> endedAt = const Value.absent(),
+          Value<String?> startedBy = const Value.absent(),
+          String? verdict,
+          String? runJson}) =>
+      SystemTest(
+        testId: testId ?? this.testId,
+        startedAt: startedAt ?? this.startedAt,
+        endedAt: endedAt.present ? endedAt.value : this.endedAt,
+        startedBy: startedBy.present ? startedBy.value : this.startedBy,
+        verdict: verdict ?? this.verdict,
+        runJson: runJson ?? this.runJson,
+      );
+  SystemTest copyWithCompanion(SystemTestsCompanion data) {
+    return SystemTest(
+      testId: data.testId.present ? data.testId.value : this.testId,
+      startedAt: data.startedAt.present ? data.startedAt.value : this.startedAt,
+      endedAt: data.endedAt.present ? data.endedAt.value : this.endedAt,
+      startedBy: data.startedBy.present ? data.startedBy.value : this.startedBy,
+      verdict: data.verdict.present ? data.verdict.value : this.verdict,
+      runJson: data.runJson.present ? data.runJson.value : this.runJson,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SystemTest(')
+          ..write('testId: $testId, ')
+          ..write('startedAt: $startedAt, ')
+          ..write('endedAt: $endedAt, ')
+          ..write('startedBy: $startedBy, ')
+          ..write('verdict: $verdict, ')
+          ..write('runJson: $runJson')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(testId, startedAt, endedAt, startedBy, verdict, runJson);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is SystemTest &&
+          other.testId == this.testId &&
+          other.startedAt == this.startedAt &&
+          other.endedAt == this.endedAt &&
+          other.startedBy == this.startedBy &&
+          other.verdict == this.verdict &&
+          other.runJson == this.runJson);
+}
+
+class SystemTestsCompanion extends UpdateCompanion<SystemTest> {
+  final Value<String> testId;
+  final Value<DateTime> startedAt;
+  final Value<DateTime?> endedAt;
+  final Value<String?> startedBy;
+  final Value<String> verdict;
+  final Value<String> runJson;
+  final Value<int> rowid;
+  const SystemTestsCompanion({
+    this.testId = const Value.absent(),
+    this.startedAt = const Value.absent(),
+    this.endedAt = const Value.absent(),
+    this.startedBy = const Value.absent(),
+    this.verdict = const Value.absent(),
+    this.runJson = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  SystemTestsCompanion.insert({
+    required String testId,
+    required DateTime startedAt,
+    this.endedAt = const Value.absent(),
+    this.startedBy = const Value.absent(),
+    required String verdict,
+    required String runJson,
+    this.rowid = const Value.absent(),
+  })  : testId = Value(testId),
+        startedAt = Value(startedAt),
+        verdict = Value(verdict),
+        runJson = Value(runJson);
+  static Insertable<SystemTest> custom({
+    Expression<String>? testId,
+    Expression<DateTime>? startedAt,
+    Expression<DateTime>? endedAt,
+    Expression<String>? startedBy,
+    Expression<String>? verdict,
+    Expression<String>? runJson,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (testId != null) 'test_id': testId,
+      if (startedAt != null) 'started_at': startedAt,
+      if (endedAt != null) 'ended_at': endedAt,
+      if (startedBy != null) 'started_by': startedBy,
+      if (verdict != null) 'verdict': verdict,
+      if (runJson != null) 'run_json': runJson,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  SystemTestsCompanion copyWith(
+      {Value<String>? testId,
+      Value<DateTime>? startedAt,
+      Value<DateTime?>? endedAt,
+      Value<String?>? startedBy,
+      Value<String>? verdict,
+      Value<String>? runJson,
+      Value<int>? rowid}) {
+    return SystemTestsCompanion(
+      testId: testId ?? this.testId,
+      startedAt: startedAt ?? this.startedAt,
+      endedAt: endedAt ?? this.endedAt,
+      startedBy: startedBy ?? this.startedBy,
+      verdict: verdict ?? this.verdict,
+      runJson: runJson ?? this.runJson,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (testId.present) {
+      map['test_id'] = Variable<String>(testId.value);
+    }
+    if (startedAt.present) {
+      map['started_at'] = Variable<DateTime>(startedAt.value);
+    }
+    if (endedAt.present) {
+      map['ended_at'] = Variable<DateTime>(endedAt.value);
+    }
+    if (startedBy.present) {
+      map['started_by'] = Variable<String>(startedBy.value);
+    }
+    if (verdict.present) {
+      map['verdict'] = Variable<String>(verdict.value);
+    }
+    if (runJson.present) {
+      map['run_json'] = Variable<String>(runJson.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SystemTestsCompanion(')
+          ..write('testId: $testId, ')
+          ..write('startedAt: $startedAt, ')
+          ..write('endedAt: $endedAt, ')
+          ..write('startedBy: $startedBy, ')
+          ..write('verdict: $verdict, ')
+          ..write('runJson: $runJson, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -3738,6 +4094,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $DeviceEventsTable deviceEvents = $DeviceEventsTable(this);
   late final $OtaRunsTable otaRuns = $OtaRunsTable(this);
   late final $OtaRunUnitsTable otaRunUnits = $OtaRunUnitsTable(this);
+  late final $SystemTestsTable systemTests = $SystemTestsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -3749,7 +4106,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         meshDevices,
         deviceEvents,
         otaRuns,
-        otaRunUnits
+        otaRunUnits,
+        systemTests
       ];
 }
 
@@ -5504,6 +5862,188 @@ typedef $$OtaRunUnitsTableProcessedTableManager = ProcessedTableManager<
     (OtaRunUnit, BaseReferences<_$AppDatabase, $OtaRunUnitsTable, OtaRunUnit>),
     OtaRunUnit,
     PrefetchHooks Function()>;
+typedef $$SystemTestsTableCreateCompanionBuilder = SystemTestsCompanion
+    Function({
+  required String testId,
+  required DateTime startedAt,
+  Value<DateTime?> endedAt,
+  Value<String?> startedBy,
+  required String verdict,
+  required String runJson,
+  Value<int> rowid,
+});
+typedef $$SystemTestsTableUpdateCompanionBuilder = SystemTestsCompanion
+    Function({
+  Value<String> testId,
+  Value<DateTime> startedAt,
+  Value<DateTime?> endedAt,
+  Value<String?> startedBy,
+  Value<String> verdict,
+  Value<String> runJson,
+  Value<int> rowid,
+});
+
+class $$SystemTestsTableFilterComposer
+    extends Composer<_$AppDatabase, $SystemTestsTable> {
+  $$SystemTestsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get testId => $composableBuilder(
+      column: $table.testId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get startedAt => $composableBuilder(
+      column: $table.startedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get endedAt => $composableBuilder(
+      column: $table.endedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get startedBy => $composableBuilder(
+      column: $table.startedBy, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get verdict => $composableBuilder(
+      column: $table.verdict, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get runJson => $composableBuilder(
+      column: $table.runJson, builder: (column) => ColumnFilters(column));
+}
+
+class $$SystemTestsTableOrderingComposer
+    extends Composer<_$AppDatabase, $SystemTestsTable> {
+  $$SystemTestsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get testId => $composableBuilder(
+      column: $table.testId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get startedAt => $composableBuilder(
+      column: $table.startedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get endedAt => $composableBuilder(
+      column: $table.endedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get startedBy => $composableBuilder(
+      column: $table.startedBy, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get verdict => $composableBuilder(
+      column: $table.verdict, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get runJson => $composableBuilder(
+      column: $table.runJson, builder: (column) => ColumnOrderings(column));
+}
+
+class $$SystemTestsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $SystemTestsTable> {
+  $$SystemTestsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get testId =>
+      $composableBuilder(column: $table.testId, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get startedAt =>
+      $composableBuilder(column: $table.startedAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get endedAt =>
+      $composableBuilder(column: $table.endedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get startedBy =>
+      $composableBuilder(column: $table.startedBy, builder: (column) => column);
+
+  GeneratedColumn<String> get verdict =>
+      $composableBuilder(column: $table.verdict, builder: (column) => column);
+
+  GeneratedColumn<String> get runJson =>
+      $composableBuilder(column: $table.runJson, builder: (column) => column);
+}
+
+class $$SystemTestsTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $SystemTestsTable,
+    SystemTest,
+    $$SystemTestsTableFilterComposer,
+    $$SystemTestsTableOrderingComposer,
+    $$SystemTestsTableAnnotationComposer,
+    $$SystemTestsTableCreateCompanionBuilder,
+    $$SystemTestsTableUpdateCompanionBuilder,
+    (SystemTest, BaseReferences<_$AppDatabase, $SystemTestsTable, SystemTest>),
+    SystemTest,
+    PrefetchHooks Function()> {
+  $$SystemTestsTableTableManager(_$AppDatabase db, $SystemTestsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$SystemTestsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$SystemTestsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$SystemTestsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> testId = const Value.absent(),
+            Value<DateTime> startedAt = const Value.absent(),
+            Value<DateTime?> endedAt = const Value.absent(),
+            Value<String?> startedBy = const Value.absent(),
+            Value<String> verdict = const Value.absent(),
+            Value<String> runJson = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              SystemTestsCompanion(
+            testId: testId,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            startedBy: startedBy,
+            verdict: verdict,
+            runJson: runJson,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String testId,
+            required DateTime startedAt,
+            Value<DateTime?> endedAt = const Value.absent(),
+            Value<String?> startedBy = const Value.absent(),
+            required String verdict,
+            required String runJson,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              SystemTestsCompanion.insert(
+            testId: testId,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            startedBy: startedBy,
+            verdict: verdict,
+            runJson: runJson,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$SystemTestsTableProcessedTableManager = ProcessedTableManager<
+    _$AppDatabase,
+    $SystemTestsTable,
+    SystemTest,
+    $$SystemTestsTableFilterComposer,
+    $$SystemTestsTableOrderingComposer,
+    $$SystemTestsTableAnnotationComposer,
+    $$SystemTestsTableCreateCompanionBuilder,
+    $$SystemTestsTableUpdateCompanionBuilder,
+    (SystemTest, BaseReferences<_$AppDatabase, $SystemTestsTable, SystemTest>),
+    SystemTest,
+    PrefetchHooks Function()>;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -5522,4 +6062,6 @@ class $AppDatabaseManager {
       $$OtaRunsTableTableManager(_db, _db.otaRuns);
   $$OtaRunUnitsTableTableManager get otaRunUnits =>
       $$OtaRunUnitsTableTableManager(_db, _db.otaRunUnits);
+  $$SystemTestsTableTableManager get systemTests =>
+      $$SystemTestsTableTableManager(_db, _db.systemTests);
 }

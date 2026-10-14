@@ -128,6 +128,7 @@ A schema change is not done until the reference says the same thing as the code.
   `firmware/` exists: copy from them, do not modify them.**
 - `pocs/patinha/` — reference GPIO/LED/button code (copy, do not modify).
 - `mocked-device/` — reference SAFR/root-duties C implementation (copy, do not modify).
-- `tools/` — `make_sticker.py` (factory identity + QR), `failover_timer.py`, `capture-safr.sh`.
+- `tools/` — `make_sticker.py` (factory identity + QR), `failover_timer.py`, `capture-safr.sh`,
+  `cloud_test_topic_policy.sh` (a live IoT policy change: run before the build that needs it).
 - `mobile/sempreiot_central_app/` — Flutter app; see its own `CLAUDE.md`.
 - `lambda/` — AWS lambdas (out of scope unless asked).

@@ -28,6 +28,7 @@
 | `flash.sh` | `flash.sh <board\|node> <port> [<sticker-id>] [--flash 4mb\|8mb] [--bench] [--erase]` — the one command per unit: reads the chip's MAC, creates `stickers/<MAC>/` on first use (random `pop`, QR) or reuses it, then writes bootloader + partition table + otadata + app + `nvs_factory` from the variant directory `firmware/build.sh` made with the same flags. Give a `<sticker-id>` only to flash an identity made by hand (`make_sticker.py`) or recovered from a POC unit (`recover_sticker.py`). |
 | `pinmap/pinmap.yaml`, `pinmap/gen_board_def.py` | The pin map; generates `siot_board_def` at configure time. Edit the YAML, never the C. |
 | `failover_timer.py`, `capture-safr.sh` | Bench measurement helpers (POC round 1). |
+| `cloud_test_topic_policy.sh` | Cloud, once per account (`aws login` first): lets every live `Central_*` IoT policy publish + retain on `<id>/test` — the system test the mirror carries (`docs/cloud/central-mirror.md` §4.7). **Before** a tablet gets the app build of 2026-10-14: without it AWS IoT drops the tablet on every connect. `--check` only reports. |
 
 Bench flow — build once, then one command per unit:
 

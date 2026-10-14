@@ -322,6 +322,152 @@ void main() {
     });
   });
 
+  group('Testar tudo: the Central ✓✓ when every unit confirmed (2026-10-14)',
+      () {
+    const a = 'AA:00:00:00:00:01', b = 'AA:00:00:00:00:02';
+    TopologyNode n(String mac) => TopologyNode(
+          mac: mac,
+          role: SafrNodeRole.node,
+          layer: 1,
+          parentMac: null,
+          rssi: -60,
+          batteryPct: null,
+          online: true,
+          lastSeenAt: DateTime.now(),
+          alarmLatched: false,
+        );
+    SafrTrafficTick testEvent(String mac) => SafrTrafficTick(
+          mac: mac,
+          direction: SafrTrafficDirection.uplink,
+          severity: 2,
+          msgType: SafrMsgType.event,
+          eventCode: SafrEventCode.manualTest,
+        );
+
+    test(
+        'a unit\'s test answer is its confirmation: ✓✓ on it and on the '
+        'Central even when its ACK never made it up the mesh', () {
+      fakeAsync((async) {
+        boardAck = Completer<bool>();
+        final t = DeviceCommandTracker(
+          send: (_, __) => boardAck.future,
+          deliveries: deliveries.stream,
+          traffic: traffic.stream,
+          nodes: () => [n(a), n(b)],
+        );
+        t.run(safrBroadcastMac, DeviceCommandKind.test);
+        boardAck.complete(true);
+        async.flushMicrotasks();
+        // a: ACK and answer. b: the answer only — its ACK was lost.
+        deliveries.add(a);
+        traffic.add(testEvent(a));
+        traffic.add(testEvent(b));
+        async.flushMicrotasks();
+        expect(t.state[a]!.step, DeviceCommandStep.answered);
+        expect(t.state[b]!.step, DeviceCommandStep.answered);
+        expect(t.state[safrBroadcastMac]!.step, DeviceCommandStep.delivered,
+            reason: 'both answered: nobody is still waited for');
+        expect(t.state[safrBroadcastMac]!.note, '2 confirmaram');
+        // No red later: nothing is pending.
+        async.elapse(DeviceCommandTracker.broadcastWindow);
+        expect(t.state[safrBroadcastMac], isNull,
+            reason: 'the test left the map as a success');
+        t.dispose();
+      });
+    });
+
+    test(
+        'every unit confirms before the board\'s answer is handed back: '
+        'the Central still ends ✓✓, not ✓ then red', () {
+      fakeAsync((async) {
+        boardAck = Completer<bool>();
+        final t = DeviceCommandTracker(
+          send: (_, __) => boardAck.future,
+          deliveries: deliveries.stream,
+          traffic: traffic.stream,
+          nodes: () => [n(a), n(b)],
+        );
+        t.run(safrBroadcastMac, DeviceCommandKind.test);
+        deliveries.add(a);
+        deliveries.add(b);
+        async.flushMicrotasks();
+        expect(t.state[safrBroadcastMac]!.step, DeviceCommandStep.sending);
+        boardAck.complete(true);
+        async.flushMicrotasks();
+        expect(t.state[safrBroadcastMac]!.step, DeviceCommandStep.delivered);
+        expect(t.state[safrBroadcastMac]!.note, '2 confirmaram');
+        t.dispose();
+      });
+    });
+
+    test(
+        'the window closes with every unit answered: a success, not a '
+        'failure', () {
+      fakeAsync((async) {
+        boardAck = Completer<bool>();
+        final t = DeviceCommandTracker(
+          send: (_, __) => boardAck.future,
+          deliveries: deliveries.stream,
+          traffic: traffic.stream,
+          nodes: () => [n(a)],
+        );
+        t.run(safrBroadcastMac, DeviceCommandKind.test);
+        boardAck.complete(true);
+        async.flushMicrotasks();
+        // The answer goes straight to the unit's status (no ACK at all),
+        // the way an older tablet saw it: still never red at the end.
+        t.applyRemote(DeviceCommandStatus(
+          mac: a,
+          kind: DeviceCommandKind.test,
+          step: DeviceCommandStep.answered,
+          startedAt: DateTime.now(),
+        ));
+        async.elapse(DeviceCommandTracker.broadcastWindow);
+        expect(t.state[safrBroadcastMac]?.step,
+            anyOf(isNull, DeviceCommandStep.delivered));
+        expect(
+            t.state[safrBroadcastMac]?.step, isNot(DeviceCommandStep.failed));
+        t.dispose();
+      });
+    });
+  });
+
+  test(
+      'phone: the broadcast\'s own "sending" said twice (its tally line) '
+      'keeps the test\'s units; a new test opens a new list (2026-10-14)', () {
+    fakeAsync((async) {
+      const a = 'AA:00:00:00:00:01';
+      final t = DeviceCommandTracker();
+      DeviceCommandStatus st(String mac, DeviceCommandStep step,
+              {String? note}) =>
+          DeviceCommandStatus(
+            mac: mac,
+            kind: DeviceCommandKind.test,
+            step: step,
+            startedAt: _t0,
+            note: note,
+          );
+      // The tablet's order: the broadcast, its units, the broadcast again
+      // with the tally.
+      t.applyRemote(st(safrBroadcastMac, DeviceCommandStep.sending));
+      t.applyRemote(st(a, DeviceCommandStep.sending));
+      t.applyRemote(st(safrBroadcastMac, DeviceCommandStep.sending,
+          note: '0 confirmaram · 1 pendente'));
+      t.applyRemote(st(safrBroadcastMac, DeviceCommandStep.boardAck));
+      expect(t.broadcastTally.total, 1);
+      expect(t.state[safrBroadcastMac]!.note, '0 confirmaram · 1 pendente');
+      async.elapse(const Duration(seconds: 30));
+      expect(t.state[a]!.step, DeviceCommandStep.sending,
+          reason: 'its clock stays for as long as the test runs');
+
+      // Joining mid-test: the snapshot's order, with the units' notes.
+      t.applyRemote(st(a, DeviceCommandStep.failed,
+          note: DeviceCommandTracker.missingNote));
+      expect(t.broadcastTally.text, '0 confirmaram · 1 sem comunicação');
+      t.dispose();
+    });
+  });
+
   test('kind, step and "waits for the wake" cross the mirror in one int', () {
     for (final k in DeviceCommandKind.values) {
       for (final s in DeviceCommandStep.values) {

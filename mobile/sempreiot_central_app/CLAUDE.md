@@ -33,7 +33,7 @@ will be defined later as the system architecture evolves.
 
 # 🚨 CRITICAL — the on-screen LED is the device's LED
 
-The LED drawn on a device (avatar, Dispositivo screen, Rede / Rede 3D, packets in flight) must show
+The LED drawn on a device (avatar, Dispositivo screen, Rede, packets in flight) must show
 **exactly** what the real unit's LED shows: same colour, same duration, same order.
 
 - Source of truth: `firmware/components/ui/siot_ui_led/include/siot_ui_led.h` + `src/siot_ui_led.c`
@@ -49,14 +49,15 @@ The LED drawn on a device (avatar, Dispositivo screen, Rede / Rede 3D, packets i
 
 ---
 
-# 🚨 3D device models (Rede 3D) come from the factory
+# 🚨 3D device models come from the factory
 
 A product's 3D model is a `.glb` in `assets/models/`, declared in `tool/blender/models.json` by its
 model string from the product catalogue (system reference §2.1). `tool/blender/factory.sh` (or the
 Blender add-on's **Export to app**) renders the sprites and **generates** `device_models.g.dart`, the
 `pubspec.yaml` block between the `device-models` markers and system reference §2.1.1 — never edit those
-by hand, never add a model-specific class: `Model3dChip` (Rede 3D), `DeviceModelAvatar` (Dispositivos,
-Dispositivo) and `deviceModelFor()` draw every model.
+by hand, never add a model-specific class: `DeviceModelAvatar` (Rede, Dispositivos, Dispositivo) and
+`deviceModelFor()` draw every model. (The Rede 3D view and its `Model3dChip` were removed on
+2026-10-14; the factory still renders the atlas, which the app no longer loads.)
 A new product goes into §2.1 and `SafrProduct.catalogue` first. Run
 `flutter test test/central/device_models_test.dart` after the factory. See `tool/blender/README.md`.
 The model is drawn as rendered (no outline); the unit's LED is never part of the render — it is

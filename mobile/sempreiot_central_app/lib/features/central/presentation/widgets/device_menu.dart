@@ -15,7 +15,9 @@ import '../../application/root_election_provider.dart';
 import '../../application/topology_provider.dart';
 import '../screens/device_settings_screen.dart';
 import 'device_avatar.dart';
+import '../../application/system_test_provider.dart';
 import 'device_command_widgets.dart';
+import 'system_test_sheets.dart';
 import 'ota_rede_widgets.dart' show firmwareTagText;
 
 /// Screen rect of the widget that owns [context] — the anchor the device
@@ -25,7 +27,7 @@ Rect deviceAnchorOf(BuildContext context) {
   return box.localToGlobal(Offset.zero) & box.size;
 }
 
-/// The popover a tap on a unit opens (Rede, Rede 3D): the unit's 3D model
+/// The popover a tap on a unit opens (Rede): the unit's 3D model
 /// with its live LED, its state and role, the facts an installer glances at
 /// (signal, last frame, parent, level, battery, firmware), the commands and
 /// "Abrir dispositivo". It points at the unit and stays on screen in either
@@ -1211,13 +1213,16 @@ class _OpenButton extends StatelessWidget {
 /// detector's on its next wake), ✓ beside the Central when the board takes
 /// it, ✓✓ with the wave when the LAST unit confirmed. Disabled while a test
 /// runs. On a phone viewing the central: the basics only.
+/// What the Central's popover asks for when it closes.
+enum CentralMenuAction { startTest, cancelTest, history }
+
 Future<void> showCentralMenu({
   required BuildContext context,
   required WidgetRef ref,
   required TopologyNode? board,
   required Rect anchor,
 }) async {
-  final start = await showGeneralDialog<bool>(
+  final action = await showGeneralDialog<CentralMenuAction>(
     context: context,
     barrierDismissible: true,
     barrierLabel: 'Fechar',
@@ -1232,10 +1237,15 @@ Future<void> showCentralMenu({
       child: child,
     ),
   );
-  if (start == true) {
-    ref
-        .read(deviceCommandProvider.notifier)
-        .run(safrBroadcastMac, DeviceCommandKind.test);
+  switch (action) {
+    case CentralMenuAction.startTest:
+      ref.read(systemTestControllerProvider.notifier).start();
+    case CentralMenuAction.cancelTest:
+      ref.read(systemTestControllerProvider.notifier).cancel();
+    case CentralMenuAction.history:
+      if (context.mounted) showSystemTestHistory(context);
+    case null:
+      break;
   }
 }
 
@@ -1426,18 +1436,20 @@ class _CentralPopover extends ConsumerWidget {
                   ],
                 ),
               ),
-              if (!viewOnly)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      SizedBox(
-                        height: 18,
-                        child: Row(
-                          children: [
-                            Text(
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(
+                      height: 22,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
                               'TESTE DO SISTEMA',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 color: context.textSecondary,
                                 fontSize: 9,
@@ -1445,51 +1457,104 @@ class _CentralPopover extends ConsumerWidget {
                                 letterSpacing: 1.0,
                               ),
                             ),
-                            const Spacer(),
-                            if (test != null)
-                              CommandTicks(status: test, size: 15),
+                          ),
+                          if (test != null) ...[
+                            CommandTicks(status: test, size: 15),
+                            const SizedBox(width: 6),
                           ],
-                        ),
+                          // The last tests and their reports — on the
+                          // tablet and on a phone alike (the mirror's).
+                          TextButton.icon(
+                            key: const ValueKey('central-test-history'),
+                            onPressed: () => Navigator.of(context)
+                                .pop(CentralMenuAction.history),
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 0),
+                              minimumSize: const Size(0, 22),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            icon: const Icon(Icons.history_rounded, size: 15),
+                            label: const Text(
+                              'Últimos testes',
+                              style: TextStyle(
+                                  fontSize: 10.5, fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        test != null
-                            ? (tally?.text ?? 'Em andamento…')
-                            : 'Envia TESTAR a todos os ${units.length} '
-                                'dispositivos de uma vez. Cada um confirma '
-                                'por conta própria; os detectores a bateria '
-                                '($sleepers) no próximo despertar, em até '
-                                '1 min. Sirenes e botoeiras geram um evento '
-                                'de teste.',
-                        style: TextStyle(
-                          color: context.textSecondary,
-                          fontSize: 11,
-                          height: 1.3,
-                        ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      test != null
+                          ? (tally?.text ?? 'Em andamento…')
+                          : viewOnly
+                              ? 'Nenhum teste em andamento. O teste é '
+                                  'iniciado na central; o resultado aparece '
+                                  'aqui e em Últimos testes.'
+                              : 'Envia TESTAR a todos os ${units.length} '
+                                  'dispositivos de uma vez. Cada um confirma '
+                                  'por conta própria; os detectores a bateria '
+                                  '($sleepers) no próximo despertar, em até '
+                                  '1 min. Sirenes e botoeiras geram um evento '
+                                  'de teste.',
+                      style: TextStyle(
+                        color: context.textSecondary,
+                        fontSize: 11,
+                        height: 1.3,
                       ),
+                    ),
+                    if (!viewOnly) ...[
                       const SizedBox(height: 10),
-                      FilledButton.icon(
-                        key: const ValueKey('central-test-all'),
-                        onPressed: running || !linkUp
-                            ? null
-                            : () => Navigator.of(context).pop(true),
-                        style: FilledButton.styleFrom(
-                          minimumSize: const Size.fromHeight(44),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
+                      // While a test runs the same button cancels it: the
+                      // units still waiting read "cancelado" and the
+                      // report says so.
+                      if (running)
+                        OutlinedButton.icon(
+                          key: const ValueKey('central-test-cancel'),
+                          onPressed: () => Navigator.of(context)
+                              .pop(CentralMenuAction.cancelTest),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size.fromHeight(44),
+                            foregroundColor: AppColors.error,
+                            side: BorderSide(
+                                color: AppColors.error.withValues(alpha: 0.7)),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          icon:
+                              const Icon(Icons.stop_circle_outlined, size: 18),
+                          label: const Text(
+                            'Cancelar teste',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        )
+                      else
+                        FilledButton.icon(
+                          key: const ValueKey('central-test-all'),
+                          onPressed: !linkUp
+                              ? null
+                              : () => Navigator.of(context)
+                                  .pop(CentralMenuAction.startTest),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(44),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          icon: const Icon(Icons.fact_check_outlined, size: 18),
+                          label: const Text(
+                            'Testar tudo',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
                         ),
-                        icon: const Icon(Icons.fact_check_outlined, size: 18),
-                        label: Text(
-                          running ? 'Teste em andamento' : 'Testar tudo',
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ),
                     ],
-                  ),
+                  ],
                 ),
+              ),
               if (grid.isNotEmpty)
                 Padding(
-                  padding: EdgeInsets.fromLTRB(14, viewOnly ? 12 : 0, 14, 14),
+                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [

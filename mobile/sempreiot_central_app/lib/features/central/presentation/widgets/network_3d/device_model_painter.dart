@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import '../../../../../core/theme/app_colors.dart';
 import 'device_model_sprites.dart';
 
-/// Draws one view of a product's 3D model (Rede 3D, Dispositivos,
+/// Draws one view of a product's 3D model (Rede, Dispositivos,
 /// Dispositivo) as it is — the raw Blender render, no outline — on a soft
 /// contact shadow; offline = a little faded, as the flat chips.
 ///
@@ -57,7 +57,9 @@ class DeviceModelPainter extends CustomPainter {
     // Contact shadow under the model.
     canvas.drawOval(
       Rect.fromCenter(
-          center: b.bottomCenter, width: b.width * 0.8, height: b.height * 0.18),
+          center: b.bottomCenter,
+          width: b.width * 0.8,
+          height: b.height * 0.18),
       Paint()
         ..color = Colors.black.withValues(alpha: isDark ? 0.5 : 0.2)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
@@ -67,11 +69,16 @@ class DeviceModelPainter extends CustomPainter {
     // frame made the two see-through frames add up differently at every
     // step of the turn, and an offline model flickered (2026-10-05).
     if (!online) {
-      canvas.saveLayer(dst, Paint()..color = Colors.white.withValues(alpha: 0.7));
+      canvas.saveLayer(
+          dst, Paint()..color = Colors.white.withValues(alpha: 0.7));
     }
-    _frames(canvas, pose.image, (w) => Paint()
-      ..filterQuality = FilterQuality.medium
-      ..color = Colors.white.withValues(alpha: w), blendOver: true);
+    _frames(
+        canvas,
+        pose.image,
+        (w) => Paint()
+          ..filterQuality = FilterQuality.medium
+          ..color = Colors.white.withValues(alpha: w),
+        blendOver: true);
     if (!online) canvas.restore();
 
     final s = alarm;
@@ -84,20 +91,28 @@ class DeviceModelPainter extends CustomPainter {
       final sigma = dst.width * 0.045;
       canvas.saveLayer(
         dst.inflate(dst.width * 0.35),
-        Paint()..imageFilter = ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+        Paint()
+          ..imageFilter = ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
       );
-      _frames(canvas, glow, (w) => Paint()
-        ..colorFilter = ColorFilter.mode(
-            _red.withValues(alpha: (0.55 + 0.45 * flash) * w), BlendMode.srcIn));
+      _frames(
+          canvas,
+          glow,
+          (w) => Paint()
+            ..colorFilter = ColorFilter.mode(
+                _red.withValues(alpha: (0.55 + 0.45 * flash) * w),
+                BlendMode.srcIn));
       canvas.restore();
       // The lens itself: red light, white-hot at the flash.
-      _frames(canvas, glow, (w) => Paint()
-        ..filterQuality = FilterQuality.medium
-        ..blendMode = BlendMode.screen
-        ..colorFilter = ColorFilter.mode(
-            Color.lerp(_red, Colors.white, 0.45 * flash)!
-                .withValues(alpha: lit * w),
-            BlendMode.srcIn));
+      _frames(
+          canvas,
+          glow,
+          (w) => Paint()
+            ..filterQuality = FilterQuality.medium
+            ..blendMode = BlendMode.screen
+            ..colorFilter = ColorFilter.mode(
+                Color.lerp(_red, Colors.white, 0.45 * flash)!
+                    .withValues(alpha: lit * w),
+                BlendMode.srcIn));
     }
     if (sound) _waves(canvas, b, s);
   }

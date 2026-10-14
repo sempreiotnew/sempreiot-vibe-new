@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_report.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_state.dart';
 import 'package:sempreiot_central_app/features/central/application/safr_traffic_provider.dart';
+import 'package:sempreiot_central_app/features/central/application/root_election_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/topology_provider.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
 import 'package:sempreiot_central_app/features/central/presentation/screens/topology_screen.dart';
@@ -47,6 +48,8 @@ void main() {
       ProviderScope(
         overrides: [
           topologyProvider.overrideWithValue(mesh),
+          // The board on the cable: no link banner changing the viewport.
+          boardLinkUpProvider.overrideWithValue(true),
           safrTrafficProvider.overrideWithValue(SafrTrafficBus()),
           // No firmware push: the map as it is every other day.
           otaPushViewProvider.overrideWithValue(const OtaPushState()),
@@ -107,8 +110,8 @@ void main() {
   /// The strip above the map is a single compact line (it once doubled to
   /// two, stealing a third of a landscape screen).
   void expectSingleLineStrip(WidgetTester tester) {
-    final strip = tester.getRect(find.byWidgetPredicate(
-        (w) => w.runtimeType.toString() == 'MeshStatusBar'));
+    final strip = tester.getRect(find
+        .byWidgetPredicate((w) => w.runtimeType.toString() == 'MeshStatusBar'));
     expect(strip.height, lessThan(60), reason: 'status strip is one line');
   }
 

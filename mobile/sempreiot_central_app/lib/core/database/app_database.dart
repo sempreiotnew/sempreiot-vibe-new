@@ -4,6 +4,8 @@ import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../features/central/domain/system_test/system_test_run.dart';
+
 part 'app_database.g.dart';
 
 class SerialPackets extends Table {
@@ -167,6 +169,28 @@ class OtaRunUnits extends Table {
   Set<Column> get primaryKey => {runId, unitKey};
 }
 
+/// One "Teste do sistema" (TESTAR to every unit at once; reference §3.6.1,
+/// `system_test_run.dart`): when it ran, who started it, how it ended and
+/// each unit's answer, as the run's JSON. One row per test, rewritten while
+/// it runs and once when it ends.
+class SystemTests extends Table {
+  TextColumn get testId => text()();
+  DateTimeColumn get startedAt => dateTime()();
+  DateTimeColumn get endedAt => dateTime().nullable()();
+
+  /// Who started it from a phone; null = the tablet itself.
+  TextColumn get startedBy => text().nullable()();
+
+  /// `SystemTestVerdict` name: 'running' | 'passed' | 'failed' | 'cancelled'.
+  TextColumn get verdict => text()();
+
+  /// `SystemTestRun.toJson()`: the units with their outcomes.
+  TextColumn get runJson => text()();
+
+  @override
+  Set<Column> get primaryKey => {testId};
+}
+
 @DriftDatabase(tables: [
   SerialPackets,
   DeviceMetadata,
@@ -175,6 +199,7 @@ class OtaRunUnits extends Table {
   DeviceEvents,
   OtaRuns,
   OtaRunUnits,
+  SystemTests,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(driftDatabase(name: 'sempreiot'));
@@ -183,7 +208,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 12;
+  int get schemaVersion => 13;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -250,6 +275,10 @@ class AppDatabase extends _$AppDatabase {
             // older than 11 got the table with these columns just above.
             await m.addColumn(otaRuns, otaRuns.source);
             await m.addColumn(otaRuns, otaRuns.publishedBy);
+          }
+          if (from < 13) {
+            // System tests kept and reported (2026-10-14).
+            await m.createTable(systemTests);
           }
         },
       );
@@ -362,6 +391,29 @@ class AppDatabase extends _$AppDatabase {
   }
 
   // Audit trail helpers
+  /// Writes a system test as it is now (one row per test).
+  Future<void> saveSystemTest(SystemTestRun run) =>
+      into(systemTests).insertOnConflictUpdate(SystemTestsCompanion.insert(
+        testId: run.id,
+        startedAt: run.startedAt,
+        endedAt: Value(run.endedAt),
+        startedBy: Value(run.by),
+        verdict: run.verdict.name,
+        runJson: jsonEncode(run.toJson()),
+      ));
+
+  /// The last tests, newest first.
+  Future<List<SystemTestRun>> recentSystemTests({int limit = 20}) async {
+    final rows = await (select(systemTests)
+          ..orderBy([(t) => OrderingTerm.desc(t.startedAt)])
+          ..limit(limit))
+        .get();
+    return [
+      for (final r in rows)
+        if (SystemTestRun.fromJson(jsonDecode(r.runJson)) case final run?) run,
+    ];
+  }
+
   Future<void> addAudit(
           String actor, String action, Map<String, Object?> detail) =>
       into(auditEvents).insert(AuditEventsCompanion.insert(

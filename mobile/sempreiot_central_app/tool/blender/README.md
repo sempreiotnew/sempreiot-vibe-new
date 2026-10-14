@@ -1,6 +1,6 @@
 # Device model factory
 
-**A `.glb` in → everything the app needs to draw that product as its 3D model out** — on the Rede 3D
+**A `.glb` in → everything the app needs to draw that product as its 3D model out** — on the Rede
 map, on the Dispositivos list (turning on itself) and on each unit's Dispositivo screen.
 
 Every product in the catalogue (`docs/sempreiot-system-reference.md` §2.1 — siren, push-button
@@ -27,7 +27,8 @@ updates the docs. **No Dart, `pubspec.yaml` or documentation is edited by hand.*
 
 The tablet has no 3D engine. Each model is **pre-rendered** in Blender and packed into images:
 
-- the **atlas** — every angle the Rede 3D camera can take (24 turns × 7 tilts = 168 frames);
+- the **atlas** — every angle a map camera could take (24 turns × 7 tilts = 168 frames); **not loaded by the
+  app since the Rede 3D view was removed (2026-10-14)** — still rendered, so dropping it is a factory change;
 - the **spin** — one full turn at 15° above, in 5° steps (72 frames), for the spinning Dispositivos
   cards and the Dispositivo header;
 - for a model with **alarm lights** (the siren's lens), the same frames again with only those parts, in
@@ -52,7 +53,7 @@ the model's LED is in that frame.
   <slug>_glow.png, _spin_glow.png (alarm lights)
   <slug>_frames.json  (LED per frame, sizes, fingerprints)
              └────────────────────────┴──────────────▶  every unit whose product code has a model:
-                                                         Rede 3D (Model3dChip), Dispositivos and
+                                                         Rede (DeviceModelAvatar), Dispositivos and
                                                          Dispositivo (DeviceModelAvatar)
 ```
 
@@ -131,7 +132,7 @@ cd mobile/sempreiot_central_app
 flutter test test/central/device_models_test.dart
 ```
 
-Look at `assets/models/<slug>_atlas.png` and `_spin.png` and open Rede 3D, Dispositivos and the
+Look at `assets/models/<slug>_spin.png` and open Rede, Dispositivos and the
 Dispositivo screen of a unit of that product. Commit together: the `.blend`, the `.glb`, the sprite
 files, `models.json`, `device_models.g.dart`, `pubspec.yaml` and `docs/sempreiot-system-reference.md`.
 
@@ -182,7 +183,7 @@ When the unit is in **ALARME** (`alarmLatched` — the same state as the ALARME 
   a red bloom around them (the siren: its whole lens);
 - **`alarm.sound: true`** sends red sound waves out of both sides, one every 0.4 s.
 
-It runs on Rede 3D, Dispositivos and Dispositivo. It is the unit's sounder and strobe, **not its status
+It runs on Rede, Dispositivos and Dispositivo. It is the unit's sounder and strobe, **not its status
 LED**: the LED dot stays on top, in the LED language, unchanged. With *reduce motion* on, the lights are
 shown lit and still, and the cards do not spin.
 
@@ -194,7 +195,7 @@ Products differ in size and shape — a tall siren, a round detector, a square p
 draw them at real size, nor by their largest side (that made the square push button look ~30 % heavier):
 **every model gets the same visual weight**. The square root of the area its outline covers on screen is
 `deviceModelVisualWeight` (0.79) × the layout size it is given — the circle's diameter: 46 px on Rede,
-52 px on Rede 3D, 64 px on the Dispositivos cards, 72 px on Dispositivo. The factory measures each model's
+46 px on Rede, 64 px on the Dispositivos cards, 72 px on Dispositivo. The factory measures each model's
 `coverage`; the app computes the frame size from it (`deviceModelBox`). Nothing to set for a new product;
 `scale` in `models.json` (panel: **Size adjust**) nudges one that still looks off.
 
@@ -242,8 +243,8 @@ Where the model sits does not matter: the factory frames the bounding box of the
 {
   "defaults": {                      // apply to every model unless it overrides them
     "size": 160,                     // frame side, px
-    "yaws": [0, 15, …, 345],         // Rede 3D camera turns, degrees (24)
-    "pitches": [-15, 0, …, 75],      // Rede 3D camera tilts, degrees (7) — the app's range is about −14°..69°
+    "yaws": [0, 15, …, 345],         // atlas camera turns, degrees (24) — unused by the app
+    "pitches": [-15, 0, …, 75],      // atlas camera tilts, degrees (7) — unused by the app
     "bodyFraction": 0.79,            // share of the frame the model's largest side fills (less for a boxy model: the frame also fits its diagonal)
     "scale": 1.0,                    // size nudge on top of the equal visual weight (see Sizing)
     "spin": {"pitch": 15, "step": 5, "cols": 12}   // the Dispositivos turn: tilt, step in degrees, sheet columns
@@ -357,7 +358,6 @@ Where the model is drawn:
 
 | Screen | Widget | View |
 |---|---|---|
-| **Rede 3D** | `Model3dChip` (`network_3d/device_3d_chip.dart`) | the atlas frame for the map camera's turn and tilt |
 | **Dispositivos** (the cards) | `DeviceModelAvatar` (`widgets/device_avatar.dart`), 64 px, `spin` | turning on itself, one turn every 7 s, at 15° above |
 | **Dispositivo** (the header) | `DeviceModelAvatar`, 72 px, `interactive` | still, three-quarter from the front (turned 30°) — tapping a card opens it like this; a horizontal drag turns it, a double tap puts it back |
 | Rede (2D map), device menu | `DeviceAvatar` — the circle | unchanged |
@@ -386,6 +386,5 @@ circle itself for a unit without a model or while the model loads, so a list nev
 | `docs/sempreiot-system-reference.md` §2.1.1 (between the markers) | **generated** |
 | `lib/features/central/presentation/widgets/network_3d/device_model_sprites.dart` | app code: `DeviceModelSpec`, `deviceModelFor`, `DeviceModelFrames`, `ModelPose`, `DeviceModelSprites` |
 | `lib/features/central/presentation/widgets/network_3d/device_model_painter.dart` | app code: `DeviceModelPainter` (the model, the alarm lights and waves) |
-| `lib/features/central/presentation/widgets/network_3d/device_3d_chip.dart` | app code: `Model3dChip` (Rede 3D) |
 | `lib/features/central/presentation/widgets/device_avatar.dart` | app code: `DeviceModelAvatar` (Dispositivos, Dispositivo) |
 | `test/central/device_models_test.dart` | the registry, assets, lookup and widget tests |
