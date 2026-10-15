@@ -167,6 +167,86 @@ void main() {
     });
   });
 
+  group(
+      'a tidy tree: every unit under its parent, no link crosses '
+      '(2026-10-15)', () {
+    // central ─ root ─ a ─ {a1, a2} and root ─ b ─ {b1}, given scrambled:
+    // the order the units were heard must not decide where they sit.
+    const a = '5A:46:52:00:00:0A', b = '5A:46:52:00:00:0B';
+    const a1 = '5A:46:52:00:00:A1', a2 = '5A:46:52:00:00:A2';
+    const b1 = '5A:46:52:00:00:B1';
+    final units = [
+      node(b1, 3, SafrNodeRole.node, b),
+      node(a, 2, SafrNodeRole.node, root),
+      node(a2, 3, SafrNodeRole.node, a),
+      node(b, 2, SafrNodeRole.node, root),
+      node(root, 1, SafrNodeRole.root, board),
+      node(a1, 3, SafrNodeRole.node, a),
+    ];
+
+    testWidgets('children side by side under their parent', (tester) async {
+      await pump(tester, showOta: false, units: units);
+      double x(String mac) => tester.getCenter(find.text(mac)).dx;
+      double y(String mac) => tester.getCenter(find.text(mac)).dy;
+      // The rows: a layer per row.
+      expect(y(root), lessThan(y(a)));
+      expect(y(a), closeTo(y(b), 0.5));
+      expect(y(a), lessThan(y(a1)));
+      // a's children under a, b's under b, the two families apart — a
+      // line from a1 or a2 up to a never meets b1's line up to b.
+      expect(x(a), closeTo((x(a1) + x(a2)) / 2, 1));
+      expect(x(b), closeTo(x(b1), 1));
+      expect(x(a1), lessThan(x(a2)));
+      expect(x(a2), lessThan(x(b1)));
+      expect(x(a), lessThan(x(b)));
+      // The root over the whole tree, the central over the root.
+      expect(x(root), closeTo((x(a1) + x(b1)) / 2, 1));
+      expect(tester.getCenter(find.text('CENTRAL')).dx, closeTo(x(root), 1));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a unit that changes parent slides over to it', (tester) async {
+      await pump(tester, showOta: false, units: units);
+      double x(String mac) => tester.getCenter(find.text(mac)).dx;
+      final before = x(a1);
+      final moved = [
+        for (final n in units)
+          n.mac == a1 ? node(a1, 3, SafrNodeRole.node, b) : n,
+      ];
+      await pump(tester, showOta: false, units: moved);
+      await tester.pump(const Duration(milliseconds: 200));
+      final midway = x(a1);
+      expect(midway, greaterThan(before + 5), reason: 'on its way right');
+      expect(midway, lessThan(x(b1) - 5), reason: 'not there yet');
+      await tester.pump(const Duration(milliseconds: 400));
+      // Under b now, beside b1 (its MAC sorts first); a keeps a2 alone.
+      expect(x(b), closeTo((x(a1) + x(b1)) / 2, 1));
+      expect(x(a1), greaterThan(x(a2)));
+      expect(x(a), closeTo(x(a2), 1));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'a live unit under a dead parent sits under the unit its '
+        'line goes to', (tester) async {
+      // a dies: a1 and a2 (still saying a) hang off the root, as their
+      // dashed lines do; a keeps its ghost line and its own column.
+      final dead = [
+        for (final n in units)
+          n.mac == a ? node(a, 2, SafrNodeRole.node, root, online: false) : n,
+      ];
+      await pump(tester, showOta: false, units: dead);
+      double x(String mac) => tester.getCenter(find.text(mac)).dx;
+      // Root's children now, in layer-then-MAC order: a (dead, alone in
+      // its column), b (with b1), then a1 and a2 — each in its own span.
+      expect(x(a), lessThan(x(b)));
+      expect(x(b), closeTo(x(b1), 1));
+      expect(x(b1), lessThan(x(a1)));
+      expect(x(a1), lessThan(x(a2)));
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   testWidgets(
       'every unit is drawn as its 3D model; one without communication says '
       'OFFLINE (2026-10-05)', (tester) async {

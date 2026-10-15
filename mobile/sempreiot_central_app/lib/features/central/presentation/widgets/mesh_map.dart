@@ -38,6 +38,7 @@ class MeshMap extends ConsumerStatefulWidget {
     required this.election,
     required this.onNodeTap,
     this.showOta = true,
+    this.showVersions = true,
     this.overlay,
     this.selected = const {},
     this.boardSelected = false,
@@ -62,6 +63,11 @@ class MeshMap extends ConsumerStatefulWidget {
   /// Firmware push and rollout drawn on the map: the tablet and its cable,
   /// rings, the phase under each unit, the image's packets.
   final bool showOta;
+
+  /// The firmware pill at the bottom right of every unit (and of the
+  /// CENTRAL). Rede's strip switches it off for a cleaner map
+  /// (`redeShowVersionsProvider`); "Atualizar dispositivos" always shows it.
+  final bool showVersions;
 
   /// What is drawn on the units of an update; null = the board's own
   /// rollout ("Atualizar dispositivos" passes its run, which outlives the
@@ -160,7 +166,7 @@ double _scaleOf(Matrix4 m) => m.storage[0];
 }
 
 class _MeshMapState extends ConsumerState<MeshMap>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   /// Floor for pinch/button zoom-out; the fit scale may go below it when
   /// the tree is taller than the viewport (landscape), so the effective
   /// minimum is min(_minZoom, fit).
@@ -198,6 +204,20 @@ class _MeshMapState extends ConsumerState<MeshMap>
   static const _refitSettle = Duration(milliseconds: 1500);
   Timer? _refitTimer;
 
+  /// The tree took a new shape (a unit joined, left, or changed parent):
+  /// every unit slides from where it was to where the tree puts it now,
+  /// in [_moveDuration], so the operator can follow who went where —
+  /// links and ticks move with the chips, from the same layout. A unit
+  /// new to the map appears in its place.
+  static const _moveDuration = Duration(milliseconds: 450);
+  late final AnimationController _move;
+  _MeshLayout? _target;
+  _MeshLayout? _from;
+
+  /// The viewport [_target] was computed for: a change of it (rotation)
+  /// re-places everything at once — the screen re-fits, nothing slides.
+  Size? _targetViewport;
+
   @override
   void initState() {
     super.initState();
@@ -206,6 +226,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
     _ticker =
         AnimationController(vsync: this, duration: const Duration(days: 1))
           ..repeat();
+    _move = AnimationController(vsync: this, duration: _moveDuration);
     _trafficSub = ref.read(safrTrafficProvider).stream.listen(_onTraffic);
     if (!widget.showOta) return;
     _otaSub = ref.listenManual<int>(
@@ -241,8 +262,37 @@ class _MeshMapState extends ConsumerState<MeshMap>
     _trafficSub?.cancel();
     _otaSub?.close();
     _transform.dispose();
+    _move.dispose();
     _ticker.dispose();
     super.dispose();
+  }
+
+  /// A new target for the units: starts the slide from wherever they are
+  /// drawn right now (mid-slide included). The first layout, and the one
+  /// after a rotation, are drawn as they are.
+  void _retarget(_MeshLayout target, Size viewport) {
+    final prev = _target;
+    if (prev == null || viewport != _targetViewport) {
+      _move.stop();
+      _from = null;
+      _target = target;
+      _targetViewport = viewport;
+      return;
+    }
+    if (!prev.samePlaces(target)) {
+      _from = _shown(prev);
+      _target = target;
+      _move.forward(from: 0);
+    }
+  }
+
+  /// The layout drawn this frame: [target] once the units are there, on
+  /// their way to it meanwhile.
+  _MeshLayout _shown(_MeshLayout target) {
+    final from = _from;
+    if (from == null || !_move.isAnimating) return target;
+    return _MeshLayout.lerp(
+        from, target, Curves.easeInOutCubic.transform(_move.value));
   }
 
   /// Button zoom: pivots on the tree's centre line and the screen's middle.
@@ -579,9 +629,10 @@ class _MeshMapState extends ConsumerState<MeshMap>
     return LayoutBuilder(builder: (context, constraints) {
       final size = Size(constraints.maxWidth, constraints.maxHeight);
       _viewSize = size;
-      final layout = _MeshLayout.compute(nodes, size);
-      _canvasSize = layout.canvas;
-      final key = (size, layout.canvas);
+      final target = _MeshLayout.compute(nodes, size, boardMac: boardMac);
+      _retarget(target, size);
+      _canvasSize = target.canvas;
+      final key = (size, target.canvas);
       if (_fittedFor != key) {
         final viewportChanged = _fittedFor == null || _fittedFor!.$1 != size;
         _fittedFor = key;
@@ -594,130 +645,141 @@ class _MeshMapState extends ConsumerState<MeshMap>
           });
         }
       }
-      return Stack(
-        children: [
-          // Pinch = the SAME zoom the buttons do (pivot on the
-          // tree's centre line and the fingers' row), fingers'
-          // travel = pan. Our own gesture math, so the tree
-          // never slides sideways on its own. The canvas grows
-          // past the viewport when the mesh is crowded — pan to
-          // reach the rest.
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onScaleStart: _onScaleStart,
-              onScaleUpdate: _onScaleUpdate,
-              child: ClipRect(
-                child: OverflowBox(
-                  alignment: Alignment.topLeft,
-                  minWidth: 0,
-                  minHeight: 0,
-                  maxWidth: double.infinity,
-                  maxHeight: double.infinity,
-                  child: ValueListenableBuilder<Matrix4>(
-                    valueListenable: _transform,
-                    builder: (_, m, child) => Transform(
-                      transform: m,
-                      alignment: Alignment.topLeft,
-                      child: child,
-                    ),
-                    child: SizedBox(
-                      width: layout.canvas.width,
-                      height: layout.canvas.height,
-                      child: Stack(
-                        children: [
-                          Positioned.fill(
-                            child: CustomPaint(
-                              painter: _MeshGraphPainter(
-                                nodes: nodes,
-                                layout: layout,
-                                dots: _dots,
-                                repaint: _ticker,
-                                isDark: context.isDark,
-                                boardMac: boardMac,
-                                rootMac: election.rootMac,
-                                candidates: election.electing
-                                    ? election.candidates
-                                    : const {},
-                                otaLink: activity != null,
-                                faded: _faded(nodes),
-                                waveStartedAt: waveStartedAt,
-                              ),
+      // Rebuilt on every frame of a slide (the chips, the links and the
+      // ticks from one and the same layout); still between slides.
+      return AnimatedBuilder(
+          animation: _move,
+          builder: (context, _) {
+            final layout = _shown(target);
+            return Stack(
+              children: [
+                // Pinch = the SAME zoom the buttons do (pivot on the
+                // tree's centre line and the fingers' row), fingers'
+                // travel = pan. Our own gesture math, so the tree
+                // never slides sideways on its own. The canvas grows
+                // past the viewport when the mesh is crowded — pan to
+                // reach the rest.
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onScaleStart: _onScaleStart,
+                    onScaleUpdate: _onScaleUpdate,
+                    child: ClipRect(
+                      child: OverflowBox(
+                        alignment: Alignment.topLeft,
+                        minWidth: 0,
+                        minHeight: 0,
+                        maxWidth: double.infinity,
+                        maxHeight: double.infinity,
+                        child: ValueListenableBuilder<Matrix4>(
+                          valueListenable: _transform,
+                          builder: (_, m, child) => Transform(
+                            transform: m,
+                            alignment: Alignment.topLeft,
+                            child: child,
+                          ),
+                          child: SizedBox(
+                            width: layout.canvas.width,
+                            height: layout.canvas.height,
+                            child: Stack(
+                              children: [
+                                Positioned.fill(
+                                  child: CustomPaint(
+                                    painter: _MeshGraphPainter(
+                                      nodes: nodes,
+                                      layout: layout,
+                                      dots: _dots,
+                                      repaint: _ticker,
+                                      isDark: context.isDark,
+                                      boardMac: boardMac,
+                                      rootMac: election.rootMac,
+                                      candidates: election.electing
+                                          ? election.candidates
+                                          : const {},
+                                      otaLink: activity != null,
+                                      faded: _faded(nodes),
+                                      waveStartedAt: waveStartedAt,
+                                    ),
+                                  ),
+                                ),
+                                if (activity != null)
+                                  Positioned(
+                                    left: layout.positions[_tabletKey]!.dx -
+                                        OtaTabletChip.width / 2,
+                                    top: layout.positions[_tabletKey]!.dy -
+                                        OtaTabletChip.circle / 2,
+                                    child: const OtaTabletChip(),
+                                  ),
+                                _CentralChip(
+                                  position: layout.positions[_centralKey]!,
+                                  board: board,
+                                  activity: activity,
+                                  showVersion: widget.showVersions,
+                                  selected: widget.boardSelected,
+                                  onTap: widget.onCentralTap,
+                                  onMenu: widget.onCentralMenu,
+                                ),
+                                for (final node in nodes)
+                                  if (layout.positions.containsKey(node.mac))
+                                    _NodeChip(
+                                      node: node,
+                                      position: layout.positions[node.mac]!,
+                                      isRoot: node.online &&
+                                          node.mac == election.rootMac,
+                                      isCandidate: election.electing &&
+                                          election.candidates
+                                              .contains(node.mac),
+                                      activity: rollout[node.mac],
+                                      pending: pendingFirmwareFor(node, held),
+                                      showVersion: widget.showVersions,
+                                      selected:
+                                          widget.selected.contains(node.mac),
+                                      faded: widget.focus != null &&
+                                          !widget.focus!.contains(node.mac),
+                                      selectionTarget: widget.selectionTarget,
+                                      onTap: (anchor) =>
+                                          widget.onNodeTap(node, anchor),
+                                    ),
+                                ..._commandMarks(
+                                  commands,
+                                  layout,
+                                  nodes,
+                                  viewOnly: viewOnly,
+                                ),
+                              ],
                             ),
                           ),
-                          if (activity != null)
-                            Positioned(
-                              left: layout.positions[_tabletKey]!.dx -
-                                  OtaTabletChip.width / 2,
-                              top: layout.positions[_tabletKey]!.dy -
-                                  OtaTabletChip.circle / 2,
-                              child: const OtaTabletChip(),
-                            ),
-                          _CentralChip(
-                            position: layout.positions[_centralKey]!,
-                            board: board,
-                            activity: activity,
-                            selected: widget.boardSelected,
-                            onTap: widget.onCentralTap,
-                            onMenu: widget.onCentralMenu,
-                          ),
-                          for (final node in nodes)
-                            if (layout.positions.containsKey(node.mac))
-                              _NodeChip(
-                                node: node,
-                                position: layout.positions[node.mac]!,
-                                isRoot:
-                                    node.online && node.mac == election.rootMac,
-                                isCandidate: election.electing &&
-                                    election.candidates.contains(node.mac),
-                                activity: rollout[node.mac],
-                                pending: pendingFirmwareFor(node, held),
-                                selected: widget.selected.contains(node.mac),
-                                faded: widget.focus != null &&
-                                    !widget.focus!.contains(node.mac),
-                                selectionTarget: widget.selectionTarget,
-                                onTap: (anchor) =>
-                                    widget.onNodeTap(node, anchor),
-                              ),
-                          ..._commandMarks(
-                            commands,
-                            layout,
-                            nodes,
-                            viewOnly: viewOnly,
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ),
-          ),
-          // Lane labels live in screen space: pinned to the
-          // left edge whatever the pan/zoom, following only
-          // the rows' vertical position.
-          Positioned.fill(
-            child: IgnorePointer(
-              child: CustomPaint(
-                painter: _LaneLabelsPainter(
-                  layout: layout,
-                  transform: _transform,
-                  isDark: context.isDark,
+                // Lane labels live in screen space: pinned to the
+                // left edge whatever the pan/zoom, following only
+                // the rows' vertical position.
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: CustomPaint(
+                      painter: _LaneLabelsPainter(
+                        layout: layout,
+                        transform: _transform,
+                        isDark: context.isDark,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          ),
-          Positioned(
-            right: 12,
-            bottom: 12,
-            child: _ZoomControls(
-              onZoomIn: () => _zoomBy(1.3),
-              onZoomOut: () => _zoomBy(1 / 1.3),
-              onReset: _fitToView,
-            ),
-          ),
-        ],
-      );
+                Positioned(
+                  right: 12,
+                  bottom: 12,
+                  child: _ZoomControls(
+                    onZoomIn: () => _zoomBy(1.3),
+                    onZoomOut: () => _zoomBy(1 / 1.3),
+                    onReset: _fitToView,
+                  ),
+                ),
+              ],
+            );
+          });
     });
   }
 }
@@ -1454,10 +1516,16 @@ class _LaneLabelsPainter extends CustomPainter {
 /// Where every node sits on the canvas, plus the lanes the painter labels.
 ///
 /// The tree always grows top → bottom: central row on top, one row per
-/// layer, siblings spread across the width, rotated labels in a left gutter.
-/// The canvas is at least the viewport and grows when a row or a lane would
-/// otherwise overlap chips; the screen then zooms out to fit it (landscape)
-/// rather than changing the picture.
+/// layer, rotated labels in a left gutter. Across, it is a tidy tree
+/// (2026-10-15): every unit sits under the unit its link is drawn to
+/// (`meshLinkTargetOf`), its children side by side beneath it, each
+/// subtree in its own span of the width, so no link ever crosses another
+/// and a unit that changes parent moves next to the new one — before, a
+/// row was spread in the order the units were heard, and a child could
+/// sit at the far end of the row from its parent with its line cutting
+/// through everyone else's. The canvas is at least the viewport and grows
+/// when a row or a lane would otherwise overlap chips; the screen then
+/// zooms out to fit it (landscape) rather than changing the picture.
 class _MeshLayout {
   const _MeshLayout({
     required this.positions,
@@ -1486,49 +1554,124 @@ class _MeshLayout {
   static const _minLane = 104.0; // row pitch
   static const _tabletAside = 112.0; // tablet ↔ central, centre to centre
 
-  static _MeshLayout compute(List<TopologyNode> nodes, Size viewport) {
-    final layers = <int, List<TopologyNode>>{};
-    for (final n in nodes) {
-      layers.putIfAbsent(n.layer, () => []).add(n);
-    }
-    final layerKeys = layers.keys.toList()..sort();
-    final laneCount = layerKeys.length + 1; // + central row
-    var widest = 1;
-    for (final l in layers.values) {
-      widest = math.max(widest, l.length);
-    }
-
-    // Siblings sit at (j+1)/(n+1) of the usable width, so n chips need
-    // n+1 pitches for the pitch itself to stay ≥ _minAcross.
-    final width =
-        math.max(viewport.width, 2 * _gutter + (widest + 1) * _minAcross);
-    final height = math.max(viewport.height, 2 * _edge + laneCount * _minLane);
-    final rowH = (height - 2 * _edge) / laneCount;
-    final usableW = width - 2 * _gutter;
-    double laneY(int i) => _edge + rowH * (i + 0.52);
-
-    final positions = <String, Offset>{
-      _centralKey: Offset(_gutter + usableW / 2, laneY(0)),
-      // Beside the central, on its row, away from the lane labels; drawn
-      // only while a push runs.
-      _tabletKey: Offset(_gutter + usableW / 2 + _tabletAside, laneY(0)),
+  static _MeshLayout compute(List<TopologyNode> nodes, Size viewport,
+      {String? boardMac}) {
+    final byMac = {for (final n in nodes) n.mac: n};
+    final layerKeys = {for (final n in nodes) n.layer}.toList()..sort();
+    final rowOf = {
+      for (var i = 0; i < layerKeys.length; i++) layerKeys[i]: i + 1,
     };
-    final laneCenters = <int, double>{};
-    for (var i = 0; i < layerKeys.length; i++) {
-      final row = layers[layerKeys[i]]!;
-      laneCenters[layerKeys[i]] = laneY(i + 1);
-      for (var j = 0; j < row.length; j++) {
-        positions[row[j].mac] = Offset(
-          _gutter + usableW * (j + 1) / (row.length + 1),
-          laneY(i + 1),
-        );
+    final laneCount = layerKeys.length + 1; // + central row
+
+    // The tree the links draw: every unit under the unit its link goes
+    // to — a live unit under a dead parent hangs off the nearest live
+    // ancestor, as its line does — the roots and the strays under the
+    // central. Siblings in a fixed order (layer, then MAC) so the picture
+    // holds still between frames.
+    final children = <String, List<TopologyNode>>{};
+    for (final n in nodes) {
+      var target = meshLinkTargetOf(n, byMac, boardMac)?.key ?? _centralKey;
+      if (target == n.mac) target = _centralKey;
+      children.putIfAbsent(target, () => []).add(n);
+    }
+    for (final list in children.values) {
+      list.sort((a, b) {
+        final c = a.layer.compareTo(b.layer);
+        return c != 0 ? c : a.mac.compareTo(b.mac);
+      });
+    }
+
+    // Each subtree's width in pitches (a unit without children takes
+    // one), walking down from the central. Units a stale registry puts in
+    // a loop among themselves are never reached that way: they go under
+    // the central, and the loop is cut where it closes.
+    final width = <String, int>{};
+    final reached = <String>{};
+    int measure(String key) {
+      var w = 0;
+      for (final k in children[key] ?? const <TopologyNode>[]) {
+        if (!reached.add(k.mac)) continue;
+        w += measure(k.mac);
+      }
+      return width[key] = math.max(w, 1);
+    }
+
+    measure(_centralKey);
+    for (final n in nodes) {
+      if (reached.add(n.mac)) {
+        children.putIfAbsent(_centralKey, () => []).add(n);
+        measure(n.mac);
       }
     }
+    var total = 0;
+    for (final k in children[_centralKey] ?? const <TopologyNode>[]) {
+      total += width[k.mac]!;
+    }
+    total = math.max(total, 1);
+    width[_centralKey] = total;
+
+    // A pitch per leaf of the tree, never under _minAcross: two units of
+    // one row are in different spans, so they are at least a pitch apart.
+    final canvasW = math.max(viewport.width, 2 * _gutter + total * _minAcross);
+    final height = math.max(viewport.height, 2 * _edge + laneCount * _minLane);
+    final rowH = (height - 2 * _edge) / laneCount;
+    final usableW = canvasW - 2 * _gutter;
+    final pitch = usableW / total;
+    double laneY(int i) => _edge + rowH * (i + 0.52);
+
+    // Every unit in the middle of its subtree's span, its children's
+    // spans laid side by side under it, in its own layer's row (a unit
+    // linked past a dead parent keeps its row: its line goes up through
+    // the column its subtree owns, crossing nobody).
+    final positions = <String, Offset>{};
+    void place(String key, double from, int row) {
+      final w = width[key]!;
+      positions[key] = Offset(_gutter + pitch * (from + w / 2), laneY(row));
+      var cursor = from;
+      for (final k in children[key] ?? const <TopologyNode>[]) {
+        if (positions.containsKey(k.mac)) continue; // the loop, cut
+        place(k.mac, cursor, rowOf[k.layer]!);
+        cursor += width[k.mac]!;
+      }
+    }
+
+    place(_centralKey, 0, 0);
+    // Beside the central, on its row, away from the lane labels; drawn
+    // only while a push runs.
+    positions[_tabletKey] =
+        Offset(positions[_centralKey]!.dx + _tabletAside, laneY(0));
+
     return _MeshLayout(
       positions: positions,
       centralLane: laneY(0),
-      laneCenters: laneCenters,
-      canvas: Size(width, height),
+      laneCenters: {for (final l in layerKeys) l: laneY(rowOf[l]!)},
+      canvas: Size(canvasW, height),
+    );
+  }
+
+  /// True when every unit (and the central) sits where it does in [other].
+  bool samePlaces(_MeshLayout other) {
+    if (positions.length != other.positions.length) return false;
+    for (final e in positions.entries) {
+      if (other.positions[e.key] != e.value) return false;
+    }
+    return true;
+  }
+
+  /// The picture [t] of the way from [a] to [b]: every unit on the way to
+  /// its new place; a unit new to the map already there. The canvas and
+  /// the lanes are [b]'s (they are what the screen fits to).
+  static _MeshLayout lerp(_MeshLayout a, _MeshLayout b, double t) {
+    return _MeshLayout(
+      positions: {
+        for (final e in b.positions.entries)
+          e.key: a.positions[e.key] == null
+              ? e.value
+              : Offset.lerp(a.positions[e.key], e.value, t)!,
+      },
+      centralLane: b.centralLane,
+      laneCenters: b.laneCenters,
+      canvas: b.canvas,
     );
   }
 }
@@ -1540,12 +1683,16 @@ class _CentralChip extends StatelessWidget {
     required this.position,
     this.board,
     this.activity,
+    this.showVersion = true,
     this.selected = false,
     this.onTap,
     this.onMenu,
   });
   final Offset position;
   final TopologyNode? board;
+
+  /// The firmware pill under the disc (off: Rede's switch).
+  final bool showVersion;
 
   /// Chosen for an update: ring and check around the disc.
   final bool selected;
@@ -1632,7 +1779,9 @@ class _CentralChip extends StatelessWidget {
               // The firmware the board runs: the same pill, in the same
               // place, as on every unit — bottom right of the disc. (Its
               // MAC and the rest are in its popover.)
-              if (activity == null && board?.fwVersion?.isNotEmpty == true)
+              if (showVersion &&
+                  activity == null &&
+                  board?.fwVersion?.isNotEmpty == true)
                 Positioned(
                   left: _CentralChip._circle / 2 + 8,
                   bottom: -5,
@@ -1739,6 +1888,7 @@ class _NodeChip extends StatelessWidget {
     required this.onTap,
     this.pending,
     this.activity,
+    this.showVersion = true,
     this.selected = false,
     this.faded = false,
     this.selectionTarget,
@@ -1747,10 +1897,13 @@ class _NodeChip extends StatelessWidget {
   final TopologyNode node;
   final Offset position;
 
-  /// Chosen for an update: ring and check, and "v0.1.0 → [selectionTarget]"
-  /// under the name.
+  /// Chosen for an update: ring and check, and "→ [selectionTarget]"
+  /// under the name (the pill keeps saying what it runs).
   final bool selected;
   final String? selectionTarget;
+
+  /// The firmware pill at the bottom right (off: Rede's switch).
+  final bool showVersion;
 
   /// Outside the update that runs: drawn faded.
   final bool faded;
@@ -1820,10 +1973,9 @@ class _NodeChip extends StatelessWidget {
                       // avatar (ALARME is at the bottom left, ROOT on top,
                       // the ticks on the right, OFFLINE top right: nothing
                       // shares a corner). Nothing when the unit never said
-                      // its version. In a rollout, and while chosen for
-                      // one, the line under the name says it instead.
-                      if (activity == null &&
-                          !(selected && selectionTarget != null))
+                      // its version, or when Rede's switch is off. In a
+                      // rollout the line under the name says it instead.
+                      if (showVersion && activity == null)
                         Positioned(
                           left: 46 / 2 + 8,
                           bottom: -5,
@@ -1853,13 +2005,12 @@ class _NodeChip extends StatelessWidget {
                     ),
                   ),
                   // In a rollout: where the unit is in it. Chosen for one:
-                  // from what it runs to what it will.
+                  // what it will run (the pill says what it runs now).
                   if (activity != null)
                     OtaUnitTag(activity: activity!, version: node.fwVersion)
                   else if (selected && selectionTarget != null)
                     Text(
-                      '${firmwareTagText(node.fwVersion?.isNotEmpty == true ? node.fwVersion! : '?')}'
-                      ' → ${firmwareTagText(selectionTarget!)}',
+                      '→ ${firmwareTagText(selectionTarget!)}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(

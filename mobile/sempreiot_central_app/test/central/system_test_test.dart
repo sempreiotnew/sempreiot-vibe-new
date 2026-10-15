@@ -104,8 +104,8 @@ void main() {
         // reports), always as the same running run.
         expect(saved, isNotEmpty);
         expect(saved.every((r) => r.id == run.id), isTrue);
-        expect(saved.every((r) => r.verdict == SystemTestVerdict.running),
-            isTrue);
+        expect(
+            saved.every((r) => r.verdict == SystemTestVerdict.running), isTrue);
 
         boardAck.complete(true);
         async.flushMicrotasks();
@@ -270,6 +270,76 @@ void main() {
         expect(fresh.state, isEmpty);
         t.dispose();
         fresh.dispose();
+      });
+    });
+  });
+
+  group('the phone, when the central says the test ended', () {
+    test(
+        'closes what it still shows of it — in case the last steps never '
+        'came — and lights nothing for a test it was not showing', () {
+      fakeAsync((async) {
+        final ended = SystemTestRun(
+          id: 'x',
+          startedAt: t0,
+          endedAt: t0.add(const Duration(seconds: 30)),
+          verdict: SystemTestVerdict.passed,
+          boardAcked: true,
+          units: const [
+            SystemTestUnit(mac: a, outcome: SystemTestOutcome.confirmed),
+            SystemTestUnit(mac: b, outcome: SystemTestOutcome.confirmed),
+          ],
+        );
+        // An app just opened, an old record: nothing lights up.
+        final fresh = DeviceCommandTracker();
+        fresh.closeFromRun(ended);
+        expect(fresh.state, isEmpty);
+        fresh.dispose();
+
+        // Mid-test, seeded: b confirmed on the central but its event batch
+        // was lost; the record closes it.
+        final t = DeviceCommandTracker();
+        t.seedFromRun(SystemTestRun(
+          id: 'x',
+          startedAt: t0,
+          verdict: SystemTestVerdict.running,
+          boardAcked: true,
+          units: const [
+            SystemTestUnit(mac: a, outcome: SystemTestOutcome.confirmed),
+            SystemTestUnit(mac: b, outcome: SystemTestOutcome.pending),
+          ],
+        ));
+        expect(t.state[safrBroadcastMac]!.step, DeviceCommandStep.boardAck);
+        t.closeFromRun(ended);
+        expect(t.state[b]!.step, DeviceCommandStep.delivered);
+        expect(t.state[safrBroadcastMac]!.step, DeviceCommandStep.delivered);
+        expect(t.state[safrBroadcastMac]!.note, '2 confirmaram');
+        // And a cancelled one.
+        final t2 = DeviceCommandTracker();
+        t2.seedFromRun(SystemTestRun(
+          id: 'y',
+          startedAt: t0,
+          verdict: SystemTestVerdict.running,
+          boardAcked: true,
+          units: const [
+            SystemTestUnit(mac: a, outcome: SystemTestOutcome.pending),
+          ],
+        ));
+        t2.closeFromRun(SystemTestRun(
+          id: 'y',
+          startedAt: t0,
+          endedAt: t0,
+          verdict: SystemTestVerdict.cancelled,
+          units: const [
+            SystemTestUnit(mac: a, outcome: SystemTestOutcome.cancelled),
+          ],
+        ));
+        expect(t2.state[a]!.note, DeviceCommandTracker.cancelledNote);
+        expect(t2.state[safrBroadcastMac]!.step, DeviceCommandStep.failed);
+        expect(t2.state[safrBroadcastMac]!.note,
+            DeviceCommandTracker.cancelledNote);
+        t.dispose();
+        t2.dispose();
       });
     });
   });

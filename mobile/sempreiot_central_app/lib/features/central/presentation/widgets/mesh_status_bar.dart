@@ -18,6 +18,8 @@ class MeshStatusBar extends StatelessWidget {
     this.syncing = false,
     this.leading = const [],
     this.electionPill = true,
+    this.versionsShown,
+    this.onToggleVersions,
   });
   final List<TopologyNode> nodes;
   final RootElectionState election;
@@ -36,6 +38,15 @@ class MeshStatusBar extends StatelessWidget {
   /// "REORGANIZANDO" in the strip; Rede shows the election as its own
   /// banner under the strip instead (root_election_banner.dart).
   final bool electionPill;
+
+  /// The firmware pills on the map are shown (the chip icon lit) or not;
+  /// null = no switch in the strip ("Atualizar dispositivos" always shows
+  /// them). A tap calls [onToggleVersions].
+  final bool? versionsShown;
+  final VoidCallback? onToggleVersions;
+
+  /// The key of the versions switch (tests).
+  static const versionsKey = ValueKey('rede-versions');
 
   @override
   Widget build(BuildContext context) {
@@ -137,6 +148,30 @@ class MeshStatusBar extends StatelessWidget {
                 ),
               ],
             ),
+          if (versionsShown != null) ...[
+            const SizedBox(width: 10),
+            IconButton(
+              key: versionsKey,
+              tooltip: versionsShown!
+                  ? 'Ocultar versões de firmware'
+                  : 'Mostrar versões de firmware',
+              isSelected: versionsShown,
+              style: IconButton.styleFrom(
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                fixedSize: const Size(30, 30),
+                minimumSize: const Size(30, 30),
+                padding: EdgeInsets.zero,
+                foregroundColor: versionsShown!
+                    ? AppColors.secondary
+                    : context.textSecondary,
+              ),
+              icon: Icon(
+                versionsShown! ? Icons.memory_rounded : Icons.memory_outlined,
+                size: 20,
+              ),
+              onPressed: onToggleVersions,
+            ),
+          ],
           if (onSync != null) ...[
             const SizedBox(width: 10),
             IconButton(

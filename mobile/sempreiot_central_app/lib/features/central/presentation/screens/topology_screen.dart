@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../application/board_sync_provider.dart';
 import '../../application/central_mirror_viewer.dart';
+import '../../application/rede_view_prefs.dart';
 import '../../application/root_election_provider.dart';
 import '../../application/system_test_provider.dart';
 import '../../application/topology_provider.dart';
@@ -57,6 +58,8 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
     // A user's phone viewing a central: the map and nothing that commands.
     final viewOnly = ref.watch(mirrorViewOnlyProvider);
     final sync = ref.watch(boardSyncProvider);
+    // The firmware pills, on or off from the strip (kept on this device).
+    final showVersions = ref.watch(redeShowVersionsProvider);
     TopologyNode? board;
     final nodes = <TopologyNode>[];
     for (final n in allNodes) {
@@ -78,6 +81,9 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
               : () => ref.read(boardSyncProvider.notifier).start(),
           syncing: sync.phase == BoardSyncPhase.syncing,
           electionPill: false,
+          versionsShown: showVersions,
+          onToggleVersions: () =>
+              ref.read(redeShowVersionsProvider.notifier).toggle(),
         ),
         // The board's link is down: said here, in words, before anything
         // on the map is read as live.
@@ -103,6 +109,7 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
             // Rede is the alarm view: the update is drawn on "Atualizar
             // dispositivos" only.
             showOta: false,
+            showVersions: showVersions,
           ),
         ),
       ],

@@ -23,6 +23,7 @@ import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_paylo
 import 'package:sempreiot_central_app/features/central/presentation/screens/topology_screen.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/device_command_widgets.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/link_down_banner.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_status_bar.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/ota_rede_widgets.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/root_election_banner.dart';
 
@@ -115,6 +116,21 @@ void main() {
     return ProviderScope.containerOf(
         tester.element(find.byType(TopologyScreen)));
   }
+
+  testWidgets(
+      'the strip\'s chip switch hides and shows the firmware pills '
+      '(2026-10-15)', (tester) async {
+    await pump(tester, const Size(1280, 800));
+    // The root, the node and the CENTRAL (the board says 0.3.8).
+    expect(find.byType(FirmwareTag), findsNWidgets(3));
+    await tester.tap(find.byKey(MeshStatusBar.versionsKey));
+    await tester.pump();
+    expect(find.byType(FirmwareTag), findsNothing);
+    await tester.tap(find.byKey(MeshStatusBar.versionsKey));
+    await tester.pump();
+    expect(find.byType(FirmwareTag), findsNWidgets(3));
+    expect(tester.takeException(), isNull);
+  });
 
   for (final s in sizes.entries) {
     testWidgets(

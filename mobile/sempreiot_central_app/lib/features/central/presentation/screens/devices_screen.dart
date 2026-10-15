@@ -9,6 +9,7 @@ import '../../application/root_election_provider.dart';
 import '../../application/topology_provider.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
 import '../widgets/device_avatar.dart';
+import '../widgets/device_traffic_ripple.dart';
 
 import 'device_settings_screen.dart';
 
@@ -371,6 +372,11 @@ class _DeviceCard extends StatelessWidget {
                   Stack(
                     clipBehavior: Clip.none,
                     children: [
+                      // A frame of the unit crossing the system — a
+                      // detector's wake above all — ripples here as it
+                      // does on the Rede map. (Its LED dot is its LED: a
+                      // detector's stays dark on a timer wake, §12.8.)
+                      DeviceTrafficRipple(node: node, diameter: 64),
                       DeviceModelAvatar(
                         node: node,
                         isRoot: isRoot,

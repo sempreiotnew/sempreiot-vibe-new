@@ -164,14 +164,24 @@ class _VerdictChip extends StatelessWidget {
   }
 }
 
-class SystemTestReportSheet extends StatelessWidget {
+class SystemTestReportSheet extends ConsumerWidget {
   const SystemTestReportSheet({super.key, required this.run});
+
+  /// The run as it was when the sheet opened; while the sheet is up it
+  /// follows the same run as the tests move (a test that ends while its
+  /// report is open reads "Concluído", not "Em andamento" for ever).
   final SystemTestRun run;
 
   static const sheetKey = ValueKey('system-test-report');
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tests = ref.watch(systemTestsViewProvider);
+    final run = [
+          if (tests.running case final r?) r,
+          ...tests.recent,
+        ].where((r) => r.id == this.run.id).firstOrNull ??
+        this.run;
     final counts = <(String, int, Color)>[
       ('confirmaram', run.confirmed, AppColors.ledCyan),
       if (run.pending > 0) ('pendentes', run.pending, context.textSecondary),

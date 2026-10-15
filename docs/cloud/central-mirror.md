@@ -136,12 +136,16 @@ tablet). It does not send a frame itself — it asks the central:
    answers at once with the event `["identify_sending","<mac>",0]` — "heard". For a unit it knows,
    hears and that is not a battery detector it then sends IDENTIFY (10 s) the same way its own
    menu does, and writes an audit line (`remote` / `identify`, with who asked).
-3. The blink starts only when the root confirms. The tablet's LED engine starts it and the mirror
+3. The blink starts only when the **unit itself** confirms — its own ACK relayed up by the board
+   (2026-10-15; the board's ACK only says it relayed the command: a unit that just died blinked on
+   the screens alone). The tablet's LED engine starts it and the mirror
    carries it to **every** watching phone as an event in the next frame batch
    (`"events":[["identify","<mac>",10]]`); each phone's LED engine starts the same blue blink. An
    Identificar pressed on the tablet reaches the phones the same way.
 4. No confirmation from the root: `["identify_failed","<mac>",0]`, and the asking phone says "sem
-   confirmação do root" (also when nothing follows the "heard" for 15 s).
+   confirmação do root" (also when nothing follows the "heard" for 15 s). The board took it but the
+   unit never answered: the command's own red step (`command` event, "sem resposta", after 15 s on
+   the tablet) — the phone never gives a verdict of its own.
 5. No "heard" within 6 s: the phone says "a central não respondeu" — the central is offline, or
    its app is a build that does not know the request. **Both apps must carry this feature: the
    tablet's build as well as the phone's.**

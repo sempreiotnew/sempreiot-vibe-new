@@ -51,9 +51,12 @@ import 'topology_provider.dart';
 /// docs/cloud/central-mirror.md) this same engine runs on the ticks the
 /// central publishes: same rules, same colours, later still by the trip
 /// through the cloud. The IDENTIFY blink is mirrored too: it starts on the
-/// root's ACK, which is not a tick, so the tablet's engine announces it on
-/// [identifies] and the mirror carries it to the phones — whether the
-/// command came from the tablet's menu or from a phone. A phone that opens
+/// UNIT's own ACK (device_command_provider `onConfirmed`; never on the
+/// board's, which only says the board relayed it — a unit that just died
+/// blinked on the screen alone, fixed 2026-10-15), which is not a tick, so
+/// the tablet's engine announces it on [identifies] and the mirror carries
+/// it to the phones — whether the command came from the tablet's menu or
+/// from a phone. A phone that opens
 /// a central mid-alarm shows the unit red from the latch, as the tablet
 /// does after a restart.
 class DeviceLedEngine extends ChangeNotifier {
@@ -201,7 +204,7 @@ class DeviceLedEngine extends ChangeNotifier {
   /// Every IDENTIFY blink this engine started, for the central mirror.
   Stream<({String mac, int seconds})> get identifies => _identifies.stream;
 
-  /// An IDENTIFY was confirmed by the root: the unit is blinking now.
+  /// An IDENTIFY was confirmed by the unit itself: it is blinking now.
   void identify(String mac, int seconds) {
     _led(mac).identify(seconds, _clock());
     if (!_identifies.isClosed) _identifies.add((mac: mac, seconds: seconds));

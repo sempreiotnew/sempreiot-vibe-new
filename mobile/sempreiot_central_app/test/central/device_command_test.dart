@@ -608,6 +608,97 @@ void main() {
       t.dispose();
     });
   });
+
+  group('a unit that never confirms what the board took (2026-10-15)', () {
+    test(
+        'the board\'s ✓ waits the unit\'s window, then turns red '
+        '"sem resposta"; a retry is allowed; the red leaves by itself', () {
+      fakeAsync((async) {
+        final t = tracker();
+        t.run(unit, DeviceCommandKind.identify);
+        boardAck.complete(true);
+        async.flushMicrotasks();
+        expect(t.state[unit]!.step, DeviceCommandStep.boardAck);
+        async.elapse(unitAckWindow - const Duration(seconds: 1));
+        expect(t.state[unit]!.step, DeviceCommandStep.boardAck,
+            reason: 'still waiting for the unit — before, the ✓ just left');
+        async.elapse(const Duration(seconds: 2));
+        expect(t.state[unit]!.step, DeviceCommandStep.failed);
+        expect(t.state[unit]!.note, DeviceCommandTracker.noAnswerNote);
+        expect(t.state[unit]!.inFlight, isFalse);
+        async.elapse(const Duration(seconds: 11));
+        expect(t.state[unit], isNull);
+        t.dispose();
+      });
+    });
+
+    test('a detector\'s window is its next wake', () {
+      fakeAsync((async) {
+        final t = tracker();
+        t.run(unit, DeviceCommandKind.soundOff, waitsForWake: true);
+        boardAck.complete(true);
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 70));
+        expect(t.state[unit]!.step, DeviceCommandStep.boardAck);
+        async.elapse(const Duration(seconds: 6));
+        expect(t.state[unit]!.step, DeviceCommandStep.failed);
+        expect(t.state[unit]!.note, DeviceCommandTracker.noAnswerNote);
+        t.dispose();
+      });
+    });
+
+    test(
+        'IDENTIFY lights the unit on ITS confirmation — never on the '
+        'board\'s, so a unit that just died blinks nowhere', () {
+      fakeAsync((async) {
+        final lit = <String>[];
+        boardAck = Completer<bool>();
+        final t = DeviceCommandTracker(
+          send: (_, __) => boardAck.future,
+          onConfirmed: (mac, kind) {
+            if (kind == DeviceCommandKind.identify) lit.add(mac);
+          },
+          deliveries: deliveries.stream,
+          traffic: traffic.stream,
+        );
+        t.run(unit, DeviceCommandKind.identify);
+        boardAck.complete(true);
+        async.flushMicrotasks();
+        expect(lit, isEmpty,
+            reason: 'the board relayed it; the unit has not said it has it');
+        // Dead: nothing comes back. Red, and the LED never blinked.
+        async.elapse(unitAckWindow + const Duration(seconds: 1));
+        expect(t.state[unit]!.step, DeviceCommandStep.failed);
+        expect(lit, isEmpty);
+
+        // Alive: its own ACK — now it blinks.
+        boardAck = Completer<bool>();
+        t.run(unit, DeviceCommandKind.identify);
+        boardAck.complete(true);
+        async.flushMicrotasks();
+        deliveries.add(unit);
+        async.flushMicrotasks();
+        expect(t.state[unit]!.step, DeviceCommandStep.delivered);
+        expect(lit, [unit]);
+        t.dispose();
+      });
+    });
+
+    test('a phone shows the central\'s verdict, never one of its own', () {
+      fakeAsync((async) {
+        final t = DeviceCommandTracker(
+          askCentral: (_) async => null,
+          traffic: traffic.stream,
+        );
+        t.run(unit, DeviceCommandKind.identify);
+        async.flushMicrotasks();
+        expect(t.state[unit]!.step, DeviceCommandStep.boardAck);
+        async.elapse(unitAckWindow + const Duration(seconds: 1));
+        expect(t.state[unit], isNull, reason: 'nothing heard: let go, no red');
+        t.dispose();
+      });
+    });
+  });
 }
 
 final _t0 = DateTime.utc(2026, 10, 8);

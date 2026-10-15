@@ -601,7 +601,10 @@ final centralMirrorPublisherProvider = Provider<void>((ref) {
     remoteOta: (user, command) =>
         ref.read(remoteOtaProvider).handle(user, command),
     // The same path as the tablet's own popover (device_menu.dart): the
-    // command goes down, and the blink starts only on the board's ACK.
+    // command goes down; the blink starts only on the unit's own ACK. The
+    // answer here is the board's (it took the command); "identify_failed"
+    // when it did not — the unit's silence reaches the phones as the
+    // command's own red step.
     identify: (mac, seconds, by) async {
       final ok = await ref
           .read(deviceCommandProvider.notifier)

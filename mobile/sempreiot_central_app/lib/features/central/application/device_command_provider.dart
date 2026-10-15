@@ -180,6 +180,11 @@ const _testAnswerWithin = Duration(seconds: 10);
 /// A battery unit's command waits for its next wake (60 s cadence).
 const _wakeWindow = Duration(seconds: 75);
 
+/// A mains unit's own ACK comes back within this of the board's; past it
+/// the unit is not going to confirm (a unit that just died: the registry
+/// still says online, nothing answers) — red, "sem resposta".
+const unitAckWindow = Duration(seconds: 15);
+
 /// IDENTIFY: how long the unit blinks.
 const identifyBlinkSeconds = 10;
 
@@ -195,12 +200,14 @@ class DeviceCommandTracker
   DeviceCommandTracker({
     Future<bool> Function(String mac, DeviceCommandKind kind)? send,
     Future<String?> Function(String mac)? askCentral,
+    void Function(String mac, DeviceCommandKind kind)? onConfirmed,
     Stream<String>? deliveries,
     Stream<SafrTrafficTick>? traffic,
     List<TopologyNode> Function()? nodes,
     DateTime Function()? clock,
   })  : _send = send,
         _askCentral = askCentral,
+        _onConfirmed = onConfirmed,
         _nodes = nodes,
         _clock = clock ?? DateTime.now,
         super(const {}) {
@@ -214,6 +221,12 @@ class DeviceCommandTracker
 
   /// Phone: asks the central for IDENTIFY; null = it went, else why not.
   final Future<String?> Function(String mac)? _askCentral;
+
+  /// The UNIT confirmed a command to it (its own ACK came back up): what
+  /// follows from the unit having it — the IDENTIFY blink on its LED —
+  /// starts here, never on the board's ACK (a unit that just died would
+  /// blink on the screen and nowhere else, 2026-10-15).
+  final void Function(String mac, DeviceCommandKind kind)? _onConfirmed;
 
   /// The map: who a broadcast must hear back from.
   final List<TopologyNode> Function()? _nodes;
@@ -561,6 +574,7 @@ class DeviceCommandTracker
         (cur.step == DeviceCommandStep.sending ||
             cur.step == DeviceCommandStep.boardAck)) {
       _advance(mac, DeviceCommandStep.delivered);
+      if (!cur.kind.fromUnit) _onConfirmed?.call(mac, cur.kind);
       return;
     }
     // A unit confirming a broadcast: its own ✓✓ — even after the window
@@ -629,6 +643,62 @@ class DeviceCommandTracker
     }
   }
 
+  /// A phone: the central's record says the test ENDED (its retained
+  /// message moved on, with nobody running). Whatever this phone still
+  /// shows of it — the clocks, the Central's ✓ — is closed as the record
+  /// says, in case the batch with the last steps never reached it.
+  /// Nothing when this phone shows no running test (an old record on an
+  /// app just opened must not light ticks for a test long over).
+  void closeFromRun(SystemTestRun run) {
+    if (run.running) return;
+    final all = state[safrBroadcastMac];
+    if (all == null ||
+        all.kind != DeviceCommandKind.test ||
+        !all.broadcastRunning) {
+      return;
+    }
+    final now = _clock();
+    for (final u in run.units) {
+      final (step, note) = switch (u.outcome) {
+        SystemTestOutcome.confirmed => (DeviceCommandStep.delivered, null),
+        SystemTestOutcome.noAnswer => (DeviceCommandStep.failed, noAnswerNote),
+        SystemTestOutcome.missing => (DeviceCommandStep.failed, missingNote),
+        SystemTestOutcome.cancelled ||
+        SystemTestOutcome.pending ||
+        SystemTestOutcome.pendingWake =>
+          (DeviceCommandStep.failed, cancelledNote),
+      };
+      final cur = state[u.mac];
+      if (cur != null && cur.kind == DeviceCommandKind.test) {
+        if (cur.step.index < step.index ||
+            cur.step == DeviceCommandStep.failed) {
+          _put(cur.copyWith(step: step, note: note, updatedAt: now));
+        }
+      } else if (cur == null) {
+        _broadcastUnits.add(u.mac);
+        _put(DeviceCommandStatus(
+          mac: u.mac,
+          kind: DeviceCommandKind.test,
+          step: step,
+          startedAt: all.startedAt,
+          updatedAt: now,
+          by: all.by,
+          note: note,
+        ));
+      }
+    }
+    _broadcastWaiting.clear();
+    _put(all.copyWith(
+      step: run.verdict == SystemTestVerdict.passed
+          ? DeviceCommandStep.delivered
+          : DeviceCommandStep.failed,
+      note: run.verdict == SystemTestVerdict.cancelled
+          ? cancelledNote
+          : _broadcastNote(),
+      updatedAt: now,
+    ));
+  }
+
   /// Moves forward only (a late board ACK never undoes the unit's).
   void _advance(String mac, DeviceCommandStep step) {
     final cur = state[mac];
@@ -648,11 +718,17 @@ class DeviceCommandTracker
     var linger = _lingerAfter[s.step]!;
     final broadcastWaits =
         s.mac == safrBroadcastMac && s.step == DeviceCommandStep.boardAck;
+    // The board took a command to one unit: its ✓ waits for the unit's
+    // own ACK — seconds for a mains unit, the next wake for a detector.
+    final awaitsUnit = s.mac != safrBroadcastMac &&
+        !s.kind.fromUnit &&
+        s.step == DeviceCommandStep.boardAck &&
+        !_broadcastUnits.contains(s.mac);
     if (broadcastWaits ||
         (s.waitsForWake && s.step == DeviceCommandStep.sending)) {
       linger = broadcastWindow;
-    } else if (s.waitsForWake && s.step == DeviceCommandStep.boardAck) {
-      linger = _wakeWindow;
+    } else if (awaitsUnit) {
+      linger = s.waitsForWake ? _wakeWindow : unitAckWindow;
     } else if (s.kind == DeviceCommandKind.test &&
         s.step == DeviceCommandStep.delivered) {
       linger = _testAnswerWithin;
@@ -665,6 +741,16 @@ class DeviceCommandTracker
       // invents one — with nothing heard it just lets the test go.
       if (broadcastWaits && _send != null) {
         _broadcastTimedOut();
+        return;
+      }
+      // The unit never confirmed what the board took: red, and a tap
+      // tries again. (A phone shows the central's own verdict, which
+      // comes as a `command` event; with nothing heard it lets it go.)
+      if (awaitsUnit && _send != null) {
+        _put(s.copyWith(
+            step: DeviceCommandStep.failed,
+            note: noAnswerNote,
+            updatedAt: _clock()));
         return;
       }
       // A unit of a broadcast keeps its outcome for as long as the
@@ -722,7 +808,11 @@ final deviceCommandProvider = StateNotifierProvider<DeviceCommandTracker,
     // snapshot's and the events' timing.
     ref.listen<MirrorTests?>(mirrorTestsProvider(viewed), (_, next) {
       final run = next?.running;
-      if (run != null) tracker.seedFromRun(run);
+      if (run != null) {
+        tracker.seedFromRun(run);
+      } else if (next?.recent.firstOrNull case final last?) {
+        tracker.closeFromRun(last);
+      }
     }, fireImmediately: true);
     return tracker;
   }
@@ -731,16 +821,19 @@ final deviceCommandProvider = StateNotifierProvider<DeviceCommandTracker,
     traffic: traffic,
     deliveries: downlink.deliveries,
     nodes: () => ref.read(topologyProvider),
+    // The unit starts its blue IDENTIFY blink when the command reaches it:
+    // the screen's LED starts when the unit's own ACK says it did — not on
+    // the board's ACK, which only says the board relayed it.
+    onConfirmed: (mac, kind) {
+      if (kind == DeviceCommandKind.identify) {
+        ref.read(deviceLedProvider).identify(mac, identifyBlinkSeconds);
+      }
+    },
     send: (mac, kind) async {
       switch (kind) {
         case DeviceCommandKind.identify:
-          final ok = await downlink.sendCommand(mac, SafrCommand.identify,
+          return downlink.sendCommand(mac, SafrCommand.identify,
               args: const [identifyBlinkSeconds]);
-          // The unit starts its blue IDENTIFY blink on receipt; mirror it.
-          if (ok) {
-            ref.read(deviceLedProvider).identify(mac, identifyBlinkSeconds);
-          }
-          return ok;
         case DeviceCommandKind.test:
           return downlink.sendCommand(mac, SafrCommand.test);
         case DeviceCommandKind.soundOff:
