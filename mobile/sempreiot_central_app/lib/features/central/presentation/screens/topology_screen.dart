@@ -58,8 +58,10 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
     // A user's phone viewing a central: the map and nothing that commands.
     final viewOnly = ref.watch(mirrorViewOnlyProvider);
     final sync = ref.watch(boardSyncProvider);
-    // The firmware pills, on or off from the strip (kept on this device).
+    // The firmware pills, and the tree or the radial picture: on or off
+    // from the strip (kept on this device).
     final showVersions = ref.watch(redeShowVersionsProvider);
+    final radial = ref.watch(redeRadialProvider);
     TopologyNode? board;
     final nodes = <TopologyNode>[];
     for (final n in allNodes) {
@@ -84,6 +86,8 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
           versionsShown: showVersions,
           onToggleVersions: () =>
               ref.read(redeShowVersionsProvider.notifier).toggle(),
+          radial: radial,
+          onToggleRadial: () => ref.read(redeRadialProvider.notifier).toggle(),
         ),
         // The board's link is down: said here, in words, before anything
         // on the map is read as live.
@@ -110,6 +114,7 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
             // dispositivos" only.
             showOta: false,
             showVersions: showVersions,
+            radial: radial,
           ),
         ),
       ],

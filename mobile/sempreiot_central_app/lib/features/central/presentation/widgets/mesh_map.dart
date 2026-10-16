@@ -22,7 +22,7 @@ import '../../domain/safr/safr_v2_frame.dart' show SafrMsgType;
 import 'device_command_widgets.dart';
 import 'device_menu.dart' show deviceAnchorOf;
 import 'device_avatar.dart';
-
+import 'mesh_radial_legend.dart';
 import 'ota_rede_widgets.dart';
 
 /// The 2D map of the fire-alarm mesh, shared by Rede and "Atualizar
@@ -39,6 +39,7 @@ class MeshMap extends ConsumerStatefulWidget {
     required this.onNodeTap,
     this.showOta = true,
     this.showVersions = true,
+    this.radial = false,
     this.overlay,
     this.selected = const {},
     this.boardSelected = false,
@@ -68,6 +69,11 @@ class MeshMap extends ConsumerStatefulWidget {
   /// CENTRAL). Rede's strip switches it off for a cleaner map
   /// (`redeShowVersionsProvider`); "Atualizar dispositivos" always shows it.
   final bool showVersions;
+
+  /// The radial picture (`_MeshLayout.balloon`, 2026-10-15): the mesh as
+  /// clusters of dots around the hub, for a network too big to read as
+  /// rows — Rede's switch. False: the tree.
+  final bool radial;
 
   /// What is drawn on the units of an update; null = the board's own
   /// rollout ("Atualizar dispositivos" passes its run, which outlives the
@@ -248,6 +254,13 @@ class _MeshMapState extends ConsumerState<MeshMap>
   @override
   void didUpdateWidget(MeshMap old) {
     super.didUpdateWidget(old);
+    // Tree ↔ radial: the units slide to the other picture, and the
+    // screen fits the whole of it once more.
+    if (old.radial != widget.radial) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _fitToView();
+      });
+    }
     final given = widget.overlay;
     if (widget.showOta && given != null && given.downloading != _downloading) {
       _onDownloading(given.downloading);
@@ -366,13 +379,17 @@ class _MeshMapState extends ConsumerState<MeshMap>
   /// goes smaller — a very tall tree is panned instead.
   static const _fitFloor = 0.7;
 
+  /// The radial picture is dots and lines when small, so it goes much
+  /// further out: the big picture is the point of it.
+  static const _radialFitFloor = 0.2;
+
   /// Opening/"fit" scale: the whole canvas in the viewport when that stays
-  /// readable, else [_fitFloor]; never above 1:1.
+  /// readable, else the floor; never above 1:1.
   double get _fitScale {
     if (_viewSize.isEmpty || _canvasSize.isEmpty) return 1.0;
     final fit = math.min(_viewSize.width / _canvasSize.width,
         _viewSize.height / _canvasSize.height);
-    return fit.clamp(_fitFloor, 1.0);
+    return fit.clamp(widget.radial ? _radialFitFloor : _fitFloor, 1.0);
   }
 
   /// "Ajustar à tela": the tree centred in the viewport (in landscape it
@@ -629,7 +646,9 @@ class _MeshMapState extends ConsumerState<MeshMap>
     return LayoutBuilder(builder: (context, constraints) {
       final size = Size(constraints.maxWidth, constraints.maxHeight);
       _viewSize = size;
-      final target = _MeshLayout.compute(nodes, size, boardMac: boardMac);
+      final target = widget.radial
+          ? _MeshLayout.balloon(nodes, size, boardMac: boardMac)
+          : _MeshLayout.compute(nodes, size, boardMac: boardMac);
       _retarget(target, size);
       _canvasSize = target.canvas;
       final key = (size, target.canvas);
@@ -699,6 +718,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
                                       otaLink: activity != null,
                                       faded: _faded(nodes),
                                       waveStartedAt: waveStartedAt,
+                                      transform: _transform,
                                     ),
                                   ),
                                 ),
@@ -721,25 +741,41 @@ class _MeshMapState extends ConsumerState<MeshMap>
                                 ),
                                 for (final node in nodes)
                                   if (layout.positions.containsKey(node.mac))
-                                    _NodeChip(
-                                      node: node,
-                                      position: layout.positions[node.mac]!,
-                                      isRoot: node.online &&
-                                          node.mac == election.rootMac,
-                                      isCandidate: election.electing &&
-                                          election.candidates
-                                              .contains(node.mac),
-                                      activity: rollout[node.mac],
-                                      pending: pendingFirmwareFor(node, held),
-                                      showVersion: widget.showVersions,
-                                      selected:
-                                          widget.selected.contains(node.mac),
-                                      faded: widget.focus != null &&
-                                          !widget.focus!.contains(node.mac),
-                                      selectionTarget: widget.selectionTarget,
-                                      onTap: (anchor) =>
-                                          widget.onNodeTap(node, anchor),
-                                    ),
+                                    if (layout.radial)
+                                      _RadialChip(
+                                        node: node,
+                                        position: layout.positions[node.mac]!,
+                                        isRoot: node.online &&
+                                            node.mac == election.rootMac,
+                                        isCandidate: election.electing &&
+                                            election.candidates
+                                                .contains(node.mac),
+                                        transform: _transform,
+                                        pitch: layout.pitch,
+                                        showVersion: widget.showVersions,
+                                        onTap: (anchor) =>
+                                            widget.onNodeTap(node, anchor),
+                                      )
+                                    else
+                                      _NodeChip(
+                                        node: node,
+                                        position: layout.positions[node.mac]!,
+                                        isRoot: node.online &&
+                                            node.mac == election.rootMac,
+                                        isCandidate: election.electing &&
+                                            election.candidates
+                                                .contains(node.mac),
+                                        activity: rollout[node.mac],
+                                        pending: pendingFirmwareFor(node, held),
+                                        showVersion: widget.showVersions,
+                                        selected:
+                                            widget.selected.contains(node.mac),
+                                        faded: widget.focus != null &&
+                                            !widget.focus!.contains(node.mac),
+                                        selectionTarget: widget.selectionTarget,
+                                        onTap: (anchor) =>
+                                            widget.onNodeTap(node, anchor),
+                                      ),
                                 ..._commandMarks(
                                   commands,
                                   layout,
@@ -756,18 +792,26 @@ class _MeshMapState extends ConsumerState<MeshMap>
                 ),
                 // Lane labels live in screen space: pinned to the
                 // left edge whatever the pan/zoom, following only
-                // the rows' vertical position.
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: CustomPaint(
-                      painter: _LaneLabelsPainter(
-                        layout: layout,
-                        transform: _transform,
-                        isDark: context.isDark,
+                // the rows' vertical position. The radial picture
+                // has no rows: the numbers at the bottom left instead.
+                if (!layout.radial)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: CustomPaint(
+                        painter: _LaneLabelsPainter(
+                          layout: layout,
+                          transform: _transform,
+                          isDark: context.isDark,
+                        ),
                       ),
                     ),
+                  )
+                else
+                  Positioned(
+                    left: 12,
+                    bottom: 12,
+                    child: MeshRadialLegend(nodes: widget.nodes),
                   ),
-                ),
                 Positioned(
                   right: 12,
                   bottom: 12,
@@ -796,8 +840,7 @@ extension on _MeshMapState {
   }) {
     if (commands.isEmpty) return const [];
     final marks = <Widget>[];
-    const avatar = 46.0;
-    final ripple = CommandRipple.extentFor(avatar);
+    final byMac = {for (final n in nodes) n.mac: n};
     DeviceCommandStatus? latestTaken;
     for (final s in commands.values) {
       // The Central's own ticks: the broadcast's while one runs, else the
@@ -817,8 +860,14 @@ extension on _MeshMapState {
       }
       final at = layout.positions[s.mac];
       if (at == null) continue;
-      // The avatar's centre: the chip's top is 26 above the slot.
-      final centre = Offset(at.dx, at.dy - 26 + avatar / 2);
+      // The avatar: on the tree the model (46 px, the chip's top 26 above
+      // the slot); on the radial picture the dot, centred on the slot.
+      final unit = byMac[s.mac];
+      final avatar =
+          layout.radial && unit != null ? radialDotDiameter(unit) : 46.0;
+      final centre =
+          layout.radial ? at : Offset(at.dx, at.dy - 26 + avatar / 2);
+      final ripple = CommandRipple.extentFor(avatar);
       if (s.step == DeviceCommandStep.delivered ||
           s.step == DeviceCommandStep.answered ||
           s.step == DeviceCommandStep.failed) {
@@ -826,7 +875,8 @@ extension on _MeshMapState {
           key: ValueKey('cmd-ripple-${s.mac}-${s.step.name}-${s.startedAt}'),
           left: centre.dx - ripple / 2,
           top: centre.dy - ripple / 2,
-          child: CommandRipple(color: commandStepColor(s.step)),
+          child:
+              CommandRipple(color: commandStepColor(s.step), diameter: avatar),
         ));
       }
       final canRetry = s.step == DeviceCommandStep.failed &&
@@ -1003,7 +1053,12 @@ class _MeshGraphPainter extends CustomPainter {
     this.otaLink = false,
     this.faded = const {},
     this.waveStartedAt,
+    this.transform,
   }) : super(repaint: repaint);
+
+  /// The map's pan/zoom, for what is drawn only with room on screen (the
+  /// dBm labels of the radial picture).
+  final TransformationController? transform;
 
   /// Every unit confirmed a broadcast command: a cyan wave from the Central
   /// down the rows, each a little after the one above, for [_waveMs].
@@ -1056,7 +1111,8 @@ class _MeshGraphPainter extends CustomPainter {
       final ghost = (isDark ? Colors.white : Colors.black)
           .withValues(alpha: n.stale ? 0.10 : 0.22);
 
-      final path = _linkPath(from, to);
+      final path =
+          layout.radial ? _straightPath(from, to) : _linkPath(from, to);
       // Outside the update that runs: the link fades with its unit.
       final fade = faded.contains(n.mac);
       if (fade) {
@@ -1119,7 +1175,9 @@ class _MeshGraphPainter extends CustomPainter {
       // dead unit's reading is from before it went; a presumed link's was
       // to another parent). A sleeping leaf keeps its last value, in the
       // sleep colour.
-      if (n.online && !target.presumed && n.rssi != null) {
+      // On the radial picture only once there is room for them (the same
+      // rule as the names): zoomed out it is dots and lines.
+      if (n.online && !target.presumed && n.rssi != null && _labelRoom) {
         _linkLabel(canvas, path, '${n.rssi} dBm',
             candidate ? AppColors.warning : signal);
       }
@@ -1260,6 +1318,19 @@ class _MeshGraphPainter extends CustomPainter {
       }
     }
   }
+
+  /// Zoomed in enough for the link labels (always, on the tree).
+  bool get _labelRoom {
+    if (!layout.radial) return true;
+    final t = transform;
+    if (t == null) return true;
+    return _scaleOf(t.value) * layout.pitch >= radialNameRoom;
+  }
+
+  /// The radial picture's link: straight, hub to cluster to unit.
+  Path _straightPath(Offset from, Offset to) => Path()
+    ..moveTo(from.dx, from.dy)
+    ..lineTo(to.dx, to.dy);
 
   Path _linkPath(Offset from, Offset to) {
     // Gentle vertical S-curve: fans siblings out from their shared parent.
@@ -1513,61 +1584,33 @@ class _LaneLabelsPainter extends CustomPainter {
 
 // ── Layout ───────────────────────────────────────────────────────────────────
 
-/// Where every node sits on the canvas, plus the lanes the painter labels.
-///
-/// The tree always grows top → bottom: central row on top, one row per
-/// layer, rotated labels in a left gutter. Across, it is a tidy tree
-/// (2026-10-15): every unit sits under the unit its link is drawn to
-/// (`meshLinkTargetOf`), its children side by side beneath it, each
-/// subtree in its own span of the width, so no link ever crosses another
-/// and a unit that changes parent moves next to the new one — before, a
-/// row was spread in the order the units were heard, and a child could
-/// sit at the far end of the row from its parent with its line cutting
-/// through everyone else's. The canvas is at least the viewport and grows
-/// when a row or a lane would otherwise overlap chips; the screen then
-/// zooms out to fit it (landscape) rather than changing the picture.
-class _MeshLayout {
-  const _MeshLayout({
-    required this.positions,
-    required this.centralLane,
-    required this.laneCenters,
-    required this.canvas,
-  });
+/// The tree the links draw, shared by both layouts: every unit under the
+/// unit its link goes to (`meshLinkTargetOf` — a live unit under a dead
+/// parent hangs off the nearest live ancestor, as its line does), the
+/// roots and the strays under the central. Siblings in a fixed order
+/// (layer, then MAC) so the picture holds still between frames; each
+/// subtree's width in pitches (a unit without children takes one). Units
+/// a stale registry puts in a loop among themselves are never reached
+/// from the central: they go under it, and the loop is cut where it
+/// closes.
+class _MeshTree {
+  _MeshTree._(this.children, this.width, this.rowOf, this.layerKeys);
 
-  final Map<String, Offset> positions;
+  final Map<String, List<TopologyNode>> children;
+  final Map<String, int> width;
 
-  /// y of the central row.
-  final double centralLane;
+  /// Layer → row (1 = the first under the central).
+  final Map<int, int> rowOf;
+  final List<int> layerKeys;
 
-  /// y of each mesh layer's row.
-  final Map<int, double> laneCenters;
+  int get total => width[_centralKey]!;
 
-  /// Canvas size the chips and painter are laid out in (≥ viewport).
-  final Size canvas;
-
-  // Chip footprint: node chip 104 × ~62, central chip 120 × ~95.
-  // The same margin on both sides keeps the tree centred; the left one
-  // also hosts the rotated lane labels.
-  static const _gutter = 36.0;
-  static const _edge = 12.0;
-  static const _minAcross = 116.0; // node pitch along a row
-  static const _minLane = 104.0; // row pitch
-  static const _tabletAside = 112.0; // tablet ↔ central, centre to centre
-
-  static _MeshLayout compute(List<TopologyNode> nodes, Size viewport,
-      {String? boardMac}) {
+  static _MeshTree build(List<TopologyNode> nodes, String? boardMac) {
     final byMac = {for (final n in nodes) n.mac: n};
     final layerKeys = {for (final n in nodes) n.layer}.toList()..sort();
     final rowOf = {
       for (var i = 0; i < layerKeys.length; i++) layerKeys[i]: i + 1,
     };
-    final laneCount = layerKeys.length + 1; // + central row
-
-    // The tree the links draw: every unit under the unit its link goes
-    // to — a live unit under a dead parent hangs off the nearest live
-    // ancestor, as its line does — the roots and the strays under the
-    // central. Siblings in a fixed order (layer, then MAC) so the picture
-    // holds still between frames.
     final children = <String, List<TopologyNode>>{};
     for (final n in nodes) {
       var target = meshLinkTargetOf(n, byMac, boardMac)?.key ?? _centralKey;
@@ -1580,11 +1623,6 @@ class _MeshLayout {
         return c != 0 ? c : a.mac.compareTo(b.mac);
       });
     }
-
-    // Each subtree's width in pitches (a unit without children takes
-    // one), walking down from the central. Units a stale registry puts in
-    // a loop among themselves are never reached that way: they go under
-    // the central, and the loop is cut where it closes.
     final width = <String, int>{};
     final reached = <String>{};
     int measure(String key) {
@@ -1607,8 +1645,90 @@ class _MeshLayout {
     for (final k in children[_centralKey] ?? const <TopologyNode>[]) {
       total += width[k.mac]!;
     }
-    total = math.max(total, 1);
-    width[_centralKey] = total;
+    width[_centralKey] = math.max(total, 1);
+    return _MeshTree._(children, width, rowOf, layerKeys);
+  }
+}
+
+/// The dot a unit is drawn as on the radial map: a node a little bigger
+/// than a detector.
+double radialDotDiameter(TopologyNode n) => n.isLeaf ? 16 : 20;
+
+/// The key of a unit's dot on the radial map (tests).
+Key radialChipKey(String mac) => ValueKey('radial-$mac');
+
+/// The room between neighbouring units, on screen, from which the radial
+/// map shows their names (and the dBm on the links): zoom in and they
+/// come, zoom out and the picture is dots and lines.
+const radialNameRoom = 40.0;
+
+/// Where every node sits on the canvas, plus the lanes the painter labels.
+///
+/// Two pictures of the same tree (`_MeshTree`):
+///
+/// **Tree** ([compute]): top → bottom, central row on top, one row per
+/// layer, rotated labels in a left gutter. Across, it is a tidy tree
+/// (2026-10-15): every unit under the unit its link is drawn to, its
+/// children side by side beneath it, each subtree in its own span of the
+/// width, so no link ever crosses another and a unit that changes parent
+/// moves next to the new one.
+///
+/// **Radial** ([balloon], 2026-10-15, for a mesh too big to read as rows):
+/// a balloon tree — every unit's children sit on a small circle around it,
+/// each subtree inside its own circle, the circles of siblings side by
+/// side on their parent's ring. The mesh root is the hub, with the CENTRAL
+/// beside it (every frame goes through the root anyway); with no single
+/// root the central is the hub. Links are short and local, clusters are
+/// visible at a glance, and nothing crosses: sibling circles are disjoint,
+/// a parent's link enters its child's circle through a slot kept free of
+/// grandchildren. Concentric rings by layer were tried on paper and
+/// dropped: with one root owning the whole circle its links cut straight
+/// through the hub.
+///
+/// The canvas is at least the viewport and grows when the picture needs
+/// more; the screen then zooms out to fit it rather than changing it.
+class _MeshLayout {
+  const _MeshLayout({
+    required this.positions,
+    required this.centralLane,
+    required this.laneCenters,
+    required this.canvas,
+    this.radial = false,
+    this.pitch = 116,
+  });
+
+  final Map<String, Offset> positions;
+
+  /// y of the central row (tree).
+  final double centralLane;
+
+  /// y of each mesh layer's row (tree); the layers alone (radial).
+  final Map<int, double> laneCenters;
+
+  /// Canvas size the chips and painter are laid out in (≥ viewport).
+  final Size canvas;
+
+  /// The balloon picture: no lanes, straight links, dots for units.
+  final bool radial;
+
+  /// The least distance between two neighbouring units, in canvas pixels
+  /// (names are shown when `scale × pitch` leaves room on screen).
+  final double pitch;
+
+  // Chip footprint: node chip 104 × ~62, central chip 120 × ~95.
+  // The same margin on both sides keeps the tree centred; the left one
+  // also hosts the rotated lane labels.
+  static const _gutter = 36.0;
+  static const _edge = 12.0;
+  static const _minAcross = 116.0; // node pitch along a row
+  static const _minLane = 104.0; // row pitch
+  static const _tabletAside = 112.0; // tablet ↔ central, centre to centre
+
+  static _MeshLayout compute(List<TopologyNode> nodes, Size viewport,
+      {String? boardMac}) {
+    final tree = _MeshTree.build(nodes, boardMac);
+    final total = tree.total;
+    final laneCount = tree.layerKeys.length + 1; // + central row
 
     // A pitch per leaf of the tree, never under _minAcross: two units of
     // one row are in different spans, so they are at least a pitch apart.
@@ -1625,13 +1745,13 @@ class _MeshLayout {
     // the column its subtree owns, crossing nobody).
     final positions = <String, Offset>{};
     void place(String key, double from, int row) {
-      final w = width[key]!;
+      final w = tree.width[key]!;
       positions[key] = Offset(_gutter + pitch * (from + w / 2), laneY(row));
       var cursor = from;
-      for (final k in children[key] ?? const <TopologyNode>[]) {
+      for (final k in tree.children[key] ?? const <TopologyNode>[]) {
         if (positions.containsKey(k.mac)) continue; // the loop, cut
-        place(k.mac, cursor, rowOf[k.layer]!);
-        cursor += width[k.mac]!;
+        place(k.mac, cursor, tree.rowOf[k.layer]!);
+        cursor += tree.width[k.mac]!;
       }
     }
 
@@ -1644,8 +1764,191 @@ class _MeshLayout {
     return _MeshLayout(
       positions: positions,
       centralLane: laneY(0),
-      laneCenters: {for (final l in layerKeys) l: laneY(rowOf[l]!)},
+      laneCenters: {for (final l in tree.layerKeys) l: laneY(tree.rowOf[l]!)},
       canvas: Size(canvasW, height),
+      pitch: pitch,
+    );
+  }
+
+  // The balloon picture's measures (canvas pixels).
+  static const _ballMinRing = 60.0; // a unit's children, at least this far
+  static const _ballGap = 12.0; // between neighbouring circles
+  static const _ballCentralR = 62.0; // the CENTRAL chip's own circle
+  static const _ballCentralAt = 116.0; // hub ↔ central, centre to centre
+  static const _ballMargin = 76.0; // round the picture (names, the chip)
+
+  /// A unit alone: its dot, the LED on it and a little air.
+  static double _ballUnitR(TopologyNode n) => radialDotDiameter(n) / 2 + 10;
+
+  /// The turn from one circle on a ring of radius [r] to the next, when
+  /// the two touch across [_ballGap] (a chord, not an arc: exact).
+  static double _step(double a, double b, double r) =>
+      2 * math.asin(math.min(1.0, (a + b + _ballGap) / (2 * r)));
+
+  /// The smallest ring on which circles of [radii] sit side by side, in
+  /// that order and round the whole turn: each two neighbours apart by
+  /// their radii, the turns adding up to one. Measured on chords, so big
+  /// circles next to each other get the ring they need.
+  static double _ringFor(List<double> radii) {
+    var widestPair = 0.0;
+    for (var i = 0; i < radii.length; i++) {
+      final j = (i + 1) % radii.length;
+      widestPair = math.max(widestPair, radii[i] + radii[j] + _ballGap);
+    }
+    var r = math.max(_ballMinRing, widestPair / 2);
+    if (radii.length < 2) return r;
+    for (var guard = 0; guard < 80; guard++) {
+      var turn = 0.0;
+      for (var i = 0; i < radii.length; i++) {
+        turn += _step(radii[i], radii[(i + 1) % radii.length], r);
+      }
+      if (turn <= 2 * math.pi) return r;
+      r *= 1.05;
+    }
+    return r;
+  }
+
+  static _MeshLayout balloon(List<TopologyNode> nodes, Size viewport,
+      {String? boardMac}) {
+    final tree = _MeshTree.build(nodes, boardMac);
+    final byMac = {for (final n in nodes) n.mac: n};
+    final hubChildren = tree.children[_centralKey] ?? const <TopologyNode>[];
+    // One unit under the central (the mesh root): it is the hub and the
+    // central sits beside it. Else the central is the hub.
+    final hub = hubChildren.length == 1 ? hubChildren.first.mac : _centralKey;
+
+    // Bottom-up: the ring a unit's children sit on, and the circle that
+    // holds its whole subtree. On the ring, side by side: one slot
+    // ([slot]) kept free for the link from its own parent — the central's
+    // chip, for the hub — then the children's circles.
+    final ring = <String, double>{};
+    final circle = <String, double>{};
+    final slots = <String, double>{};
+    double measure(String key, double slot) {
+      final kids = tree.children[key] ?? const <TopologyNode>[];
+      final own = key == _centralKey ? _ballCentralR : _ballUnitR(byMac[key]!);
+      slots[key] = slot;
+      if (kids.isEmpty) {
+        ring[key] = 0;
+        return circle[key] = own;
+      }
+      final radii = <double>[if (slot > 0) slot];
+      var widest = 0.0;
+      for (final k in kids) {
+        if (circle.containsKey(k.mac)) continue; // the loop, cut
+        final r = measure(k.mac, _ballUnitR(k));
+        radii.add(r);
+        widest = math.max(widest, r);
+      }
+      final rr = _ringFor(radii);
+      ring[key] = rr;
+      return circle[key] = rr + widest;
+    }
+
+    measure(hub, hub == _centralKey ? 0 : _ballCentralR);
+
+    // Top-down: the slot opposite the direction away from the parent
+    // (where its link comes in), the children after it round the ring,
+    // each the exact turn from the one before, the spare turn split on
+    // both sides of the slot so the cluster faces away.
+    final positions = <String, Offset>{};
+    void place(String key, Offset at, double away) {
+      positions[key] = at;
+      final kids = [
+        for (final k in tree.children[key] ?? const <TopologyNode>[])
+          if (!positions.containsKey(k.mac)) k,
+      ];
+      if (kids.isEmpty) return;
+      final rr = ring[key]!;
+      final slot = slots[key]!;
+      final radii = [
+        if (slot > 0) slot,
+        for (final k in kids) circle[k.mac]!,
+      ];
+      final steps = [
+        for (var i = 0; i < radii.length; i++)
+          _step(radii[i], radii[(i + 1) % radii.length], rr),
+      ];
+      final spare = 2 * math.pi - steps.fold(0.0, (s, x) => s + x);
+      double a;
+      if (slot > 0) {
+        a = away + math.pi + steps[0] + spare / 2;
+        for (var i = 0; i < kids.length; i++) {
+          final k = kids[i];
+          place(k.mac, at + Offset(math.cos(a), math.sin(a)) * rr, a);
+          a += steps[i + 1];
+        }
+      } else {
+        // No slot (the central as hub): the children centred on [away].
+        var span = 0.0;
+        for (var i = 0; i < kids.length - 1; i++) {
+          span += steps[i];
+        }
+        a = away - span / 2;
+        for (var i = 0; i < kids.length; i++) {
+          final k = kids[i];
+          place(k.mac, at + Offset(math.cos(a), math.sin(a)) * rr, a);
+          a += steps[i];
+        }
+      }
+    }
+
+    place(hub, Offset.zero, math.pi / 2);
+    if (hub != _centralKey) {
+      // The central above the hub, in the slot its children keep free.
+      positions[_centralKey] = const Offset(0, -_ballCentralAt);
+    }
+    // Units a loop kept out of the hub's tree (never from the central):
+    // under the central, in a ring of their own.
+    for (final n in nodes) {
+      if (!positions.containsKey(n.mac)) {
+        final rr =
+            math.max(circle[_centralKey] ?? 0, _ballCentralR) + _ballMinRing;
+        final i = positions.length;
+        positions[n.mac] = positions[_centralKey]! +
+            Offset(math.cos(i * 0.7), math.sin(i * 0.7)) * rr;
+      }
+    }
+
+    // The canvas round the picture: at least the viewport, the picture
+    // centred in it.
+    var minX = double.infinity, minY = double.infinity;
+    var maxX = -double.infinity, maxY = -double.infinity;
+    for (final p in positions.values) {
+      minX = math.min(minX, p.dx);
+      maxX = math.max(maxX, p.dx);
+      minY = math.min(minY, p.dy);
+      maxY = math.max(maxY, p.dy);
+    }
+    final w = math.max(viewport.width, maxX - minX + 2 * _ballMargin);
+    final h = math.max(viewport.height, maxY - minY + 2 * _ballMargin);
+    final shift = Offset(
+      w / 2 - (minX + maxX) / 2,
+      h / 2 - (minY + maxY) / 2,
+    );
+    final placed = {for (final e in positions.entries) e.key: e.value + shift};
+    placed[_tabletKey] = placed[_centralKey]! + const Offset(_tabletAside, 0);
+
+    // The least distance between two units: how much room the names have.
+    var pitch = double.infinity;
+    final units = [
+      for (final n in nodes)
+        if (placed[n.mac] case final p?) p,
+    ];
+    for (var i = 0; i < units.length; i++) {
+      for (var j = i + 1; j < units.length; j++) {
+        pitch = math.min(pitch, (units[i] - units[j]).distance);
+      }
+    }
+    if (!pitch.isFinite) pitch = 2 * _ballMinRing;
+
+    return _MeshLayout(
+      positions: placed,
+      centralLane: placed[_centralKey]!.dy,
+      laneCenters: {for (final l in tree.layerKeys) l: 0},
+      canvas: Size(w, h),
+      radial: true,
+      pitch: pitch,
     );
   }
 
@@ -1672,6 +1975,8 @@ class _MeshLayout {
       centralLane: b.centralLane,
       laneCenters: b.laneCenters,
       canvas: b.canvas,
+      radial: b.radial,
+      pitch: b.pitch,
     );
   }
 }
@@ -2019,6 +2324,152 @@ class _NodeChip extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A unit on the radial map (2026-10-15): a dot in its status colour
+/// (`radialStatusOf`: alarm and offline red — offline hollow —, attention
+/// amber, sleeping grey, active green), the unit's LED on it as everywhere
+/// else, an amber ring on the root; the name (and the firmware, with the
+/// switch on) only once the zoom leaves room for them. A tap opens the
+/// same popover as on the tree.
+class _RadialChip extends StatelessWidget {
+  const _RadialChip({
+    required this.node,
+    required this.position,
+    required this.isRoot,
+    required this.isCandidate,
+    required this.transform,
+    required this.pitch,
+    required this.onTap,
+    this.showVersion = true,
+  });
+
+  final TopologyNode node;
+  final Offset position;
+  final bool isRoot;
+  final bool isCandidate;
+  final TransformationController transform;
+  final double pitch;
+  final bool showVersion;
+  final ValueChanged<Rect> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final d = radialDotDiameter(node);
+    final status = radialStatusOf(node);
+    final color = radialStatusColor(status, isDark: context.isDark);
+    final hollow = status == RadialStatus.offline;
+    final loud = status == RadialStatus.alarm;
+    const tap = 8.0; // air round the dot that still takes the tap
+    const label = 96.0;
+    final name = deviceDisplayName(node);
+    return Positioned(
+      left: position.dx - d / 2 - tap,
+      top: position.dy - d / 2 - tap,
+      child: Opacity(
+        opacity: node.stale ? deviceStaleOpacity : 1.0,
+        child: Builder(
+          builder: (chipContext) => _ArenaFreeTap(
+            onTap: () => onTap(deviceAnchorOf(chipContext)),
+            child: SizedBox(
+              width: d + 2 * tap,
+              height: d + 2 * tap,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned(
+                    left: tap,
+                    top: tap,
+                    child: Container(
+                      key: radialChipKey(node.mac),
+                      width: d,
+                      height: d,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: hollow
+                            ? context.surfaceColor
+                            : Color.lerp(color, Colors.white, 0.08),
+                        border: Border.all(
+                          color: isRoot || isCandidate
+                              ? AppColors.warning
+                              : hollow
+                                  ? color
+                                  : Color.lerp(color, Colors.white, 0.35)!,
+                          width: isRoot ? 2.2 : (hollow ? 1.8 : 1.0),
+                        ),
+                        boxShadow: [
+                          if (loud)
+                            BoxShadow(
+                                color: color.withValues(alpha: 0.75),
+                                blurRadius: 10,
+                                spreadRadius: 1)
+                          else if (!hollow)
+                            BoxShadow(
+                                color: color.withValues(alpha: 0.35),
+                                blurRadius: 5),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // The LED, at the top of the dot, as on the CENTRAL disc.
+                  Positioned(
+                    left: tap + (d - 7) / 2,
+                    top: tap - 2,
+                    child: DeviceLedDot(node: node, size: 7),
+                  ),
+                  Positioned(
+                    left: (d + 2 * tap - label) / 2,
+                    top: d + tap + 3,
+                    width: label,
+                    child: ValueListenableBuilder<Matrix4>(
+                      valueListenable: transform,
+                      builder: (_, m, __) {
+                        if (_scaleOf(m) * pitch < radialNameRoom) {
+                          return const SizedBox.shrink();
+                        }
+                        final version = node.fwVersion;
+                        return Column(
+                          children: [
+                            Text(
+                              name,
+                              maxLines: 1,
+                              textAlign: TextAlign.center,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: node.name?.isNotEmpty == true
+                                    ? context.textPrimary
+                                    : context.textSecondary,
+                                fontSize: 8,
+                                fontWeight: FontWeight.w700,
+                                fontFamily: node.name?.isNotEmpty == true
+                                    ? null
+                                    : 'monospace',
+                              ),
+                            ),
+                            if (showVersion && version?.isNotEmpty == true)
+                              Text(
+                                firmwareTagText(version!),
+                                maxLines: 1,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: AppColors.secondary,
+                                  fontSize: 7,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
                 ],
               ),
             ),

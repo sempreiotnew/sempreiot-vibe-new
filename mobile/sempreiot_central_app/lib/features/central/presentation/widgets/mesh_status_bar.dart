@@ -20,6 +20,8 @@ class MeshStatusBar extends StatelessWidget {
     this.electionPill = true,
     this.versionsShown,
     this.onToggleVersions,
+    this.radial,
+    this.onToggleRadial,
   });
   final List<TopologyNode> nodes;
   final RootElectionState election;
@@ -47,6 +49,14 @@ class MeshStatusBar extends StatelessWidget {
 
   /// The key of the versions switch (tests).
   static const versionsKey = ValueKey('rede-versions');
+
+  /// The map is the radial picture (true) or the tree (false); null = no
+  /// switch in the strip ("Atualizar dispositivos" is always the tree).
+  final bool? radial;
+  final VoidCallback? onToggleRadial;
+
+  /// The key of the tree / radial switch (tests).
+  static const layoutKey = ValueKey('rede-layout');
 
   @override
   Widget build(BuildContext context) {
@@ -148,6 +158,27 @@ class MeshStatusBar extends StatelessWidget {
                 ),
               ],
             ),
+          if (radial != null) ...[
+            const SizedBox(width: 10),
+            IconButton(
+              key: layoutKey,
+              tooltip: radial! ? 'Ver em árvore' : 'Ver em rede',
+              isSelected: radial,
+              style: IconButton.styleFrom(
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                fixedSize: const Size(30, 30),
+                minimumSize: const Size(30, 30),
+                padding: EdgeInsets.zero,
+                foregroundColor:
+                    radial! ? AppColors.secondary : context.textSecondary,
+              ),
+              icon: Icon(
+                radial! ? Icons.hub_rounded : Icons.account_tree_rounded,
+                size: 20,
+              ),
+              onPressed: onToggleRadial,
+            ),
+          ],
           if (versionsShown != null) ...[
             const SizedBox(width: 10),
             IconButton(
