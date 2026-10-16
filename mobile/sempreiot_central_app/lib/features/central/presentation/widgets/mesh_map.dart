@@ -23,7 +23,7 @@ import '../../domain/safr/safr_v2_frame.dart' show SafrMsgType;
 import 'device_command_widgets.dart';
 import 'device_menu.dart' show deviceAnchorOf;
 import 'device_avatar.dart';
-import 'mesh_radial_legend.dart';
+import 'mesh_legend.dart';
 import 'ota_rede_widgets.dart';
 
 /// The 2D map of the fire-alarm mesh, shared by Rede and "Atualizar
@@ -309,7 +309,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
   /// label is dropped when it would land on a halo or on a label already
   /// placed. All of them appear only once the zoom leaves room
   /// (`radialNameRoom`).
-  ({Map<String, bool> names, Set<String> versions, Set<String> dbm})
+  ({Map<String, bool> names, Map<String, bool> versions, Set<String> dbm})
       _radialLabels(
     _MeshLayout layout,
     List<TopologyNode> nodes,
@@ -329,8 +329,10 @@ class _MeshMapState extends ConsumerState<MeshMap>
         return c != 0 ? c : a.mac.compareTo(b.mac);
       });
     final taken = <Rect>[];
-    bool clear(String mac, Rect rect) {
-      if (taken.any((r) => r.overlaps(rect))) return false;
+    bool clear(String mac, Rect rect, {Rect? own}) {
+      if (taken.any((r) => !identical(r, own) && r.overlaps(rect))) {
+        return false;
+      }
       for (final e in halos.entries) {
         if (e.key != mac && e.value.overlaps(rect)) return false;
       }
@@ -338,36 +340,48 @@ class _MeshMapState extends ConsumerState<MeshMap>
     }
 
     final names = <String, bool>{};
+    final nameRects = <String, Rect>{};
     for (final n in sorted) {
       final at = layout.positions[n.mac];
       if (at == null) continue;
       final r = radialHaloDiameter(n) / 2;
       final below = Rect.fromCenter(
-          center: Offset(at.dx, at.dy + r + nameH / 2),
+          center: Offset(at.dx, at.dy + r + radialNameGap + nameH / 2),
           width: nameW,
           height: nameH);
       final above = Rect.fromCenter(
-          center: Offset(at.dx, at.dy - r - nameH / 2),
+          center: Offset(at.dx, at.dy - r - radialNameGap - nameH / 2),
           width: nameW,
           height: nameH);
       if (clear(n.mac, below)) {
         taken.add(below);
         names[n.mac] = false;
+        nameRects[n.mac] = below;
       } else if (clear(n.mac, above)) {
         taken.add(above);
         names[n.mac] = true;
+        nameRects[n.mac] = above;
       }
     }
-    final pills = <String>{};
+    // The pill sits over the unit's bottom-right, as on the tree's
+    // avatar, above the unit's own name (that name is not in its way);
+    // mirrored to the bottom-left when a neighbour is in the way.
+    final pills = <String, bool>{};
     if (versions) {
       for (final n in sorted) {
         final at = layout.positions[n.mac];
         if (at == null || n.fwVersion?.isNotEmpty != true) continue;
         final r = radialHaloDiameter(n) / 2;
-        final rect = Rect.fromLTWH(at.dx + r + 2, at.dy + r - 9, pillW, pillH);
-        if (clear(n.mac, rect)) {
-          taken.add(rect);
-          pills.add(n.mac);
+        final top = at.dy + r + radialPillDy - pillH;
+        final right = Rect.fromLTWH(at.dx + radialPillDx, top, pillW, pillH);
+        final left =
+            Rect.fromLTWH(at.dx - radialPillDx - pillW, top, pillW, pillH);
+        if (clear(n.mac, right, own: nameRects[n.mac])) {
+          taken.add(right);
+          pills[n.mac] = false;
+        } else if (clear(n.mac, left, own: nameRects[n.mac])) {
+          taken.add(left);
+          pills[n.mac] = true;
         }
       }
     }
@@ -852,9 +866,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
                                         transform: _transform,
                                         pitch: layout.pitch,
                                         nameAbove: labels?.names[node.mac],
-                                        showVersion: labels?.versions
-                                                .contains(node.mac) ??
-                                            false,
+                                        pillLeft: labels?.versions[node.mac],
                                         onTap: (anchor) =>
                                             widget.onNodeTap(node, anchor),
                                       )
@@ -895,7 +907,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
                 // Lane labels live in screen space: pinned to the
                 // left edge whatever the pan/zoom, following only
                 // the rows' vertical position. The radial picture
-                // has no rows: the numbers at the bottom left instead.
+                // has no rows.
                 if (!layout.radial)
                   Positioned.fill(
                     child: IgnorePointer(
@@ -907,13 +919,14 @@ class _MeshMapState extends ConsumerState<MeshMap>
                         ),
                       ),
                     ),
-                  )
-                else
-                  Positioned(
-                    left: 12,
-                    bottom: 12,
-                    child: MeshRadialLegend(nodes: widget.nodes),
                   ),
+                // The numbers, at the bottom left on both pictures
+                // (past the tree's label gutter).
+                Positioned(
+                  left: layout.radial ? 12 : 40,
+                  bottom: 12,
+                  child: MeshLegend(nodes: widget.nodes),
+                ),
                 Positioned(
                   right: 12,
                   bottom: 12,
@@ -1794,6 +1807,14 @@ double radialHaloDiameter(TopologyNode n) => radialUnitSize(n) * 1.6;
 /// keeps a bright core instead, until the zoom brings the model back.
 const radialModelFrom = 14.0;
 
+/// The name's distance from the halo's edge; the firmware pill's place:
+/// the tree's — from [radialPillDx] right of the unit's centre, its
+/// bottom [radialPillDy] under the halo's edge — or mirrored to the left
+/// when a neighbour is in the way on the right.
+const radialNameGap = 3.0;
+const radialPillDx = 8.0;
+const radialPillDy = 2.0;
+
 /// The key of a unit's dot on the radial map (tests).
 Key radialChipKey(String mac) => ValueKey('radial-$mac');
 
@@ -2491,19 +2512,18 @@ class _NodeChip extends StatelessWidget {
   }
 }
 
-/// A unit on the radial map (2026-10-15): its 3D model inside a soft
-/// halo in its status colour (`radialStatusOf`: alarm red and bright,
-/// offline a hollow red ring round the faded model, attention amber,
-/// sleeping grey, active green), the LED on the model's own LED marker
-/// as everywhere else, the ROOT / CANDIDATO badge and the moon as the
-/// model draws them. Zoomed out, under [radialModelFrom] px on screen,
-/// the halo alone with a bright core — the same glow, so nothing jumps.
-/// The name (and the firmware, with the switch on) only once the zoom
-/// leaves room and no neighbour's name or halo is in the way — under
-/// the halo, else above it ([nameAbove]) — and the firmware as the
-/// tree's pill, bottom right of the halo, when its place is clear
-/// ([showVersion]); both decided for the whole map in one pass
-/// (`_radialLabels`). A tap opens the same popover as on the tree.
+/// A unit on the radial map (2026-10-15): its 3D model on a flat disc in
+/// its status colour (`radialStatusOf`: alarm red, attention amber,
+/// sleeping grey, active green — a crisp disc, no glow: the tree draws no
+/// shadow either), the LED on the model's own LED marker as everywhere
+/// else, the ROOT / CANDIDATO / ALARME badges and the moon as the model
+/// draws them, and OFFLINE as the tree's label at the top right over the
+/// faded model (no disc then). Zoomed out, under [radialModelFrom] px on
+/// screen, the disc alone with a bright core — the same disc, so nothing
+/// jumps. The name (and the firmware, as the tree's pill at the bottom
+/// right) only once the zoom leaves room and the place is clear
+/// ([nameAbove], [pillLeft]: decided for the whole map in one pass,
+/// `_radialLabels`). A tap opens the same popover as on the tree.
 class _RadialChip extends StatelessWidget {
   const _RadialChip({
     required this.node,
@@ -2514,7 +2534,7 @@ class _RadialChip extends StatelessWidget {
     required this.pitch,
     required this.nameAbove,
     required this.onTap,
-    this.showVersion = true,
+    this.pillLeft,
   });
 
   final TopologyNode node;
@@ -2527,8 +2547,9 @@ class _RadialChip extends StatelessWidget {
   /// The name under the halo (false), above it (true) or nowhere (null).
   final bool? nameAbove;
 
-  /// The firmware pill has its place (the versions switch on, room clear).
-  final bool showVersion;
+  /// The firmware pill at the bottom right (false), mirrored to the
+  /// bottom left (true) or nowhere (null: the switch off, or no place).
+  final bool? pillLeft;
   final ValueChanged<Rect> onTap;
 
   @override
@@ -2537,7 +2558,7 @@ class _RadialChip extends StatelessWidget {
     final halo = radialHaloDiameter(node);
     final status = radialStatusOf(node);
     final color = radialStatusColor(status, isDark: context.isDark);
-    final hollow = status == RadialStatus.offline;
+    final offline = status == RadialStatus.offline;
     final loud = status == RadialStatus.alarm;
     const label = 96.0;
     final name = deviceDisplayName(node);
@@ -2553,38 +2574,22 @@ class _RadialChip extends StatelessWidget {
             child: Stack(
               clipBehavior: Clip.none,
               children: [
-                // The halo: the status as a glow round the unit; a hollow
-                // ring when it is gone.
+                // The disc: the status as a flat colour round the unit;
+                // nothing for a unit that is gone (the label says it).
                 Container(
                   key: radialChipKey(node.mac),
                   width: halo,
                   height: halo,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: hollow
-                        ? null
-                        : RadialGradient(
-                            colors: [
-                              color.withValues(alpha: loud ? 0.6 : 0.42),
-                              color.withValues(alpha: loud ? 0.22 : 0.12),
-                              color.withValues(alpha: 0),
-                            ],
-                            stops: const [0.35, 0.7, 1.0],
+                  decoration: offline
+                      ? null
+                      : BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: color.withValues(alpha: loud ? 0.34 : 0.18),
+                          border: Border.all(
+                            color: color.withValues(alpha: loud ? 0.9 : 0.6),
+                            width: loud ? 1.6 : 1.1,
                           ),
-                    border: hollow
-                        ? Border.all(
-                            color: color.withValues(alpha: 0.85), width: 1.6)
-                        : null,
-                    boxShadow: loud
-                        ? [
-                            BoxShadow(
-                              color: color.withValues(alpha: 0.55),
-                              blurRadius: 16,
-                              spreadRadius: 2,
-                            ),
-                          ]
-                        : null,
-                  ),
+                        ),
                 ),
                 Positioned(
                   left: (halo - size) / 2,
@@ -2593,17 +2598,17 @@ class _RadialChip extends StatelessWidget {
                     valueListenable: transform,
                     builder: (_, m, __) {
                       if (_scaleOf(m) * size < radialModelFrom) {
-                        // Too small for a model to read: the glow's core.
+                        // Too small for a model to read: the disc's core.
                         return Container(
                           width: size,
                           height: size,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: hollow
+                            color: offline
                                 ? context.surfaceColor
                                 : Color.lerp(color, Colors.white, 0.2),
                             border: Border.all(
-                              color: hollow
+                              color: offline
                                   ? color
                                   : Color.lerp(color, Colors.white, 0.5)!,
                               width: 1.2,
@@ -2620,11 +2625,17 @@ class _RadialChip extends StatelessWidget {
                     },
                   ),
                 ),
+                if (offline)
+                  const Positioned(
+                    right: -22,
+                    top: -6,
+                    child: DeviceOfflineBadge(),
+                  ),
                 if (nameAbove != null)
                   Positioned(
                     left: (halo - label) / 2,
-                    top: nameAbove! ? null : halo - 2,
-                    bottom: nameAbove! ? halo - 2 : null,
+                    top: nameAbove! ? null : halo + radialNameGap - 2,
+                    bottom: nameAbove! ? halo + radialNameGap - 2 : null,
                     width: label,
                     child: ValueListenableBuilder<Matrix4>(
                       valueListenable: transform,
@@ -2653,10 +2664,11 @@ class _RadialChip extends StatelessWidget {
                   ),
                 // The firmware it runs: the tree's pill, in the tree's
                 // place (bottom right), once the zoom leaves room.
-                if (showVersion)
+                if (pillLeft != null)
                   Positioned(
-                    left: halo / 2 + 2,
-                    top: halo / 2 - 9,
+                    left: pillLeft! ? null : halo / 2 + radialPillDx,
+                    right: pillLeft! ? halo / 2 + radialPillDx : null,
+                    top: halo + radialPillDy - FirmwareTag.height,
                     child: ValueListenableBuilder<Matrix4>(
                       valueListenable: transform,
                       builder: (_, m, __) =>

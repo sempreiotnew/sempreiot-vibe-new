@@ -18,7 +18,7 @@ import 'package:sempreiot_central_app/features/central/presentation/screens/topo
 import 'package:sempreiot_central_app/features/central/presentation/widgets/device_avatar.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/device_command_widgets.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_map.dart';
-import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_radial_legend.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_legend.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_status_bar.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_model_sprites.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/ota_rede_widgets.dart';
@@ -188,7 +188,7 @@ void main() {
       final central = tester.getCenter(find.text('CENTRAL'));
       expect((central.dx - hub.dx).abs(), lessThan(2));
       expect(central.dy, lessThan(hub.dy));
-      expect(find.byKey(MeshRadialLegend.legendKey), findsOneWidget);
+      expect(find.byKey(MeshLegend.legendKey), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   }
@@ -258,6 +258,13 @@ void main() {
     expect(find.text('Sirene 1'), findsOneWidget);
     expect(find.text('Sirene 2'), findsOneWidget);
     expect(find.text('Sirene 3'), findsOneWidget);
+    // The firmware pill on (nearly) every unit, the central's too — a
+    // unit's own name never takes its pill's place (fixed 2026-10-15).
+    expect(
+        find.byType(FirmwareTag).evaluate().length, greaterThanOrEqualTo(38));
+    // Offline: the tree's label, on every unit that is gone.
+    final offline = small.where((n) => n.layer > 0 && !n.online).length;
+    expect(find.text('OFFLINE'), findsNWidgets(offline));
     expect(tester.takeException(), isNull);
   });
 
@@ -287,12 +294,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
     expect(find.byKey(radialChipKey(root)), findsNothing);
     expect(find.text('Sirene Hall'), findsOneWidget, reason: 'the tree chip');
+    expect(find.byKey(MeshLegend.legendKey), findsOneWidget,
+        reason: 'the numbers on the tree too');
 
     await tester.tap(find.byKey(MeshStatusBar.layoutKey));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600)); // the slide
     expect(find.byKey(radialChipKey(root)), findsOneWidget);
-    expect(find.byKey(MeshRadialLegend.legendKey), findsOneWidget);
+    expect(find.byKey(MeshLegend.legendKey), findsOneWidget);
     expect(find.text('ATIVOS'), findsOneWidget, reason: 'the strip stays');
 
     await tester.tap(find.byKey(MeshStatusBar.layoutKey));
