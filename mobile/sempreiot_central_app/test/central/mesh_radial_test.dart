@@ -16,6 +16,7 @@ import 'package:sempreiot_central_app/features/central/application/topology_prov
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
 import 'package:sempreiot_central_app/features/central/presentation/screens/topology_screen.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/device_avatar.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/device_command_widgets.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_map.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_radial_legend.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_status_bar.dart';
@@ -301,6 +302,62 @@ void main() {
     expect(find.text('Sirene Hall'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  for (final radial in [false, true]) {
+    testWidgets(
+        'the ticks of a command leave the map with its status — '
+        '${radial ? 'radial' : 'tree'} (2026-10-15)', (tester) async {
+      final small = fakeMesh(nodes2: 2, nodes3: 1, leaves: 2);
+      final siren = small.firstWhere((n) => n.name == 'Sirene 1').mac;
+      late DeviceCommandTracker tracker;
+      await loadModels(tester);
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            topologyProvider.overrideWithValue(small),
+            safrTrafficProvider.overrideWithValue(SafrTrafficBus()),
+            otaPushViewProvider.overrideWithValue(const OtaPushState()),
+            serialProvider.overrideWith((ref) => SerialNotifier.detached()),
+            deviceCommandProvider.overrideWith((ref) => tracker =
+                DeviceCommandTracker(
+                    askCentral: (_) async => null,
+                    traffic: ref.watch(safrTrafficProvider).stream)),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: MeshMap(
+                nodes: small.where((n) => n.layer > 0).toList(),
+                board: small.first,
+                election: const RootElectionState(rootMac: root),
+                onNodeTap: (_, __) {},
+                showOta: false,
+                radial: radial,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+      tracker.applyRemote(DeviceCommandStatus(
+          mac: siren,
+          kind: DeviceCommandKind.identify,
+          step: DeviceCommandStep.delivered,
+          startedAt: DateTime.now()));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(CommandTicks.keyTwo), findsWidgets);
+      // The status leaves after its moment: the ticks with it, with no
+      // other change on the map.
+      await tester.pump(const Duration(seconds: 6));
+      await tester.pump();
+      expect(find.byKey(CommandTicks.keyTwo), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   // ── A look at it ──────────────────────────────────────────────────────
   final pngDir = Platform.environment['RADIAL_PNG_DIR'];

@@ -250,6 +250,18 @@ class DeviceCommandTracker
   /// A detector wakes every 60 s (protocol §12.2); its ACK rides up right
   /// after. Past this, a unit that did not confirm is not going to.
   static const broadcastWindow = Duration(seconds: 100);
+
+  /// A phone: what the central's retained record last said — a test runs,
+  /// or the last one that ended. A step of a test that arrives when the
+  /// record says nothing runs (a late or repeated batch after the end)
+  /// would put the whole test back on the map for [broadcastWindow];
+  /// after [staleGrace] with still no running record it is closed from
+  /// the ended one instead. The grace covers a new test whose record
+  /// comes a moment after its first steps.
+  bool _recordRunning = false;
+  SystemTestRun? _lastEnded;
+  Timer? _staleTimer;
+  static const staleGrace = Duration(seconds: 5);
   late final List<StreamSubscription<Object?>> _subs;
   final _timers = <String, Timer>{};
 
@@ -382,6 +394,23 @@ class DeviceCommandTracker
         _broadcastUnits.contains(remote.mac)) {
       _put(after.copyWith(note: _broadcastNote()));
     }
+    // A test on the map with no record of it running: stale unless its
+    // record is about to come (2026-10-15: a late batch put the Central
+    // back at ✓ with every unit ✓✓, for the whole window).
+    if (after != null &&
+        after.kind == DeviceCommandKind.test &&
+        after.broadcastRunning &&
+        !_recordRunning &&
+        _lastEnded != null) {
+      _staleTimer?.cancel();
+      _staleTimer = Timer(staleGrace, () {
+        if (!mounted || _recordRunning) return;
+        final ended = _lastEnded;
+        final cur = state[safrBroadcastMac];
+        if (ended == null || cur == null || !cur.broadcastRunning) return;
+        closeFromRun(ended);
+      });
+    }
   }
 
   DateTime? _startOf(String mac) => state[mac]?.startedAt;
@@ -428,6 +457,8 @@ class DeviceCommandTracker
   /// same door as the events — a step already passed is never undone.
   void seedFromRun(SystemTestRun run) {
     if (!run.running) return;
+    _recordRunning = true;
+    _staleTimer?.cancel();
     final t0 = run.startedAt;
     applyRemote(DeviceCommandStatus(
       mac: safrBroadcastMac,
@@ -512,6 +543,7 @@ class DeviceCommandTracker
   void _broadcastTimedOut() {
     final all = state[safrBroadcastMac];
     if (all == null || all.step != DeviceCommandStep.boardAck) return;
+    _dropSettledFromWaiting(all);
     final now = _clock();
     for (final m in _broadcastWaiting.toList()) {
       final cur = state[m];
@@ -553,6 +585,7 @@ class DeviceCommandTracker
   void _settleBroadcast() {
     final all = state[safrBroadcastMac];
     if (all == null || all.step != DeviceCommandStep.boardAck) return;
+    _dropSettledFromWaiting(all);
     if (_broadcastWaiting.isNotEmpty) {
       _put(all.copyWith(note: _broadcastNote()));
       return;
@@ -562,6 +595,19 @@ class DeviceCommandTracker
         step: clean ? DeviceCommandStep.delivered : DeviceCommandStep.failed,
         note: _broadcastNote(),
         updatedAt: _clock()));
+  }
+
+  /// A unit whose status already says confirmed, answered or failed holds
+  /// no verdict back, whatever the waiting list still says (the list and
+  /// the statuses must never disagree; the statuses are what is shown).
+  void _dropSettledFromWaiting(DeviceCommandStatus all) {
+    _broadcastWaiting.removeWhere((m) {
+      final s = state[m];
+      return s == null ||
+          s.kind != all.kind ||
+          (s.step != DeviceCommandStep.sending &&
+              s.step != DeviceCommandStep.boardAck);
+    });
   }
 
   void _onDelivered(String mac) {
@@ -651,6 +697,9 @@ class DeviceCommandTracker
   /// app just opened must not light ticks for a test long over).
   void closeFromRun(SystemTestRun run) {
     if (run.running) return;
+    _recordRunning = false;
+    _lastEnded = run;
+    _staleTimer?.cancel();
     final all = state[safrBroadcastMac];
     if (all == null ||
         all.kind != DeviceCommandKind.test ||
@@ -775,6 +824,7 @@ class DeviceCommandTracker
 
   @override
   void dispose() {
+    _staleTimer?.cancel();
     for (final t in _timers.values) {
       t.cancel();
     }

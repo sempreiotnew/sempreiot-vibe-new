@@ -9,6 +9,7 @@ import 'package:sempreiot_central_app/features/central/application/device_comman
 import 'package:sempreiot_central_app/features/central/application/safr_traffic_provider.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_frame.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
+import 'package:sempreiot_central_app/features/central/domain/system_test/system_test_run.dart';
 
 /// The command in flight per unit (device_command_provider.dart): the steps
 /// come from what crossed the wire — the board's ACK, then the unit's own.
@@ -680,6 +681,92 @@ void main() {
         async.flushMicrotasks();
         expect(t.state[unit]!.step, DeviceCommandStep.delivered);
         expect(lit, [unit]);
+        t.dispose();
+      });
+    });
+
+    test(
+        'a phone: a step of a test the record says ENDED (a late batch) '
+        'is closed from the record after a grace, not kept for 100 s', () {
+      fakeAsync((async) {
+        const a = 'AA:00:00:00:00:0A', b = 'AA:00:00:00:00:0B';
+        final t = DeviceCommandTracker(
+          askCentral: (_) async => null,
+          traffic: traffic.stream,
+        );
+        // The record came first (the phone showed nothing then).
+        t.closeFromRun(SystemTestRun(
+          id: '1',
+          startedAt: _t0,
+          endedAt: _t0.add(const Duration(seconds: 30)),
+          verdict: SystemTestVerdict.passed,
+          units: const [
+            SystemTestUnit(mac: a, outcome: SystemTestOutcome.confirmed),
+            SystemTestUnit(mac: b, outcome: SystemTestOutcome.confirmed),
+          ],
+        ));
+        expect(t.state, isEmpty);
+        // Then the old steps again: the Central at ✓, the units ✓✓.
+        DeviceCommandStatus st(String mac, DeviceCommandStep step) =>
+            DeviceCommandStatus(
+                mac: mac,
+                kind: DeviceCommandKind.test,
+                step: step,
+                startedAt: _t0);
+        t.applyRemote(st(safrBroadcastMac, DeviceCommandStep.boardAck));
+        t.applyRemote(st(a, DeviceCommandStep.delivered));
+        t.applyRemote(st(b, DeviceCommandStep.delivered));
+        expect(t.state[safrBroadcastMac]!.step, DeviceCommandStep.boardAck);
+        async.elapse(const Duration(seconds: 4));
+        expect(t.state[safrBroadcastMac]!.step, DeviceCommandStep.boardAck,
+            reason: 'the grace: a new test\'s record may be on its way');
+        async.elapse(const Duration(seconds: 2));
+        expect(t.state[safrBroadcastMac]!.step, DeviceCommandStep.delivered,
+            reason: 'no running record came: closed from the ended one');
+        // A test's ✓✓ stays its moment (the answer window), then leaves
+        // with its units.
+        async.elapse(const Duration(seconds: 11));
+        expect(t.state, isEmpty);
+        t.dispose();
+      });
+    });
+
+    test(
+        'a phone: the grace keeps a NEW test whose record comes a moment '
+        'after its first steps', () {
+      fakeAsync((async) {
+        const a = 'AA:00:00:00:00:0A';
+        final t = DeviceCommandTracker(
+          askCentral: (_) async => null,
+          traffic: traffic.stream,
+        );
+        t.closeFromRun(SystemTestRun(
+          id: '1',
+          startedAt: _t0,
+          endedAt: _t0.add(const Duration(seconds: 30)),
+          verdict: SystemTestVerdict.passed,
+          units: const [
+            SystemTestUnit(mac: a, outcome: SystemTestOutcome.confirmed),
+          ],
+        ));
+        t.applyRemote(DeviceCommandStatus(
+            mac: safrBroadcastMac,
+            kind: DeviceCommandKind.test,
+            step: DeviceCommandStep.boardAck,
+            startedAt: _t0));
+        async.elapse(const Duration(seconds: 2));
+        t.seedFromRun(SystemTestRun(
+          id: '2',
+          startedAt: _t0,
+          verdict: SystemTestVerdict.running,
+          boardAcked: true,
+          units: const [
+            SystemTestUnit(mac: a, outcome: SystemTestOutcome.pending),
+          ],
+        ));
+        async.elapse(const Duration(seconds: 10));
+        expect(t.state[safrBroadcastMac]!.step, DeviceCommandStep.boardAck,
+            reason: 'its record runs: nothing closes it');
         t.dispose();
       });
     });
