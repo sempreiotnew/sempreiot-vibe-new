@@ -20,6 +20,7 @@ import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh
 import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_radial_legend.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_status_bar.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_model_sprites.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/ota_rede_widgets.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_models.g.dart';
 
 /// The radial Rede map (2026-10-15): the mesh as clusters of dots around
@@ -202,7 +203,8 @@ void main() {
       await tester.pump();
     }
     expect(find.text('Sirene Hall'), findsOneWidget);
-    expect(find.text('v0.3.8'), findsWidgets, reason: 'the firmware too');
+    expect(find.byType(FirmwareTag), findsWidgets,
+        reason: 'the firmware too, as the tree\'s pill');
     expect(tester.takeException(), isNull);
   });
 

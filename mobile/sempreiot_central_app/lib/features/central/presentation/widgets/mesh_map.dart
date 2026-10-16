@@ -300,15 +300,25 @@ class _MeshMapState extends ConsumerState<MeshMap>
     }
   }
 
-  /// The layout drawn this frame: [target] once the units are there, on
-  /// their way to it meanwhile.
-  /// Where each unit's name goes on the radial picture — under its halo,
-  /// else above it (true), else nowhere: in layer-then-MAC order (the hub
-  /// first), a name is dropped when both places would land on another
-  /// name or on a neighbour's halo. One pass for the whole map, so what
-  /// is written is always readable.
-  Map<String, bool> _radialNames(_MeshLayout layout, List<TopologyNode> nodes) {
-    const w = 90.0, h = 22.0;
+  /// What is written on the radial picture, decided in one pass for the
+  /// whole map so that nothing ever lands on anything else: each unit's
+  /// name (under its halo, else above it — true —, else nowhere), its
+  /// firmware pill (bottom right of the halo, as on the tree) and the dBm
+  /// pill on its link (at the middle of the line, as on the tree). In
+  /// layer-then-MAC order (the hub first), names first, then the pills; a
+  /// label is dropped when it would land on a halo or on a label already
+  /// placed. All of them appear only once the zoom leaves room
+  /// (`radialNameRoom`).
+  ({Map<String, bool> names, Set<String> versions, Set<String> dbm})
+      _radialLabels(
+    _MeshLayout layout,
+    List<TopologyNode> nodes,
+    String? boardMac, {
+    required bool versions,
+  }) {
+    const nameW = 90.0, nameH = 13.0;
+    const pillW = 48.0, pillH = 16.0;
+    final byMac = {for (final n in nodes) n.mac: n};
     final halos = <String, Rect>{
       for (final n in nodes)
         if (layout.positions[n.mac] case final p?)
@@ -319,7 +329,6 @@ class _MeshMapState extends ConsumerState<MeshMap>
         return c != 0 ? c : a.mac.compareTo(b.mac);
       });
     final taken = <Rect>[];
-    final out = <String, bool>{};
     bool clear(String mac, Rect rect) {
       if (taken.any((r) => r.overlaps(rect))) return false;
       for (final e in halos.entries) {
@@ -328,25 +337,64 @@ class _MeshMapState extends ConsumerState<MeshMap>
       return true;
     }
 
+    final names = <String, bool>{};
     for (final n in sorted) {
       final at = layout.positions[n.mac];
       if (at == null) continue;
       final r = radialHaloDiameter(n) / 2;
       final below = Rect.fromCenter(
-          center: Offset(at.dx, at.dy + r + h / 2), width: w, height: h);
+          center: Offset(at.dx, at.dy + r + nameH / 2),
+          width: nameW,
+          height: nameH);
       final above = Rect.fromCenter(
-          center: Offset(at.dx, at.dy - r - h / 2), width: w, height: h);
+          center: Offset(at.dx, at.dy - r - nameH / 2),
+          width: nameW,
+          height: nameH);
       if (clear(n.mac, below)) {
         taken.add(below);
-        out[n.mac] = false;
+        names[n.mac] = false;
       } else if (clear(n.mac, above)) {
         taken.add(above);
-        out[n.mac] = true;
+        names[n.mac] = true;
       }
     }
-    return out;
+    final pills = <String>{};
+    if (versions) {
+      for (final n in sorted) {
+        final at = layout.positions[n.mac];
+        if (at == null || n.fwVersion?.isNotEmpty != true) continue;
+        final r = radialHaloDiameter(n) / 2;
+        final rect = Rect.fromLTWH(at.dx + r + 2, at.dy + r - 9, pillW, pillH);
+        if (clear(n.mac, rect)) {
+          taken.add(rect);
+          pills.add(n.mac);
+        }
+      }
+    }
+    final dbm = <String>{};
+    for (final n in sorted) {
+      final at = layout.positions[n.mac];
+      if (at == null || !n.online || n.rssi == null) continue;
+      final target = meshLinkTargetOf(n, byMac, boardMac);
+      if (target == null || target.presumed) continue;
+      final to = layout.positions[target.key];
+      if (to == null) continue;
+      final rect = Rect.fromCenter(
+          center: Offset.lerp(at, to, 0.5)!, width: pillW, height: pillH);
+      // Its own halo and its parent's are the line's ends: not in the way.
+      final blocked = taken.any((r) => r.overlaps(rect)) ||
+          halos.entries.any((e) =>
+              e.key != n.mac && e.key != target.key && e.value.overlaps(rect));
+      if (!blocked) {
+        taken.add(rect);
+        dbm.add(n.mac);
+      }
+    }
+    return (names: names, versions: pills, dbm: dbm);
   }
 
+  /// The layout drawn this frame: [target] once the units are there, on
+  /// their way to it meanwhile.
   _MeshLayout _shown(_MeshLayout target) {
     final from = _from;
     if (from == null || !_move.isAnimating) return target;
@@ -716,9 +764,10 @@ class _MeshMapState extends ConsumerState<MeshMap>
           animation: _move,
           builder: (context, _) {
             final layout = _shown(target);
-            final names = layout.radial
-                ? _radialNames(layout, nodes)
-                : const <String, bool>{};
+            final labels = layout.radial
+                ? _radialLabels(layout, nodes, boardMac,
+                    versions: widget.showVersions)
+                : null;
             return Stack(
               children: [
                 // Pinch = the SAME zoom the buttons do (pivot on the
@@ -767,6 +816,8 @@ class _MeshMapState extends ConsumerState<MeshMap>
                                       otaLink: activity != null,
                                       faded: _faded(nodes),
                                       waveStartedAt: waveStartedAt,
+                                      transform: _transform,
+                                      dbmShown: labels?.dbm ?? const {},
                                     ),
                                   ),
                                 ),
@@ -800,8 +851,10 @@ class _MeshMapState extends ConsumerState<MeshMap>
                                                 .contains(node.mac),
                                         transform: _transform,
                                         pitch: layout.pitch,
-                                        nameAbove: names[node.mac],
-                                        showVersion: widget.showVersions,
+                                        nameAbove: labels?.names[node.mac],
+                                        showVersion: labels?.versions
+                                                .contains(node.mac) ??
+                                            false,
                                         onTap: (anchor) =>
                                             widget.onNodeTap(node, anchor),
                                       )
@@ -1102,7 +1155,23 @@ class _MeshGraphPainter extends CustomPainter {
     this.otaLink = false,
     this.faded = const {},
     this.waveStartedAt,
+    this.transform,
+    this.dbmShown = const {},
   }) : super(repaint: repaint);
+
+  /// The map's pan/zoom: on the radial picture the dBm pills are drawn
+  /// only once the zoom leaves room for them (the names' rule).
+  final TransformationController? transform;
+
+  /// Radial: the units whose dBm pill has a clear place on its link
+  /// (`_radialLabels`).
+  final Set<String> dbmShown;
+
+  bool get _labelRoom {
+    if (!layout.radial) return true;
+    final t = transform;
+    return t == null || _scaleOf(t.value) * layout.pitch >= radialNameRoom;
+  }
 
   /// Every unit confirmed a broadcast command: a cyan wave from the Central
   /// down the rows, each a little after the one above, for [_waveMs].
@@ -1243,9 +1312,13 @@ class _MeshGraphPainter extends CustomPainter {
       // dead unit's reading is from before it went; a presumed link's was
       // to another parent). A sleeping leaf keeps its last value, in the
       // sleep colour.
-      // Never on the radial picture: text on a short link is what made it
-      // unreadable; the dBm is in the popover.
-      if (n.online && !target.presumed && n.rssi != null && !layout.radial) {
+      // The same pill on the radial picture — once there is room for it
+      // and its place on the line is clear (text on every short link at
+      // once is what made the first cut unreadable).
+      if (n.online &&
+          !target.presumed &&
+          n.rssi != null &&
+          (!layout.radial || (_labelRoom && dbmShown.contains(n.mac)))) {
         _linkLabel(canvas, path, '${n.rssi} dBm',
             candidate ? AppColors.warning : signal);
       }
@@ -2427,8 +2500,10 @@ class _NodeChip extends StatelessWidget {
 /// the halo alone with a bright core — the same glow, so nothing jumps.
 /// The name (and the firmware, with the switch on) only once the zoom
 /// leaves room and no neighbour's name or halo is in the way — under
-/// the halo, else above it ([nameAbove], decided for the whole map in
-/// one pass). A tap opens the same popover as on the tree.
+/// the halo, else above it ([nameAbove]) — and the firmware as the
+/// tree's pill, bottom right of the halo, when its place is clear
+/// ([showVersion]); both decided for the whole map in one pass
+/// (`_radialLabels`). A tap opens the same popover as on the tree.
 class _RadialChip extends StatelessWidget {
   const _RadialChip({
     required this.node,
@@ -2451,6 +2526,8 @@ class _RadialChip extends StatelessWidget {
 
   /// The name under the halo (false), above it (true) or nowhere (null).
   final bool? nameAbove;
+
+  /// The firmware pill has its place (the versions switch on, room clear).
   final bool showVersion;
   final ValueChanged<Rect> onTap;
 
@@ -2555,39 +2632,37 @@ class _RadialChip extends StatelessWidget {
                         if (_scaleOf(m) * pitch < radialNameRoom) {
                           return const SizedBox.shrink();
                         }
-                        final version = node.fwVersion;
-                        return Column(
-                          children: [
-                            Text(
-                              name,
-                              maxLines: 1,
-                              textAlign: TextAlign.center,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: node.name?.isNotEmpty == true
-                                    ? context.textPrimary
-                                    : context.textSecondary,
-                                fontSize: 9,
-                                fontWeight: FontWeight.w700,
-                                fontFamily: node.name?.isNotEmpty == true
-                                    ? null
-                                    : 'monospace',
-                              ),
-                            ),
-                            if (showVersion && version?.isNotEmpty == true)
-                              Text(
-                                firmwareTagText(version!),
-                                maxLines: 1,
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: AppColors.secondary,
-                                  fontSize: 7.5,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                          ],
+                        return Text(
+                          name,
+                          maxLines: 1,
+                          textAlign: TextAlign.center,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: node.name?.isNotEmpty == true
+                                ? context.textPrimary
+                                : context.textSecondary,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            fontFamily: node.name?.isNotEmpty == true
+                                ? null
+                                : 'monospace',
+                          ),
                         );
                       },
+                    ),
+                  ),
+                // The firmware it runs: the tree's pill, in the tree's
+                // place (bottom right), once the zoom leaves room.
+                if (showVersion)
+                  Positioned(
+                    left: halo / 2 + 2,
+                    top: halo / 2 - 9,
+                    child: ValueListenableBuilder<Matrix4>(
+                      valueListenable: transform,
+                      builder: (_, m, __) =>
+                          _scaleOf(m) * pitch < radialNameRoom
+                              ? const SizedBox.shrink()
+                              : FirmwareTag(version: node.fwVersion),
                     ),
                   ),
               ],
