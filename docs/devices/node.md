@@ -1,3 +1,4 @@
+
 # SempreIoT — Node (AC device: siren, I/O module, AC detector, repeater)
 
 _2026-09-28. One page per device type, compiled from `docs/sempreiot-system-reference.md` (rows quoted as

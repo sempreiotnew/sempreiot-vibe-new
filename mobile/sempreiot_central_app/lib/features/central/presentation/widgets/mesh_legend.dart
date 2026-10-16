@@ -40,13 +40,13 @@ Color radialStatusColor(RadialStatus s, {required bool isDark}) => switch (s) {
       RadialStatus.online => AppColors.success,
     };
 
-/// The big picture in numbers, at the bottom left of the radial map: how
-/// many units, and how many in each state with its share — the question
-/// the view is for ("is everything fine?") answered without opening
+/// The big picture in numbers, at the bottom left of the map (the tree
+/// and the radial picture alike): how many units, and how many in each
+/// state with its share — "is everything fine?" answered without opening
 /// anything. Units the tablet never heard are counted apart (aguardando),
 /// as the strip does.
-class MeshRadialLegend extends StatelessWidget {
-  const MeshRadialLegend({super.key, required this.nodes});
+class MeshLegend extends StatelessWidget {
+  const MeshLegend({super.key, required this.nodes});
 
   final List<TopologyNode> nodes;
 
