@@ -15,9 +15,12 @@ import 'package:sempreiot_central_app/features/central/application/serial_provid
 import 'package:sempreiot_central_app/features/central/application/topology_provider.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
 import 'package:sempreiot_central_app/features/central/presentation/screens/topology_screen.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/device_avatar.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_map.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_radial_legend.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_status_bar.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_model_sprites.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_models.g.dart';
 
 /// The radial Rede map (2026-10-15): the mesh as clusters of dots around
 /// the hub, for a network too big to read as rows. The whole of it fits
@@ -42,12 +45,14 @@ void main() {
     int? battery,
     Duration silent = Duration.zero,
     String? name,
+    int? product,
   }) =>
       TopologyNode(
         mac: mac,
         role: role,
         layer: layer,
         parentMac: parent,
+        productCode: product,
         rssi: -60 - (mac.codeUnitAt(mac.length - 1) % 30),
         batteryPct: battery,
         online: online,
@@ -71,30 +76,43 @@ void main() {
 
     final out = [
       node(board, 0, SafrNodeRole.root, null),
-      node(root, 1, SafrNodeRole.root, board, name: 'Sirene Hall'),
+      node(root, 1, SafrNodeRole.root, board,
+          name: 'Sirene Hall', product: 0x0201),
     ];
     for (var a = 0; a < nodes2; a++) {
       final siren = mac();
       out.add(node(siren, 2, SafrNodeRole.node, root,
-          online: a != 3, name: 'Sirene ${a + 1}'));
+          online: a != 3, name: 'Sirene ${a + 1}', product: 0x0201));
       for (var b = 0; b < nodes3; b++) {
         final sub = mac();
-        out.add(node(sub, 3, SafrNodeRole.node, siren));
+        out.add(node(sub, 3, SafrNodeRole.node, siren, product: 0x0202));
         for (var c = 0; c < leaves; c++) {
           final k = a * 100 + b * 10 + c;
           out.add(node(mac(), 4, SafrNodeRole.leaf, sub,
               online: k % 23 != 7,
               alarm: k == 5,
               battery: k % 17 == 3 ? 12 : 80,
-              silent: const Duration(minutes: 2)));
+              silent: const Duration(minutes: 2),
+              product: 0x0301));
         }
       }
     }
     return out;
   }
 
+  /// The models, loaded for real (a load started in the test's fake time
+  /// never ends).
+  Future<void> loadModels(WidgetTester tester) => tester.runAsync(
+        () => Future.wait([
+          for (final slug in ['siren', 'push_button', 'smoke_detector'])
+            DeviceModelSprites.load(
+                deviceModelSpecs.firstWhere((m) => m.slug == slug)),
+        ]),
+      );
+
   Future<void> pumpMap(WidgetTester tester, Size size, List<TopologyNode> mesh,
       {bool radial = true, Key? boundary}) async {
+    await loadModels(tester);
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -174,17 +192,31 @@ void main() {
   }
 
   testWidgets(
-      'names come with the zoom: dots and lines first, the names '
+      'names come with the zoom: halos and lines first, the names '
       'once there is room', (tester) async {
     await pumpMap(tester, const Size(1280, 800), big);
-    final leaf = units.firstWhere((n) => n.isLeaf).mac;
-    expect(find.text(leaf), findsNothing, reason: '201 units: no room');
+    expect(find.text('Sirene Hall'), findsNothing,
+        reason: '201 units: no room');
     for (var i = 0; i < 6; i++) {
       await tester.tap(find.byTooltip('Aproximar'));
       await tester.pump();
     }
-    expect(find.text(leaf), findsOneWidget);
+    expect(find.text('Sirene Hall'), findsOneWidget);
     expect(find.text('v0.3.8'), findsWidgets, reason: 'the firmware too');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a phone, 201 units: halos alone at the opening zoom, the models '
+      'once they can be read', (tester) async {
+    await pumpMap(tester, const Size(390, 844), big);
+    expect(find.byType(DeviceModelAvatar), findsNothing,
+        reason: 'too small to read: the glow\'s core instead');
+    for (var i = 0; i < 6; i++) {
+      await tester.tap(find.byTooltip('Aproximar'));
+      await tester.pump();
+    }
+    expect(find.byType(DeviceModelAvatar), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 
@@ -221,6 +253,8 @@ void main() {
     await tester.tap(find.byTooltip('Aproximar'));
     await tester.pump();
     expect(find.text('Sirene 1'), findsOneWidget);
+    expect(find.text('Sirene 2'), findsOneWidget);
+    expect(find.text('Sirene 3'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -228,6 +262,7 @@ void main() {
       'Rede: the strip\'s switch goes from the tree to the radial '
       'picture and back', (tester) async {
     final small = fakeMesh(nodes2: 3, nodes3: 1, leaves: 4);
+    await loadModels(tester);
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);

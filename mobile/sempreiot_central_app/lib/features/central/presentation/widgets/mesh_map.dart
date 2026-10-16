@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 import 'dart:ui' show Tangent;
 import 'dart:async';
 import 'dart:math' as math;
@@ -301,6 +302,51 @@ class _MeshMapState extends ConsumerState<MeshMap>
 
   /// The layout drawn this frame: [target] once the units are there, on
   /// their way to it meanwhile.
+  /// Where each unit's name goes on the radial picture — under its halo,
+  /// else above it (true), else nowhere: in layer-then-MAC order (the hub
+  /// first), a name is dropped when both places would land on another
+  /// name or on a neighbour's halo. One pass for the whole map, so what
+  /// is written is always readable.
+  Map<String, bool> _radialNames(_MeshLayout layout, List<TopologyNode> nodes) {
+    const w = 90.0, h = 22.0;
+    final halos = <String, Rect>{
+      for (final n in nodes)
+        if (layout.positions[n.mac] case final p?)
+          n.mac: Rect.fromCircle(center: p, radius: radialHaloDiameter(n) / 2),
+    };
+    final sorted = [...nodes]..sort((a, b) {
+        final c = a.layer.compareTo(b.layer);
+        return c != 0 ? c : a.mac.compareTo(b.mac);
+      });
+    final taken = <Rect>[];
+    final out = <String, bool>{};
+    bool clear(String mac, Rect rect) {
+      if (taken.any((r) => r.overlaps(rect))) return false;
+      for (final e in halos.entries) {
+        if (e.key != mac && e.value.overlaps(rect)) return false;
+      }
+      return true;
+    }
+
+    for (final n in sorted) {
+      final at = layout.positions[n.mac];
+      if (at == null) continue;
+      final r = radialHaloDiameter(n) / 2;
+      final below = Rect.fromCenter(
+          center: Offset(at.dx, at.dy + r + h / 2), width: w, height: h);
+      final above = Rect.fromCenter(
+          center: Offset(at.dx, at.dy - r - h / 2), width: w, height: h);
+      if (clear(n.mac, below)) {
+        taken.add(below);
+        out[n.mac] = false;
+      } else if (clear(n.mac, above)) {
+        taken.add(above);
+        out[n.mac] = true;
+      }
+    }
+    return out;
+  }
+
   _MeshLayout _shown(_MeshLayout target) {
     final from = _from;
     if (from == null || !_move.isAnimating) return target;
@@ -381,7 +427,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
 
   /// The radial picture is dots and lines when small, so it goes much
   /// further out: the big picture is the point of it.
-  static const _radialFitFloor = 0.2;
+  static const _radialFitFloor = 0.1;
 
   /// Opening/"fit" scale: the whole canvas in the viewport when that stays
   /// readable, else the floor; never above 1:1.
@@ -670,6 +716,9 @@ class _MeshMapState extends ConsumerState<MeshMap>
           animation: _move,
           builder: (context, _) {
             final layout = _shown(target);
+            final names = layout.radial
+                ? _radialNames(layout, nodes)
+                : const <String, bool>{};
             return Stack(
               children: [
                 // Pinch = the SAME zoom the buttons do (pivot on the
@@ -718,7 +767,6 @@ class _MeshMapState extends ConsumerState<MeshMap>
                                       otaLink: activity != null,
                                       faded: _faded(nodes),
                                       waveStartedAt: waveStartedAt,
-                                      transform: _transform,
                                     ),
                                   ),
                                 ),
@@ -752,6 +800,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
                                                 .contains(node.mac),
                                         transform: _transform,
                                         pitch: layout.pitch,
+                                        nameAbove: names[node.mac],
                                         showVersion: widget.showVersions,
                                         onTap: (anchor) =>
                                             widget.onNodeTap(node, anchor),
@@ -864,7 +913,7 @@ extension on _MeshMapState {
       // the slot); on the radial picture the dot, centred on the slot.
       final unit = byMac[s.mac];
       final avatar =
-          layout.radial && unit != null ? radialDotDiameter(unit) : 46.0;
+          layout.radial && unit != null ? radialHaloDiameter(unit) : 46.0;
       final centre =
           layout.radial ? at : Offset(at.dx, at.dy - 26 + avatar / 2);
       final ripple = CommandRipple.extentFor(avatar);
@@ -1053,12 +1102,7 @@ class _MeshGraphPainter extends CustomPainter {
     this.otaLink = false,
     this.faded = const {},
     this.waveStartedAt,
-    this.transform,
   }) : super(repaint: repaint);
-
-  /// The map's pan/zoom, for what is drawn only with room on screen (the
-  /// dBm labels of the radial picture).
-  final TransformationController? transform;
 
   /// Every unit confirmed a broadcast command: a cyan wave from the Central
   /// down the rows, each a little after the one above, for [_waveMs].
@@ -1151,6 +1195,30 @@ class _MeshGraphPainter extends CustomPainter {
             ..strokeWidth = 1.2
             ..color = signal.withValues(alpha: 0.5),
         );
+      } else if (layout.radial) {
+        // The radial picture's link: a thin line in the signal colour,
+        // bright at the parent, fading toward the unit, a soft glow.
+        final shader = ui.Gradient.linear(
+          to,
+          from,
+          [signal.withValues(alpha: 0.85), signal.withValues(alpha: 0.28)],
+        );
+        canvas.drawPath(
+          path,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 4
+            ..shader = shader
+            ..color = signal.withValues(alpha: 0.08)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.5),
+        );
+        canvas.drawPath(
+          path,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.1
+            ..shader = shader,
+        );
       } else {
         // Glow pass
         canvas.drawPath(
@@ -1175,9 +1243,9 @@ class _MeshGraphPainter extends CustomPainter {
       // dead unit's reading is from before it went; a presumed link's was
       // to another parent). A sleeping leaf keeps its last value, in the
       // sleep colour.
-      // On the radial picture only once there is room for them (the same
-      // rule as the names): zoomed out it is dots and lines.
-      if (n.online && !target.presumed && n.rssi != null && _labelRoom) {
+      // Never on the radial picture: text on a short link is what made it
+      // unreadable; the dBm is in the popover.
+      if (n.online && !target.presumed && n.rssi != null && !layout.radial) {
         _linkLabel(canvas, path, '${n.rssi} dBm',
             candidate ? AppColors.warning : signal);
       }
@@ -1208,7 +1276,7 @@ class _MeshGraphPainter extends CustomPainter {
       if (!n.online || n.layer == 0) continue;
       if (n.mac == rootMac) {
         _pulse(canvas, layout.positions[n.mac], AppColors.warning,
-            (phase + 0.5) % 1.0, 26);
+            (phase + 0.5) % 1.0, layout.radial ? 38 : 26);
       } else if (candidates.contains(n.mac)) {
         _pulse(canvas, layout.positions[n.mac],
             AppColors.warning.withValues(alpha: 0.6), fast, 22);
@@ -1317,14 +1385,6 @@ class _MeshGraphPainter extends CustomPainter {
         covered = end + gap;
       }
     }
-  }
-
-  /// Zoomed in enough for the link labels (always, on the tree).
-  bool get _labelRoom {
-    if (!layout.radial) return true;
-    final t = transform;
-    if (t == null) return true;
-    return _scaleOf(t.value) * layout.pitch >= radialNameRoom;
   }
 
   /// The radial picture's link: straight, hub to cluster to unit.
@@ -1650,9 +1710,16 @@ class _MeshTree {
   }
 }
 
-/// The dot a unit is drawn as on the radial map: a node a little bigger
-/// than a detector.
-double radialDotDiameter(TopologyNode n) => n.isLeaf ? 16 : 20;
+/// The size a unit's 3D model is drawn at on the radial map: a node a
+/// little bigger than a detector.
+double radialUnitSize(TopologyNode n) => n.isLeaf ? 30 : 36;
+
+/// The glow round it, in the unit's status colour.
+double radialHaloDiameter(TopologyNode n) => radialUnitSize(n) * 1.6;
+
+/// Under this many pixels on screen a model cannot be read: the halo
+/// keeps a bright core instead, until the zoom brings the model back.
+const radialModelFrom = 14.0;
 
 /// The key of a unit's dot on the radial map (tests).
 Key radialChipKey(String mac) => ValueKey('radial-$mac');
@@ -1771,14 +1838,16 @@ class _MeshLayout {
   }
 
   // The balloon picture's measures (canvas pixels).
-  static const _ballMinRing = 60.0; // a unit's children, at least this far
-  static const _ballGap = 12.0; // between neighbouring circles
+  static const _ballMinRing = 96.0; // a unit's children, at least this far
+  static const _ballGap = 16.0; // between neighbouring circles
   static const _ballCentralR = 62.0; // the CENTRAL chip's own circle
-  static const _ballCentralAt = 116.0; // hub ↔ central, centre to centre
-  static const _ballMargin = 76.0; // round the picture (names, the chip)
+  static const _ballCentralAt = 140.0; // hub ↔ central, centre to centre
+  static const _ballMargin = 80.0; // round the picture (names, the chip)
+  // A small network is spread to use the screen, up to this much.
+  static const _ballGrowMax = 2.0;
 
-  /// A unit alone: its dot, the LED on it and a little air.
-  static double _ballUnitR(TopologyNode n) => radialDotDiameter(n) / 2 + 10;
+  /// A unit alone: its halo and a little air.
+  static double _ballUnitR(TopologyNode n) => radialHaloDiameter(n) / 2 + 8;
 
   /// The turn from one circle on a ring of radius [r] to the next, when
   /// the two touch across [_ballGap] (a chord, not an arc: exact).
@@ -1911,7 +1980,8 @@ class _MeshLayout {
     }
 
     // The canvas round the picture: at least the viewport, the picture
-    // centred in it.
+    // centred in it. A picture smaller than the screen is spread to use
+    // it (the models keep their size; the names get their room).
     var minX = double.infinity, minY = double.infinity;
     var maxX = -double.infinity, maxY = -double.infinity;
     for (final p in positions.values) {
@@ -1919,6 +1989,20 @@ class _MeshLayout {
       maxX = math.max(maxX, p.dx);
       minY = math.min(minY, p.dy);
       maxY = math.max(maxY, p.dy);
+    }
+    final grow = math.min(
+      _ballGrowMax,
+      math.min(
+        (viewport.width - 2 * _ballMargin) / math.max(1, maxX - minX),
+        (viewport.height - 2 * _ballMargin) / math.max(1, maxY - minY),
+      ),
+    );
+    if (grow > 1) {
+      positions.updateAll((_, p) => p * grow);
+      minX *= grow;
+      maxX *= grow;
+      minY *= grow;
+      maxY *= grow;
     }
     final w = math.max(viewport.width, maxX - minX + 2 * _ballMargin);
     final h = math.max(viewport.height, maxY - minY + 2 * _ballMargin);
@@ -2334,12 +2418,17 @@ class _NodeChip extends StatelessWidget {
   }
 }
 
-/// A unit on the radial map (2026-10-15): a dot in its status colour
-/// (`radialStatusOf`: alarm and offline red — offline hollow —, attention
-/// amber, sleeping grey, active green), the unit's LED on it as everywhere
-/// else, an amber ring on the root; the name (and the firmware, with the
-/// switch on) only once the zoom leaves room for them. A tap opens the
-/// same popover as on the tree.
+/// A unit on the radial map (2026-10-15): its 3D model inside a soft
+/// halo in its status colour (`radialStatusOf`: alarm red and bright,
+/// offline a hollow red ring round the faded model, attention amber,
+/// sleeping grey, active green), the LED on the model's own LED marker
+/// as everywhere else, the ROOT / CANDIDATO badge and the moon as the
+/// model draws them. Zoomed out, under [radialModelFrom] px on screen,
+/// the halo alone with a bright core — the same glow, so nothing jumps.
+/// The name (and the firmware, with the switch on) only once the zoom
+/// leaves room and no neighbour's name or halo is in the way — under
+/// the halo, else above it ([nameAbove], decided for the whole map in
+/// one pass). A tap opens the same popover as on the tree.
 class _RadialChip extends StatelessWidget {
   const _RadialChip({
     required this.node,
@@ -2348,6 +2437,7 @@ class _RadialChip extends StatelessWidget {
     required this.isCandidate,
     required this.transform,
     required this.pitch,
+    required this.nameAbove,
     required this.onTap,
     this.showVersion = true,
   });
@@ -2358,76 +2448,106 @@ class _RadialChip extends StatelessWidget {
   final bool isCandidate;
   final TransformationController transform;
   final double pitch;
+
+  /// The name under the halo (false), above it (true) or nowhere (null).
+  final bool? nameAbove;
   final bool showVersion;
   final ValueChanged<Rect> onTap;
 
   @override
   Widget build(BuildContext context) {
-    final d = radialDotDiameter(node);
+    final size = radialUnitSize(node);
+    final halo = radialHaloDiameter(node);
     final status = radialStatusOf(node);
     final color = radialStatusColor(status, isDark: context.isDark);
     final hollow = status == RadialStatus.offline;
     final loud = status == RadialStatus.alarm;
-    const tap = 8.0; // air round the dot that still takes the tap
     const label = 96.0;
     final name = deviceDisplayName(node);
     return Positioned(
-      left: position.dx - d / 2 - tap,
-      top: position.dy - d / 2 - tap,
-      child: Opacity(
-        opacity: node.stale ? deviceStaleOpacity : 1.0,
-        child: Builder(
-          builder: (chipContext) => _ArenaFreeTap(
-            onTap: () => onTap(deviceAnchorOf(chipContext)),
-            child: SizedBox(
-              width: d + 2 * tap,
-              height: d + 2 * tap,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Positioned(
-                    left: tap,
-                    top: tap,
-                    child: Container(
-                      key: radialChipKey(node.mac),
-                      width: d,
-                      height: d,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: hollow
-                            ? context.surfaceColor
-                            : Color.lerp(color, Colors.white, 0.08),
-                        border: Border.all(
-                          color: isRoot || isCandidate
-                              ? AppColors.warning
-                              : hollow
+      left: position.dx - halo / 2,
+      top: position.dy - halo / 2,
+      child: Builder(
+        builder: (chipContext) => _ArenaFreeTap(
+          onTap: () => onTap(deviceAnchorOf(chipContext)),
+          child: SizedBox(
+            width: halo,
+            height: halo,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                // The halo: the status as a glow round the unit; a hollow
+                // ring when it is gone.
+                Container(
+                  key: radialChipKey(node.mac),
+                  width: halo,
+                  height: halo,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: hollow
+                        ? null
+                        : RadialGradient(
+                            colors: [
+                              color.withValues(alpha: loud ? 0.6 : 0.42),
+                              color.withValues(alpha: loud ? 0.22 : 0.12),
+                              color.withValues(alpha: 0),
+                            ],
+                            stops: const [0.35, 0.7, 1.0],
+                          ),
+                    border: hollow
+                        ? Border.all(
+                            color: color.withValues(alpha: 0.85), width: 1.6)
+                        : null,
+                    boxShadow: loud
+                        ? [
+                            BoxShadow(
+                              color: color.withValues(alpha: 0.55),
+                              blurRadius: 16,
+                              spreadRadius: 2,
+                            ),
+                          ]
+                        : null,
+                  ),
+                ),
+                Positioned(
+                  left: (halo - size) / 2,
+                  top: (halo - size) / 2,
+                  child: ValueListenableBuilder<Matrix4>(
+                    valueListenable: transform,
+                    builder: (_, m, __) {
+                      if (_scaleOf(m) * size < radialModelFrom) {
+                        // Too small for a model to read: the glow's core.
+                        return Container(
+                          width: size,
+                          height: size,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: hollow
+                                ? context.surfaceColor
+                                : Color.lerp(color, Colors.white, 0.2),
+                            border: Border.all(
+                              color: hollow
                                   ? color
-                                  : Color.lerp(color, Colors.white, 0.35)!,
-                          width: isRoot ? 2.2 : (hollow ? 1.8 : 1.0),
-                        ),
-                        boxShadow: [
-                          if (loud)
-                            BoxShadow(
-                                color: color.withValues(alpha: 0.75),
-                                blurRadius: 10,
-                                spreadRadius: 1)
-                          else if (!hollow)
-                            BoxShadow(
-                                color: color.withValues(alpha: 0.35),
-                                blurRadius: 5),
-                        ],
-                      ),
-                    ),
+                                  : Color.lerp(color, Colors.white, 0.5)!,
+                              width: 1.2,
+                            ),
+                          ),
+                        );
+                      }
+                      return DeviceModelAvatar(
+                        node: node,
+                        isRoot: isRoot,
+                        isCandidate: isCandidate,
+                        size: size,
+                      );
+                    },
                   ),
-                  // The LED, at the top of the dot, as on the CENTRAL disc.
+                ),
+                if (nameAbove != null)
                   Positioned(
-                    left: tap + (d - 7) / 2,
-                    top: tap - 2,
-                    child: DeviceLedDot(node: node, size: 7),
-                  ),
-                  Positioned(
-                    left: (d + 2 * tap - label) / 2,
-                    top: d + tap + 3,
+                    left: (halo - label) / 2,
+                    top: nameAbove! ? null : halo - 2,
+                    bottom: nameAbove! ? halo - 2 : null,
                     width: label,
                     child: ValueListenableBuilder<Matrix4>(
                       valueListenable: transform,
@@ -2447,7 +2567,7 @@ class _RadialChip extends StatelessWidget {
                                 color: node.name?.isNotEmpty == true
                                     ? context.textPrimary
                                     : context.textSecondary,
-                                fontSize: 8,
+                                fontSize: 9,
                                 fontWeight: FontWeight.w700,
                                 fontFamily: node.name?.isNotEmpty == true
                                     ? null
@@ -2461,7 +2581,7 @@ class _RadialChip extends StatelessWidget {
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(
                                   color: AppColors.secondary,
-                                  fontSize: 7,
+                                  fontSize: 7.5,
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
@@ -2470,8 +2590,7 @@ class _RadialChip extends StatelessWidget {
                       },
                     ),
                   ),
-                ],
-              ),
+              ],
             ),
           ),
         ),
