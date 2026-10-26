@@ -63,7 +63,9 @@ void main() {
   );
 
   Future<void> pump(WidgetTester tester,
-      {required bool showOta, List<TopologyNode>? units}) async {
+      {required bool showOta,
+      List<TopologyNode>? units,
+      bool withBoard = true}) async {
     final nodes = units ?? mesh;
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
@@ -72,7 +74,8 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          topologyProvider.overrideWithValue([boardNode, ...nodes]),
+          topologyProvider
+              .overrideWithValue([if (withBoard) boardNode, ...nodes]),
           safrTrafficProvider.overrideWithValue(SafrTrafficBus()),
           otaPushViewProvider.overrideWithValue(sending),
           otaRolloutOverlayProvider.overrideWithValue(OtaRolloutOverlay.none),
@@ -82,7 +85,7 @@ void main() {
           home: Scaffold(
             body: MeshMap(
               nodes: nodes,
-              board: boardNode,
+              board: withBoard ? boardNode : null,
               election: const RootElectionState(rootMac: root),
               onNodeTap: (_, __) {},
               showOta: showOta,
@@ -113,6 +116,22 @@ void main() {
     expect(find.byKey(tablet), findsNothing);
     expect(find.text('CENTRAL'), findsOneWidget);
     expect(find.text(root), findsOneWidget);
+  });
+
+  group('a brand-new central (2026-10-26)', () {
+    testWidgets('the board heard and no unit yet: the CENTRAL chip alone',
+        (tester) async {
+      await pump(tester, showOta: false, units: const []);
+      expect(find.text('CENTRAL'), findsOneWidget);
+      expect(find.text('Nenhum dispositivo na rede'), findsNothing);
+    });
+
+    testWidgets('nothing heard at all: the empty message, no chip',
+        (tester) async {
+      await pump(tester, showOta: false, units: const [], withBoard: false);
+      expect(find.text('CENTRAL'), findsNothing);
+      expect(find.text('Nenhum dispositivo na rede'), findsOneWidget);
+    });
   });
 
   group('a dead unit is never a hop (2026-10-14)', () {

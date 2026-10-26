@@ -748,9 +748,14 @@ class _MeshMapState extends ConsumerState<MeshMap>
             ? allConfirmed.updatedAt
             : null;
 
-    // A push is drawn on the central: it is on the map while one runs, mesh
-    // or no mesh.
-    if (nodes.isEmpty && activity == null) return const _EmptyMesh();
+    // The central alone is a map: a board the tablet hears (a brand-new
+    // central, no unit installed yet) is drawn as the CENTRAL chip with
+    // nothing under it — the Rede strip says "0 dispositivos". A push is
+    // drawn on the central too, mesh or no mesh. Only with nothing at all
+    // heard yet is the empty message shown (2026-10-26).
+    if (nodes.isEmpty && activity == null && board == null) {
+      return const _EmptyMesh();
+    }
     return LayoutBuilder(builder: (context, constraints) {
       final size = Size(constraints.maxWidth, constraints.maxHeight);
       _viewSize = size;
@@ -2708,7 +2713,7 @@ class _EmptyMesh extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            'A topologia aparecerá aqui assim que o root\ncomeçar a reportar pela serial.',
+            'A central e a rede aparecerão aqui assim que a placa\ncomeçar a reportar pela serial.',
             textAlign: TextAlign.center,
             style: TextStyle(color: context.textSecondary, fontSize: 12.5),
           ),
