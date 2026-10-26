@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -16,22 +18,84 @@ class QrScannerScreen extends StatefulWidget {
 }
 
 class _QrScannerScreenState extends State<QrScannerScreen> {
+  // The back camera is tried first. A central tablet often has only a front
+  // camera: asking for a back camera then fails with "unsupported / no camera",
+  // so on that error the scanner is started again on the front camera before
+  // anything is shown to the installer.
   final _controller = MobileScannerController(
     detectionSpeed: DetectionSpeed.noDuplicates,
+    facing: CameraFacing.back,
   );
   bool _hasScanned = false;
+  bool _triedFrontCamera = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onControllerChanged);
+  }
 
   @override
   void dispose() {
+    _controller.removeListener(_onControllerChanged);
     _controller.dispose();
     super.dispose();
   }
 
+  void _onControllerChanged() {
+    final error = _controller.value.error;
+    if (error == null ||
+        error.errorCode != MobileScannerErrorCode.unsupported ||
+        _triedFrontCamera) {
+      return;
+    }
+    _triedFrontCamera = true;
+    // A successful start clears the error; a second failure keeps it and the
+    // error builder below shows the message.
+    unawaited(_controller.start(cameraDirection: CameraFacing.front));
+  }
+
+  Widget _buildError(BuildContext context, MobileScannerException error) {
+    // Still switching to the front camera: keep the black preview.
+    if (error.errorCode == MobileScannerErrorCode.unsupported &&
+        !_triedFrontCamera) {
+      return const ColoredBox(color: Colors.black);
+    }
+    final message = switch (error.errorCode) {
+      MobileScannerErrorCode.permissionDenied =>
+        'Permita o acesso à câmera nas configurações do aparelho para '
+            'escanear o QR Code.',
+      MobileScannerErrorCode.unsupported =>
+        'Nenhuma câmera disponível neste aparelho.',
+      _ => 'Não foi possível abrir a câmera.',
+    };
+    return ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.no_photography_rounded,
+                  color: Colors.white, size: 40),
+              const SizedBox(height: 16),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void _onDetect(BarcodeCapture capture) {
     if (_hasScanned) return;
-    final value = capture.barcodes.isNotEmpty
-        ? capture.barcodes.first.rawValue
-        : null;
+    final value =
+        capture.barcodes.isNotEmpty ? capture.barcodes.first.rawValue : null;
     if (value == null || value.isEmpty) return;
     _hasScanned = true;
     Navigator.pop(context, value);
@@ -47,6 +111,7 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
           MobileScanner(
             controller: _controller,
             onDetect: _onDetect,
+            errorBuilder: _buildError,
           ),
 
           // ── Dark overlay with transparent hole ────────────────────────────
@@ -74,10 +139,20 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                 ),
               ),
               actions: [
-                IconButton(
-                  icon: const Icon(Icons.flash_on_rounded),
-                  onPressed: () => _controller.toggleTorch(),
-                  tooltip: 'Lanterna',
+                // A front camera has no flash: hide the button instead of
+                // offering a torch that never lights.
+                ValueListenableBuilder<MobileScannerState>(
+                  valueListenable: _controller,
+                  builder: (context, state, _) {
+                    if (state.torchState == TorchState.unavailable) {
+                      return const SizedBox.shrink();
+                    }
+                    return IconButton(
+                      icon: const Icon(Icons.flash_on_rounded),
+                      onPressed: () => _controller.toggleTorch(),
+                      tooltip: 'Lanterna',
+                    );
+                  },
                 ),
               ],
             ),
