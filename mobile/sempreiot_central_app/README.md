@@ -240,6 +240,13 @@ curl -X POST https://api.sempreiot.com/access/resolve \
   -H "Content-Type: application/json" \
   -d '{"centralId":"central-004","name":"Central Teste"}'
 
+## Register a NEW CENTRAL (one command, no local server)
+# Creates the Cognito machine user + password, the IoT policy Central_<id>
+# and the DynamoDB `Device` row, then prints the FACTORY define and saves it to
+# ~/.sempreiot/centrals/<id>.factory.json. Uses the key in lambda/central/.env,
+# or your `aws login` session when that key is gone.
+cd lambda/central && node register.mjs central-004 "Central Bloco B"
+
 
 ## Config the CALLBACK COGNITO
 aws cognito-idp update-user-pool-client \
@@ -279,9 +286,11 @@ flutter run -d 98cc396d \
 
 
 
-  flutter run -d 98cc396d \
-  --dart-define=APP_MODE=central \
-  --dart-define='FACTORY={"info":{"name":"Central Nome","firmware_version":"1.0.0","subId":"84b824d8-6041-701c-70a1-ba40bb4f0ab4","old_subId":"","created_at":"2026-06-25","updated_at":"2026-06-25"},"credentials":{"pin":"428412","unlock_pin":"123456","root":"admin","password":"Teste@123","level_pins":{"LEVEL_1":"111111","LEVEL_2":"222222","LEVEL_3":"333333","LEVEL_4":"444444"}},"iot":{"iot_client_id":"central-003@sempreiot.com","iot_password":"$y3XYZv8H)Dw@O+(7+Sy"}}'
+ 
+
+ ### NEW
+
+ flutter run -d S3024C508200790 --dart-define=APP_MODE=central --dart-define='FACTORY={"info":{"name":"Central Major Basilio","firmware_version":"1.0.0","subId":"54382448-7061-7082-2a05-51631e565668","old_subId":"","created_at":"2026-10-26","updated_at":"2026-10-26"},"credentials":{"pin":"428412","unlock_pin":"123456","root":"admin","password":"Teste@123","level_pins":{"LEVEL_1":"111111","LEVEL_2":"222222","LEVEL_3":"333333","LEVEL_4":"444444"}},"iot":{"iot_client_id":"central-999@sempreiot.com","iot_password":"T6mjSB7bHj73JD-A7^9="}}'
 
 
   flutter run -d 00008140-00047D183A53801C --dart-define=APP_MODE=app --dart-define=DEVICE_AP_URL=http://10.0.0.130:8080

@@ -166,7 +166,7 @@ Navigation is plain `Navigator.push` with `MaterialPageRoute` — no router, no 
 | `GET /access/requests?userSubId=` or `?centralIdentityId=` | `access-resolve` (GET branch) | both | all `CentralAccess` rows for a user / a central |
 | `POST /access/resolve` `{action: RESOLVE|LEVEL_CHANGE|BLOCK|UNBLOCK, ...}` | `access-resolve` | CENTRAL | mutate relation, create/attach or detach IoT policy `Access_{centralId}_{userSubId}`, publish `{userIdentityId}/access-response` |
 | (MQTT) `{centralIdentityId}/access` | `access-request` via IoT Rule `SELECT *, topic(1) as centralIdentityId FROM '+/access'` | APP publishes | creates PENDING row if none/rejected; silently ignores PENDING/ACCEPTED/BLOCKED |
-| not called by app | `central` | ops tool (README `curl localhost:3001`) | creates the machine Cognito user `<centralId>@sempreiot.com`, identity, IoT policy, `Device` row; returns the password that goes into `FACTORY.iot` |
+| not called by app | `central` | ops tool: `cd lambda/central && node register.mjs <centralId> "<name>"` (or README `curl localhost:3001`) | creates the machine Cognito user `<centralId>@sempreiot.com`, identity, IoT policy, `Device` row; returns the password that goes into `FACTORY.iot`; `register.mjs` prints the whole FACTORY define and saves it to `~/.sempreiot/centrals/<centralId>.factory.json` (outside git) |
 
 `SigV4Signer` (`core/services/sigv4_signer.dart`) is used only for the IoT WebSocket presigned URL (service `iotdevicegateway`, path `/mqtt`, 24 h expiry, session token appended *unsigned*, as the AWS SDKs do). `aws_signature_v4`/`aws_common` are in `pubspec.yaml` but unused.
 

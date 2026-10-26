@@ -14,11 +14,9 @@ import {
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { createAndAttachPolicy } from "./policies.mjs";
+import { credentialsFromEnv } from "./credentials.mjs";
 
-const credentials = {
-  accessKeyId: process.env.ACCESS_KEY_ID,
-  secretAccessKey: process.env.SECRET_ACCESS_KEY,
-};
+const credentials = credentialsFromEnv();
 
 const cognito = new CognitoIdentityProviderClient({
   region: process.env.AWS_REGION,

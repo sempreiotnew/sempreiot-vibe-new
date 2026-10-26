@@ -1,11 +1,9 @@
 import { IoTClient, CreatePolicyCommand, AttachPolicyCommand } from "@aws-sdk/client-iot";
+import { credentialsFromEnv } from "./credentials.mjs";
 
 const iot = new IoTClient({
   region: process.env.AWS_REGION,
-  credentials: {
-    accessKeyId: process.env.ACCESS_KEY_ID,
-    secretAccessKey: process.env.SECRET_ACCESS_KEY,
-  },
+  credentials: credentialsFromEnv(),
 });
 
 const ACCOUNT_ID = process.env.AWS_ACCOUNT_ID;
