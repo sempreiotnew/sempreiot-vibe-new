@@ -1,6 +1,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:name="android.hardware.usb.host" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Networking. INTERNET: the cloud (AppSync, IoT) and the HTTP calls to a device's
+         setup SoftAP (192.168.4.1); the debug/profile manifests add it only for the
+         Flutter tool, release needs it here. CHANGE_NETWORK_STATE: without it
+         ConnectivityManager.requestNetwork() (the programmatic join of SIOT-SETUP-* in
+         MainActivity.kt) throws SecurityException "was not granted either of these
+         permissions: CHANGE_NETWORK_STATE, WRITE_SETTINGS". ACCESS_NETWORK_STATE: the
+         network callbacks of that same join. All three are normal permissions: granted
+         at install, no runtime prompt. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <application
         android:label="sempreiot_central_app"
         android:name="${applicationName}"

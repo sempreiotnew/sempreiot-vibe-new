@@ -78,9 +78,12 @@ class WifiJoinUnsupported implements Exception {
 
 /// Android tried the programmatic join and it did not succeed. [code] is the
 /// platform-channel error code from MainActivity.kt: `UNAVAILABLE` (the
-/// system dialog was dismissed, the SSID was not found in a scan, or the
-/// passphrase was rejected) or `TIMEOUT`. Unlike [WifiJoinUnsupported] a
-/// retry can succeed, but polling 192.168.4.1 without the join is pointless.
+/// system dialog was dismissed, the SSID was not found in a scan, the
+/// passphrase was rejected, or the 30 s request timed out) or `PERMISSION`
+/// (the APK lacks CHANGE_NETWORK_STATE — AndroidManifest.xml — so Android
+/// refused the request before any dialog; a build problem, not the operator's).
+/// Unlike [WifiJoinUnsupported] a retry can succeed, but polling 192.168.4.1
+/// without the join is pointless.
 class WifiJoinFailed implements Exception {
   const WifiJoinFailed(this.code, this.message);
   final String code;
