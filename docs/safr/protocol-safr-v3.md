@@ -19,7 +19,13 @@ here. Do **not** keep divergent layout comments in code — cite this file inste
   `NAME_ANNOUNCE` (§7.11) and, on request, to every `DEVICE_TABLE` entry (§7.12, `GET_DEVICE_TABLE`
   format byte), the board announcing itself; a leaf's `MSG_ID` continues across wakes (§12.2); and the
   **firmware update messages** (§13: push to the board, offer / status / result, rollout table) —
-  additive, `VER` unchanged.
+  additive, `VER` unchanged. Revision **3.6** (2026-10-26) makes a sender's retry reach every hop
+  (§9.1: duplicates are relayed onward; the tablet retries a mesh COMMAND until the unit's own ACK)
+  and adds `DL_HEARD` to the node HEARTBEAT (§7.3: the board heartbeats it heard, the downlink loss)
+  with the weak-link / degraded-link rules of §9.4 — additive, `VER` unchanged. Revision **3.7**
+  (2026-10-27) adds `DL_MAP` beside it (§7.3: *which* of the last 8 board heartbeats were heard, a
+  bitmap placed by the board's `UPTIME_S`), so the central can draw every lost downlink beat where it
+  happened — additive, `VER` unchanged.
 - Status: implemented (uplink + downlink + journal backfill); v3.2 additions: implemented, bench pending;
   v3.3: implemented; **v3.4: specified, firmware Phase 2 (`docs/phases-development/phase2-leaf-brief.md`)**
 - Supersedes: SAFR v2 (`VER = 0x02` — decode-only for stored packets) and
@@ -430,7 +436,7 @@ For EVENT frames with severity ALARM or TROUBLE:
 
 The v2 behavior ("3 retries then give up") is **non-compliant and removed**.
 
-### 7.3 HEARTBEAT — `MSG_TYPE 0x02` (uplink) — payload 20 bytes
+### 7.3 HEARTBEAT — `MSG_TYPE 0x02` (uplink) — payload 20 bytes (21 from a v3.6 node, 22 from v3.7)
 
 Supervision beacon (§9.2). Never sets `F_ACK_REQ`; never inserted into the
 Events feed — it silently updates the device registry (battery, RSSI, last-seen).
@@ -458,6 +464,32 @@ HEARTBEAT is never relayed downward: uplink frames go root → central only.
 | 12 | 1 | RSSI_TO_PARENT (int8 dBm; root: 0x7F = n/a) | RF-link quality — feeds the RF_INTERFERENCE detection |
 | 13 | 6 | PARENT_MAC (root: 00:00:00:00:00:01 = the central) | topology cross-check |
 | 19 | 1 | LAYER (root = 0) | mesh depth |
+| 20 | 1 | DL_HEARD *(v3.6, powered nodes only)* — board HEARTBEATs heard in the last 120 s: 0–8 (8 expected, capped); `0xFF` = not 120 s on this link yet | the **downlink loss** of the unit's link, measured where it happens (§9.4) |
+| 21 | 1 | DL_MAP *(v3.7, powered nodes only)* — the last 8 board-heartbeat **slots**, bit 0 the most recent, 1 = heard, 0 = lost; meaningless (0) while DL_HEARD is `0xFF` | **which** beats were lost: the central draws each lost one as a gap at its time |
+
+**DL_HEARD (v3.6, 2026-10-26).** RSSI says how strong the parent is heard; nothing said how many
+frames actually arrive. Every hop down the mesh is one broadcast with no retry (§9.1), so a unit at
+−90 dBm can heartbeat up (unicast, retried by Wi-Fi) for ever while half the commands sent to it
+are lost — and read "online" all along. The one downlink frame on a fixed cadence is the board's own
+HEARTBEAT (above, every 15 s): a node keeps the times of the ones it heard and reports how many of
+the last 8 arrived. The window restarts on every level change (a new parent is a new link); the
+root hears them over TCP and reports 8. Leafs do not send it (their link is judged at bind, §12.7).
+Receivers accept 20, 21 or 22 bytes: a 20-byte heartbeat is a unit that runs older firmware, and the
+central shows nothing for it. The board relays the frame unchanged, so an older board passes the byte
+through.
+
+**DL_MAP (v3.7, 2026-10-27).** The count says how many were lost, not which. The node knows which:
+the board's HEARTBEAT carries the board's `UPTIME_S`, which advances 15 s per beat, so a 30 s jump
+between two heard beats is one lost beat between them (a 45 s jump two, and so on; a jump under 8 s
+is the extra beat the board sends on a link-up and shares its slot; a jump backwards is a board
+reboot and starts a new run). The node keeps the last 8 slots as a bitmap, newest in bit 0, and
+also advances it when a beat is overdue — no beat for 15 + 5 s means the newest slot is lost — so a
+node that stops hearing the board says so in its next heartbeat instead of waiting for a beat that
+is not coming. The map restarts with the window on a level change. The central aligns the slots
+with the board's heartbeats it heard the board send (it sees each one over the cable as the board
+broadcasts it) and draws, per beat sent, a spike when the node heard it and a flat gap when it did
+not (`heartbeat_widgets.dart`). `DL_HEARD` stays as it is: the §9.4 rules read the count, older
+centrals read nothing new. Both bytes are a node's own word; the central never infers a lost beat.
 
 ### 7.4 TOPOLOGY — `MSG_TYPE 0x03` (uplink) — payload 14 + 7·CHILD_COUNT bytes
 
@@ -791,6 +823,22 @@ sender (needs ACK)                      confirmer
   **fresh MSG_CTR** (CCM nonces are never reused, even for identical plaintext).
 - Receivers deduplicate: EVENTs by `(SRC_MAC, DEV_SEQ)` (§6); everything else
   by `(SRC_MAC, MSG_ID)` within a 30 s window. Process once, **ACK every time**.
+- **A duplicate is relayed onward like the first copy** *(v3.6, 2026-10-26)*: the board relays a
+  duplicate COMMAND / TIME_SYNC into the mesh, a node relays a duplicate downlink frame to its
+  children (the mailbox hook of §12.5 still queues a leaf's copy once). A duplicate here is the
+  sender's retransmission, and the copy it is resent for may have been lost on the hop *below* the
+  node that already saw the MSG_ID — every hop down is one broadcast with no retry. Before, the
+  retry stopped at the first hop that had seen the frame and never reached a unit two hops away.
+  The tree has one path down, so each hop receives a frame once: no loop, no storm.
+- **A COMMAND into the mesh is retried until the unit confirms** *(v3.6)*: the board ACKs every
+  COMMAND before relaying it (§7.5), and that ACK used to end the central's retries. Now, for a
+  COMMAND addressed to a powered unit, the central keeps retransmitting (same MSG_ID, fresh
+  MSG_CTR, 2 s apart, 3 transmissions in all) until the **unit's own** ACK comes up; for a
+  broadcast, until every online powered unit has ACKed. A battery unit's command is not retried —
+  it waits in the parent's mailbox (§12.5) for the unit's next wake. The board's ACK still lights
+  the first check on the map; the unit's the second. Three transmissions turn a link that loses
+  half its frames from a coin toss into ≈ 88 % delivery; a link that loses more still reads
+  "sem resposta" — honestly, and now with the loss on the unit's card (§7.3 DL_HEARD, §9.4).
 
 ### 9.2 Uplink supervision (device → central) ⛑ NFPA 72 ≤ 200 s / EN 54-25 ≤ 300 s
 
@@ -851,6 +899,18 @@ Receivers count CRC failures and auth failures per rolling window. Sustained
 corruption (≥ 5 failures within 60 s) must raise a TROUBLE ("qualidade do
 enlace degradada") even if some frames still get through — degraded is not
 "working". ⛑ UL 864 monitoring for integrity; EN 54-25 interference immunity.
+
+**Weak link and downlink loss (v3.6, 2026-10-26).** Two rules the central applies to every
+powered node, both from its HEARTBEAT (§7.3), neither touching "online" (§9.2 stays the silence rule):
+
+- **Weak link:** `RSSI_TO_PARENT` < **−85 dBm** — the leaf bind threshold of §12.3, applied to nodes.
+  The unit is flagged "enlace fraco" on the map and its card, with the advice to put a node between
+  it and its parent. A flag, not a trouble: a weak link that loses nothing is a warning.
+- **Degraded link:** `DL_HEARD` ≤ **6** of 8 (≥ 25 % of the board's heartbeats lost over 2 min) →
+  the central raises the TROUBLE "qualidade do enlace degradada" on that unit (the §9.4 trouble,
+  raised by the central from the unit's own count, like "device missing" of §9.2); restored when the
+  unit reports **8** of 8 again. `0xFF` (not 120 s on the link yet) and a 20-byte heartbeat (older
+  firmware) say nothing and change nothing.
 
 ---
 

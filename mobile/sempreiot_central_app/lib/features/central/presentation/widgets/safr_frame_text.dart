@@ -150,6 +150,10 @@ String safrFrameSummary(SafrWireFrame f) {
       return [
         p.layer == 0 ? 'placa' : 'L${p.layer}',
         if (p.rssiToParent != null) '${p.rssiToParent}dBm',
+        if (p.dlHeard != null)
+          'dl:${p.dlHeard}/${SafrHeartbeatPayload.dlHeardExpected}',
+        if (p.dlMap != null)
+          'map:${p.dlMap!.toRadixString(2).padLeft(8, '0')}',
         if (p.batteryPct != null) 'bat:${p.batteryPct}%',
         'up:${_duration(p.uptimeS)}',
       ].join(' ');

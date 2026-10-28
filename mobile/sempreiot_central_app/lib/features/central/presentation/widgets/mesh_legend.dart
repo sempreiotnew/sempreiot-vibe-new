@@ -32,6 +32,11 @@ RadialStatus radialStatusOf(TopologyNode n) {
   return RadialStatus.online;
 }
 
+/// The warning icon a weak link carries beside its dBm pill on the map
+/// (`_linkLabel` in mesh_map.dart, in the warning yellow) — the legend
+/// shows the same.
+const IconData weakLinkMarkerIcon = Icons.warning_amber_rounded;
+
 Color radialStatusColor(RadialStatus s, {required bool isDark}) => switch (s) {
       RadialStatus.alarm => AppColors.error,
       RadialStatus.offline => AppColors.error,
@@ -61,6 +66,7 @@ class MeshLegend extends StatelessWidget {
       counts.update(radialStatusOf(n), (c) => c + 1, ifAbsent: () => 1);
     }
     final total = placed.length;
+    final weak = placed.where((n) => n.online && n.linkAttention).length;
     String pct(int c) => total == 0 ? '' : ' · ${(c * 100 / total).round()} %';
 
     final rows = <Widget>[
@@ -77,6 +83,13 @@ class MeshLegend extends StatelessWidget {
           color: AppColors.secondary,
           hollow: true,
           text: '$awaiting aguardando sinal',
+        ),
+      // The marker on a weak link (protocol §9.4) and what it asks for.
+      if (weak > 0)
+        _Row(
+          color: AppColors.warning,
+          icon: weakLinkMarkerIcon,
+          text: '$weak enlace fraco · falta um nó no caminho',
         ),
     ];
 
@@ -117,10 +130,15 @@ class MeshLegend extends StatelessWidget {
 }
 
 class _Row extends StatelessWidget {
-  const _Row({required this.color, required this.text, this.hollow = false});
+  const _Row(
+      {required this.color,
+      required this.text,
+      this.hollow = false,
+      this.icon});
   final Color color;
   final String text;
   final bool hollow;
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
@@ -129,15 +147,21 @@ class _Row extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: hollow ? null : color,
-              border: Border.all(color: color, width: hollow ? 1.6 : 0),
+          if (icon != null)
+            SizedBox(
+                width: 11,
+                height: 11,
+                child: Icon(icon, size: 11, color: color))
+          else
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: hollow ? null : color,
+                border: Border.all(color: color, width: hollow ? 1.6 : 0),
+              ),
             ),
-          ),
           const SizedBox(width: 6),
           Text(
             text,

@@ -12,6 +12,7 @@
 #include "siot_board_def.h"
 #include "siot_config.h"
 #include "siot_evbus.h"
+#include "siot_hbwin.h"
 #include "siot_identity.h"
 #include "siot_link.h"
 #include "siot_safr.h"
@@ -76,6 +77,14 @@ static uint32_t now_epoch(int64_t t) { return s_epoch_base + (uint32_t)((t - s_e
  * anyway), so "level > 0" never meant "the board is there". */
 static int64_t s_last_downlink_ms = -1;
 #define BOARD_SILENCE_MS 90000 /* 6 missed board HEARTBEATs = 3 × the tablet's LINK_CHECK (spec §9.3) */
+
+/* The board's HEARTBEATs this node actually heard (spec §7.3 DL_HEARD,
+ * v3.6): each hop down is one broadcast with no retry, so the ones that
+ * never arrive are the downlink loss the tablet cannot see otherwise.
+ * Restarted on every level change — a new parent is a new link. Noted in
+ * the link rx task, read by the netcore task (emit_heartbeat): both under
+ * s_lock. */
+static siot_hbwin_t s_hbwin;
 
 static bool board_reachable(int64_t t)
 {
@@ -216,7 +225,7 @@ static void emit_event(int64_t t, uint8_t evt_type, uint8_t evt_code, bool ack_r
 
 static void emit_heartbeat(int64_t t)
 {
-    uint8_t p[20];
+    uint8_t p[22]; /* 20 (§7.3) + DL_HEARD (v3.6) + DL_MAP (v3.7) */
     siot_put_u32(&p[0], now_epoch(t));
     siot_put_u32(&p[4], (uint32_t)(t / 1000)); /* UPTIME_S */
     p[8] = SAFR_PWR_AC_OK | SAFR_PWR_CHARGING;
@@ -232,6 +241,13 @@ static void emit_heartbeat(int64_t t)
         memset(&p[13], 0, 6);
     }
     p[19] = siot_link_mesh_level();
+    /* DL_HEARD: board heartbeats heard in the last 120 s (8 expected; 0xFF =
+     * not 120 s on this link yet). The root hears them over TCP: 8 of 8.
+     * DL_MAP (v3.7): which of the last 8 slots were heard, bit 0 the newest
+     * — the tablet draws the lost ones as gaps (siot_hbwin.h). Read under
+     * s_lock, which netcore_task holds around every emit. */
+    p[20] = siot_hbwin_heard(&s_hbwin, t);
+    p[21] = siot_hbwin_map(&s_hbwin, t);
     send_uplink(SAFR_MSG_HEARTBEAT, siot_safr_next_msg_id(), 0, p, sizeof(p));
 }
 
@@ -287,11 +303,17 @@ static bool for_me(const siot_safr_frame_t *f)
     return siot_mac_eq(f->dst_mac, siot_identity_get()->mac) || siot_mac_is_bcast(f->dst_mac);
 }
 
-/* Every distinct downlink frame goes one hop further to our children (brief
- * §6.3): the dedupe in siot_safr makes this loop-safe. */
+/* Every downlink frame goes one hop further to our children (brief §6.3),
+ * the duplicates too (spec §9.1, v3.6): a duplicate here is the sender's
+ * retransmission — same MSG_ID, fresh MSG_CTR — and its first copy may have
+ * been lost on the hop below us, the one it was resent for. Each hop down is
+ * a single broadcast with no retry, so a retry that stopped at the first
+ * node that had seen the MSG_ID never reached a unit two hops away. The
+ * tree has one path down, so a frame is received once per hop: no loop.
+ * The mailbox hook keeps its own dedupe (§12.5, a leaf's copy is queued once). */
 static void relay_down(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len, bool duplicate)
 {
-    if (!duplicate) siot_link_mesh_broadcast_children(raw, raw_len);
+    siot_link_mesh_broadcast_children(raw, raw_len);
     if (s_dl_hook) s_dl_hook(f, raw, raw_len, duplicate, s_dl_hook_ctx); /* leafs behind this node (§12.5) */
 }
 
@@ -330,8 +352,14 @@ static void on_ack(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_le
  * it is proof the board is behind the mesh. Relay it one hop further. */
 static void on_board_heartbeat(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len, bool dup, void *ctx)
 {
-    (void)f; (void)ctx;
+    (void)ctx;
     note_downlink();
+    if (!dup) { /* DL_HEARD / DL_MAP (§7.3): one per board heartbeat, placed by the board's UPTIME_S */
+        const uint32_t uptime_s = f->payload_len >= 8 ? siot_get_u32(&f->payload[4]) : 0;
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        siot_hbwin_note(&s_hbwin, now_ms(), uptime_s);
+        xSemaphoreGive(s_lock);
+    }
     relay_down(f, raw, raw_len, dup);
 }
 
@@ -518,6 +546,7 @@ static bool update_state(void)
         s_level_seen = level;
         s_announce_pending = level > 0;
         s_level_change_ms = now_ms();
+        siot_hbwin_init(&s_hbwin, s_level_change_ms); /* a new parent is a new link (§7.3 DL_HEARD) */
         siot_survey_set_layer(level == 0 ? 0xFF : level);
         const siot_evt_level_t ev = {.level = level};
         siot_evbus_post(SIOT_EVT_MESH_LEVEL, &ev, sizeof(ev));
@@ -620,6 +649,7 @@ esp_err_t siot_netcore_start(void)
     if (!siot_config_has_code() || !siot_identity_valid()) return ESP_ERR_INVALID_STATE;
     if (s_lock == NULL) s_lock = xSemaphoreCreateMutex();
     s_epoch_ref_ms = now_ms();
+    siot_hbwin_init(&s_hbwin, s_epoch_ref_ms);
 
     esp_err_t err;
     if ((err = siot_safr_register(SAFR_MSG_ACK, on_ack, NULL)) != ESP_OK) return err;

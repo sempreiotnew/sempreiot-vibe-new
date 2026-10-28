@@ -28,6 +28,13 @@ import 'serial_link_provider.dart';
 const _offlinePowered = Duration(seconds: 45); // root/relay: HB every 15 s
 const _offlineLeaf = Duration(seconds: 180); // leaf: HB every 60 s
 
+/// Degraded link (protocol §9.4, v3.6): a node that heard at most this
+/// many of the last 8 board heartbeats (≥ 25 % lost over 2 min) gets the
+/// trouble "qualidade do enlace degradada"; it is restored when the node
+/// hears all 8 again. "Online" is untouched: the unit still heartbeats up.
+const linkDegradedAtOrBelow = 6;
+const linkRestoredAt = SafrHeartbeatPayload.dlHeardExpected;
+
 class DeviceSupervision {
   const DeviceSupervision({
     required this.device,
@@ -139,6 +146,18 @@ class SupervisionNotifier extends StateNotifier<List<DeviceSupervision>> {
         } else if (!wasOnline && online) {
           await _transition(d, offline: false, now: now);
         }
+
+        // The link, from the unit's own count (spec §9.4): nothing is said
+        // while it reports nothing (older firmware, window restarted).
+        final heardOfEight = d.dlHeard;
+        if (heardOfEight != null) {
+          final wasDegraded = d.linkDegraded == 1;
+          if (!wasDegraded && heardOfEight <= linkDegradedAtOrBelow) {
+            await _linkTransition(d, degraded: true, now: now);
+          } else if (wasDegraded && heardOfEight >= linkRestoredAt) {
+            await _linkTransition(d, degraded: false, now: now);
+          }
+        }
       }
       if (mounted) state = result;
     } finally {
@@ -169,6 +188,34 @@ class SupervisionNotifier extends StateNotifier<List<DeviceSupervision>> {
             'synthetic': true,
             'kind': offline ? 'device_missing' : 'device_restored',
             'last_seen': d.lastSeenAt.toIso8601String(),
+          }),
+        ));
+  }
+
+  Future<void> _linkTransition(
+    MeshDevice d, {
+    required bool degraded,
+    required DateTime now,
+  }) async {
+    await (_db.update(_db.meshDevices)..where((t) => t.mac.equals(d.mac)))
+        .write(MeshDevicesCompanion(linkDegraded: Value(degraded ? 1 : 0)));
+
+    await _db.into(_db.deviceEvents).insert(DeviceEventsCompanion.insert(
+          receivedAt: now,
+          deviceMac: d.mac,
+          msgType: 0, // synthetic
+          eventType: Value(degraded
+              ? SafrEventType.trouble.wire
+              : SafrEventType.okRestore.wire),
+          eventCode: Value(degraded
+              ? SafrEventCode.rfInterference.wire
+              : SafrEventCode.restore.wire),
+          severity: degraded ? 1 : 0,
+          detailJson: jsonEncode({
+            'synthetic': true,
+            'kind': degraded ? 'link_degraded' : 'link_restored',
+            'dl_heard': d.dlHeard,
+            'rssi': d.lastRssi,
           }),
         ));
   }

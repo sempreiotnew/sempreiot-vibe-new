@@ -15,6 +15,7 @@ import 'safr_ingest_provider.dart' show setupChannelProvider;
 import 'safr_traffic_provider.dart';
 import 'serial_link_provider.dart';
 import 'serial_provider.dart';
+import 'supervision_provider.dart';
 
 /// Central → root downlink (docs/safr/protocol-safr-v3.md §7.5–7.9, §9):
 /// - ACKs uplink frames that carry F_ACK_REQ (called by the ingest pipeline);
@@ -56,6 +57,14 @@ class SafrDownlink {
   /// (siot_netcore.c, "ACK every time"), and the board relays those ACKs up
   /// like every uplink frame. For a broadcast the first ACK is the board's
   /// (it answers before relaying); every later one is a unit's.
+  ///
+  /// Since v3.6 (protocol §9.1) the board's ACK does not end the retries of
+  /// a command into the mesh: every hop down is one broadcast with no
+  /// retry, so the tablet keeps retransmitting (same MSG_ID, fresh
+  /// MSG_CTR, [_retryMax] transmissions [_retryBackoff] apart) until the
+  /// unit's own ACK — for a broadcast, until every online powered unit
+  /// ACKed. The board and the nodes relay the duplicates onward. A battery
+  /// unit's command waits in its parent's mailbox (§12.5): not retried.
   final _awaitingUnit = <int, _AwaitingUnit>{};
 
   /// How long a unit's ACK may come after the command left: seconds for a
@@ -337,6 +346,7 @@ class SafrDownlink {
       if (awaiting.mac == safrBroadcastMac) {
         if (awaiting.boardAcked) {
           unit = srcMac;
+          awaiting.expected.remove(srcMac);
         } else {
           awaiting.boardAcked = true;
         }
@@ -357,10 +367,53 @@ class SafrDownlink {
             msgType: SafrMsgType.ack,
           ));
     }
-    final pending = _pending.remove(ack.ackedMsgId);
+    final pending = _pending[ack.ackedMsgId];
     if (pending == null) return;
-    pending.retryTimer?.cancel();
+    // The first ACK (the board's, for a mesh command) answers the caller.
     if (!pending.completer.isCompleted) pending.completer.complete(ack);
+    // The retries go on while a unit the command was for has not confirmed
+    // (v3.6): a unit-addressed command until its ACK, a broadcast until the
+    // last expected unit's. A refusal, or nothing to wait for, ends them.
+    final stillWaiting = ack.status == SafrAckStatus.ok &&
+        awaiting != null &&
+        awaiting.retryUntilUnit &&
+        (awaiting.mac == safrBroadcastMac
+            ? awaiting.expected.isNotEmpty
+            : _awaitingUnit.containsKey(ack.ackedMsgId));
+    if (stillWaiting) return;
+    _pending.remove(ack.ackedMsgId);
+    pending.retryTimer?.cancel();
+  }
+
+  /// Who a COMMAND into the mesh must still be confirmed by (v3.6): the
+  /// powered unit it is addressed to, or — broadcast — every online powered
+  /// unit of the registry (the board, layer 0, ACKs before relaying and is
+  /// not waited for). Battery units get it from the mailbox on their next
+  /// wake (§12.5), so nothing waits for them here.
+  _AwaitingUnit _awaitingFor(String targetMac, DateTime now) {
+    final units = _ref.read(supervisionProvider);
+    if (targetMac == safrBroadcastMac) {
+      final expected = <String>{
+        for (final s in units)
+          if (s.online &&
+              s.device.layer >= 1 &&
+              s.device.role != SafrNodeRole.leaf.wire)
+            s.device.mac,
+      };
+      return _AwaitingUnit(
+        mac: targetMac,
+        until: now.add(_broadcastAckWindow),
+        retryUntilUnit: expected.isNotEmpty,
+        expected: expected,
+      );
+    }
+    final known = units.where((s) => s.device.mac == targetMac).firstOrNull;
+    final leaf = known?.device.role == SafrNodeRole.leaf.wire;
+    return _AwaitingUnit(
+      mac: targetMac,
+      until: now.add(_unitAckWindow),
+      retryUntilUnit: !leaf,
+    );
   }
 
   Future<void> sendTimeSync() async {
@@ -656,12 +709,7 @@ class SafrDownlink {
     final now = DateTime.now();
     _awaitingUnit.removeWhere((_, a) => a.until.isBefore(now));
     if (msgType == SafrMsgType.command && targetMac != null) {
-      _awaitingUnit[id] = _AwaitingUnit(
-        mac: targetMac,
-        until: now.add(targetMac == safrBroadcastMac
-            ? _broadcastAckWindow
-            : _unitAckWindow),
-      );
+      _awaitingUnit[id] = _awaitingFor(targetMac, now);
     }
 
     final sent = await _write(frame, raw);
@@ -680,7 +728,9 @@ class SafrDownlink {
       final p = _pending[msgId];
       if (p == null || !identical(p, pending)) return;
       if (p.attempts >= p.maxAttempts) {
-        _giveUp(msgId, notify: p.notifyOnFail);
+        // Nobody confirmed at all: say so. The board confirmed and a unit
+        // did not: the command tracker shows "sem resposta" on that unit.
+        _giveUp(msgId, notify: p.notifyOnFail && !p.completer.isCompleted);
         return;
       }
       p.attempts++;
@@ -780,9 +830,21 @@ class LifecycleResult {
 
 /// A COMMAND's units whose own ACKs are awaited (see `_awaitingUnit`).
 class _AwaitingUnit {
-  _AwaitingUnit({required this.mac, required this.until});
+  _AwaitingUnit({
+    required this.mac,
+    required this.until,
+    this.retryUntilUnit = false,
+    Set<String>? expected,
+  }) : expected = expected ?? <String>{};
   final String mac;
   final DateTime until;
+
+  /// The tablet keeps retransmitting after the board's ACK until the
+  /// unit's (v3.6); false for a battery unit (its parent's mailbox).
+  final bool retryUntilUnit;
+
+  /// Broadcast only: the online powered units whose ACK has not come.
+  final Set<String> expected;
 
   /// Broadcast only: the board's ACK (the first) has come.
   bool boardAcked = false;

@@ -70,8 +70,15 @@ class SafrIngestService {
   /// Journal replay bookkeeping (spec §7.9) — the downlink service persists
   /// the JRN_SEQ high-water mark and paginates with further EVENT_LOG_REQs.
   final void Function(SafrEventLogDataPayload log)? onJournalData;
-  final void Function(String mac, int severity, String? parentMac,
-      SafrMsgType msgType, SafrEventCode? eventCode, int? uptimeS)? onTraffic;
+  final void Function(
+      String mac,
+      int severity,
+      String? parentMac,
+      SafrMsgType msgType,
+      SafrEventCode? eventCode,
+      int? uptimeS,
+      int? dlHeard,
+      int? dlMap)? onTraffic;
 
   /// A frame whose header SYSTEM_ID is not ours (spec §3.1 "neighbouring
   /// system"). Null = ours again (a valid frame arrived). Feeds the
@@ -161,6 +168,12 @@ class SafrIngestService {
           : null,
       frame.payload is SafrHeartbeatPayload
           ? (frame.payload as SafrHeartbeatPayload).uptimeS
+          : null,
+      frame.payload is SafrHeartbeatPayload
+          ? (frame.payload as SafrHeartbeatPayload).dlHeard
+          : null,
+      frame.payload is SafrHeartbeatPayload
+          ? (frame.payload as SafrHeartbeatPayload).dlMap
           : null,
     );
 
@@ -397,6 +410,7 @@ class SafrIngestService {
     var alarmLatched = existing?.alarmLatched ?? 0;
     var alarmLatchedAt = existing?.alarmLatchedAt;
     var parentCandidates = existing?.parentCandidates;
+    var dlHeard = existing?.dlHeard;
 
     switch (payload) {
       case SafrHeartbeatPayload p:
@@ -405,6 +419,9 @@ class SafrIngestService {
         rssi = p.rssiToParent ?? rssi;
         battery = p.batteryPct ?? battery;
         lastHb = now;
+        // v3.6 DL_HEARD: what this heartbeat says, nothing older — a
+        // 20-byte heartbeat or a restarted window (0xFF) clears it.
+        dlHeard = p.dlHeard;
         // Role tracks layer from the 15 s heartbeat so a root change shows
         // fast; TOPOLOGY (sent on a level change) also carries role and refines it. Board
         // (layer 0) and the mesh root (layer 1) are "root"; layer 2+ are
@@ -497,6 +514,9 @@ class SafrIngestService {
             productCode: Value(productCode),
             hwRev: Value(hwRev),
             fwVersion: Value(fwVersion),
+            dlHeard: Value(dlHeard),
+            // Owned by the supervision provider (spec §9.4 degraded link).
+            linkDegraded: Value(existing?.linkDegraded ?? 0),
           ),
         );
   }
@@ -781,7 +801,8 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
     onDeviceTableSynced: (listed) =>
         ref.read(boardSyncProvider.notifier).tableArrived(listed),
     onJournalData: downlink.handleJournalData,
-    onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS) =>
+    onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS,
+            dlHeard, dlMap) =>
         traffic.emit(SafrTrafficTick(
       mac: mac,
       direction: SafrTrafficDirection.uplink,
@@ -790,6 +811,8 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
       msgType: msgType,
       eventCode: eventCode,
       uptimeS: uptimeS,
+      dlHeard: dlHeard,
+      dlMap: dlMap,
     )),
   );
 

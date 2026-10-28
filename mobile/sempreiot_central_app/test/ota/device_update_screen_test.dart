@@ -288,7 +288,8 @@ void main() {
       expect(find.text('CENTRAL'), findsOneWidget);
       expect(find.byKey(const ValueKey('quick-node')), findsOneWidget);
       expect(find.byKey(const ValueKey('update-all')), findsOneWidget);
-      expect(find.text('ATIVOS'), findsOneWidget, reason: 'Rede\'s strip');
+      expect(find.text('ÚLTIMO QUADRO'), findsOneWidget,
+          reason: 'Rede\'s strip');
     });
 
     testWidgets('a run: pill, phases, the unit\'s ring — ${s.key}',

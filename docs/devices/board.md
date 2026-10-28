@@ -84,7 +84,7 @@ Status words are the reference's: `Implemented` · `POC` · `Planned` · `Open`.
 |---|---|---|---|
 | 2.1 | Installation access point | Raises `NET_SSID` / `NET_PSK` on the fixed channel (1 / 6 / 11), static IP `192.168.4.1`, DHCP on, `max_connection` 8 | POC |
 | 2.4 | Uplink path | Root → board over **TCP `:5340`** (one client = the current root, newest wins, keepalive 2 s / 1 s / 3) → tablet over serial. Frames forwarded byte-for-byte | POC |
-| 2.5 | Downlink path | Tablet → board → root; the board ACKs `COMMAND` / `TIME_SYNC` itself before relaying, and **forwards the tablet's ACKs down** so a node sees its uplink confirmed | POC + Phase 1 fix |
+| 2.5 | Downlink path | Tablet → board → root; the board ACKs `COMMAND` / `TIME_SYNC` itself before relaying, and **forwards the tablet's ACKs down** so a node sees its uplink confirmed. **v3.6 (2026-10-26):** a duplicate `COMMAND` / `TIME_SYNC` (the tablet's retry, same MSG_ID) is relayed into the mesh too — every hop down is one broadcast with no retry, and the tablet now retries until the unit's own ACK (protocol §9.1) | POC + Phase 1 fix · duplicate relay coded 2026-10-26 |
 | 2.6 | Tablet link | Raw SAFR bytes, 115200 8N1; `CONFIG_ESP_CONSOLE_NONE` so no text pollutes the link; the ROM boot banner still precedes the stream and the tablet resyncs on SOF + LEN + CRC | POC |
 | 2.8 | Site separation | Distinct `NET_PSK` (cannot join), distinct `SYSTEM_ID` (dropped before decryption), distinct `SAFR_PSK` (CCM fails) | POC |
 

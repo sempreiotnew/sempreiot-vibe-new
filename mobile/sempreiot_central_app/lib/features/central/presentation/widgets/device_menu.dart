@@ -17,6 +17,7 @@ import '../screens/device_settings_screen.dart';
 import 'device_avatar.dart';
 import '../../application/system_test_provider.dart';
 import 'device_command_widgets.dart';
+import 'heartbeat_widgets.dart';
 import 'system_test_sheets.dart';
 import 'ota_rede_widgets.dart' show firmwareTagText;
 
@@ -602,6 +603,10 @@ class _Header extends StatelessWidget {
                         label: 'Nível ${node.layer}',
                         color: context.textSecondary,
                       ),
+                    // Below −85 dBm to its parent, or losing the board's
+                    // heartbeats (protocol §9.4): put a node between them.
+                    if (node.linkAttention)
+                      const _Chip(label: 'ENLACE FRACO', color: AppColors.trouble),
                   ],
                 ),
               ],
@@ -689,6 +694,7 @@ class _Facts extends StatelessWidget {
   Widget build(BuildContext context) {
     final parent = _parentLabel();
     final wake = node.nextWakeInSeconds;
+    final boardMac = all.where((n) => n.layer == 0).firstOrNull?.mac;
     final tiles = <Widget>[
       _SignalTile(rssi: node.rssi, sleeping: node.sleeping),
       _FactTile(
@@ -739,7 +745,18 @@ class _Facts extends StatelessWidget {
       return Wrap(
         spacing: gap,
         runSpacing: gap,
-        children: [for (final t in tiles) SizedBox(width: w, child: t)],
+        children: [
+          for (final t in tiles) SizedBox(width: w, child: t),
+          // The board's beats as the unit heard them, as a bedside monitor
+          // (heartbeat_widgets.dart): a spike per beat heard, a flat gap
+          // per beat lost. A battery leaf sleeps between the board's beats
+          // and has no such count (protocol §12).
+          if (!node.isLeaf)
+            SizedBox(
+              width: c.maxWidth,
+              child: HeartbeatMonitor(node: node, boardMac: boardMac),
+            ),
+        ],
       );
     });
   }
@@ -831,7 +848,8 @@ class _FactTile extends StatelessWidget {
   }
 }
 
-/// Signal: the dBm in the product's one colour scale and four bars.
+/// Signal: the dBm in the product's one colour scale and four bars. The
+/// downlink loss behind the dBm is the BATIMENTOS tile beside it.
 class _SignalTile extends StatelessWidget {
   const _SignalTile({required this.rssi, required this.sleeping});
   final int? rssi;

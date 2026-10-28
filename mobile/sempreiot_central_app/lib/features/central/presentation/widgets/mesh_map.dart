@@ -1337,8 +1337,14 @@ class _MeshGraphPainter extends CustomPainter {
           !target.presumed &&
           n.rssi != null &&
           (!layout.radial || (_labelRoom && dbmShown.contains(n.mac)))) {
+        // A weak link (protocol §9.4: below −85 dBm or losing the board's
+        // heartbeats) carries the warning icon beside its dBm pill —
+        // outside it, in the warning yellow, never the link's colour — the
+        // same rule as the ENLACE FRACO chip; the advice ("instale um nó
+        // entre …") is on the popover and Dispositivo.
         _linkLabel(canvas, path, '${n.rssi} dBm',
-            candidate ? AppColors.warning : signal);
+            candidate ? AppColors.warning : signal,
+            icon: n.linkAttention && !candidate ? weakLinkMarkerIcon : null);
       }
       if (fade) canvas.restore();
     }
@@ -1425,7 +1431,10 @@ class _MeshGraphPainter extends CustomPainter {
   }
 
   /// Paints the RSSI value on a pill at the middle of a link.
-  void _linkLabel(Canvas canvas, Path path, String text, Color color) {
+  /// The dBm pill at the middle of a link; with [icon], the warning glyph
+  /// sits before the text in the same colour (a weak link, protocol §9.4).
+  void _linkLabel(Canvas canvas, Path path, String text, Color color,
+      {IconData? icon}) {
     final metrics = path.computeMetrics().toList();
     if (metrics.isEmpty) return;
     final m = metrics.first;
@@ -1464,6 +1473,25 @@ class _MeshGraphPainter extends CustomPainter {
         ..color = color.withValues(alpha: 0.35),
     );
     tp.paint(canvas, pos - Offset(tp.width / 2, tp.height / 2));
+
+    // The marker, side by side with the pill on its left, in the warning
+    // yellow (the pill keeps the link's colour): a weak link is a thing to
+    // see at a glance, not a shade of the line.
+    if (icon != null) {
+      final ip = TextPainter(
+        text: TextSpan(
+          text: String.fromCharCode(icon.codePoint),
+          style: TextStyle(
+            color: AppColors.warning,
+            fontSize: 13,
+            fontFamily: icon.fontFamily,
+            package: icon.fontPackage,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      ip.paint(canvas, Offset(rect.left - ip.width - 3, pos.dy - ip.height / 2));
+    }
   }
 
   void _drawDashedPath(Canvas canvas, Path path, Paint paint) {

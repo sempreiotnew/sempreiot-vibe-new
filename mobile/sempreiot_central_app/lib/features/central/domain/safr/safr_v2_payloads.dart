@@ -330,9 +330,17 @@ class SafrHeartbeatPayload extends SafrV2Payload {
     required this.rssiToParent,
     required this.parentMac,
     required this.layer,
+    this.dlHeard,
+    this.dlMap,
   });
 
   static const wireLength = 20;
+
+  /// v3.6 DL_HEARD (spec §7.3): board heartbeats heard in the last 120 s,
+  /// 0..[dlHeardExpected]. Null = not sent (20-byte heartbeat: a leaf, or
+  /// a node on older firmware) or 0xFF (not 120 s on this link yet).
+  static const dlHeardExpected = 8;
+  static const dlHeardNa = 0xFF;
 
   final DateTime timestamp;
   final int uptimeS;
@@ -342,9 +350,24 @@ class SafrHeartbeatPayload extends SafrV2Payload {
   final int? rssiToParent; // dBm, null when 0x7F (root)
   final String parentMac;
   final int layer;
+  final int? dlHeard;
+
+  /// v3.7 DL_MAP (spec §7.3): the last 8 board-heartbeat slots, bit 0 the
+  /// most recent, 1 = heard, 0 = lost. Null when not sent (a 20- or
+  /// 21-byte heartbeat) or while [dlHeard] is not there yet (0xFF).
+  final int? dlMap;
+
+  /// Heard (true) / lost (false) for slot [i] of [dlMap], 0 = the newest.
+  static bool heardAt(int map, int i) => (map >> i) & 1 == 1;
 
   static SafrHeartbeatPayload? parse(Uint8List p) {
     if (p.length < wireLength) return null;
+    int? dlHeard;
+    int? dlMap;
+    if (p.length > wireLength && p[20] != dlHeardNa) {
+      dlHeard = p[20] > dlHeardExpected ? dlHeardExpected : p[20];
+      if (p.length > wireLength + 1) dlMap = p[21];
+    }
     final ts = (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
     final up = (p[4] << 24) | (p[5] << 16) | (p[6] << 8) | p[7];
     var temp = (p[10] << 8) | p[11];
@@ -359,6 +382,8 @@ class SafrHeartbeatPayload extends SafrV2Payload {
       rssiToParent: p[12] == 0x7F ? null : p[12].toSigned(8),
       parentMac: safrMacToString(p.sublist(13, 19)),
       layer: p[19],
+      dlHeard: dlHeard,
+      dlMap: dlMap,
     );
   }
 }

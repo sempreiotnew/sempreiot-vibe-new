@@ -302,7 +302,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600)); // the slide
     expect(find.byKey(radialChipKey(root)), findsOneWidget);
     expect(find.byKey(MeshLegend.legendKey), findsOneWidget);
-    expect(find.text('ATIVOS'), findsOneWidget, reason: 'the strip stays');
+    expect(find.text('ÚLTIMO QUADRO'), findsOneWidget,
+        reason: 'the strip stays');
 
     await tester.tap(find.byKey(MeshStatusBar.layoutKey));
     await tester.pump();

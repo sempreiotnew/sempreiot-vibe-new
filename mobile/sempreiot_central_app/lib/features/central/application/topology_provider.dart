@@ -34,6 +34,8 @@ class TopologyNode {
     this.updating = false,
     this.heard = true,
     this.awaitingSignal = false,
+    this.dlHeard,
+    this.linkDegraded = false,
   });
 
   final String mac;
@@ -83,6 +85,30 @@ class TopologyNode {
   final int? productCode;
   final int? hwRev;
   final String? fwVersion;
+
+  /// v3.6 DL_HEARD (protocol §7.3): board heartbeats this node heard in the
+  /// last 120 s, of [dlHeardExpected]; null = not reported (leaf, older
+  /// firmware, or not 120 s on this link yet).
+  final int? dlHeard;
+
+  /// The §9.4 trouble "qualidade do enlace degradada" is up for this unit
+  /// (supervision_provider.dart: ≤ 6 of 8 heard; restored at 8 of 8).
+  final bool linkDegraded;
+
+  static const dlHeardExpected = SafrHeartbeatPayload.dlHeardExpected;
+
+  /// Board heartbeats lost in the last 120 s; null when nothing is reported.
+  int? get dlLost => dlHeard == null ? null : dlHeardExpected - dlHeard!;
+
+  /// A powered unit whose link to its parent reads below the bind threshold
+  /// (−85 dBm, protocol §9.4 / §12.3): "enlace fraco" — put a node between
+  /// it and its parent. The root's hop to the board counts too.
+  bool get weakPoweredLink =>
+      !isLeaf && layer >= 1 && rssi != null && rssi! < leafWeakLinkDbm;
+
+  /// Something about this unit's link to tell the installer: weak, or losing
+  /// the board's heartbeats.
+  bool get linkAttention => weakPoweredLink || linkDegraded;
 
   /// Catalogue entry (or unknown-product placeholder); null = not reported.
   SafrProduct? get product => SafrProduct.fromCode(productCode);
@@ -223,6 +249,8 @@ final topologyProvider = Provider<List<TopologyNode>>((ref) {
         fwVersion: s.device.fwVersion,
         updating: linkUp && updatingUnits.updatingAt(s.device.mac, now, grace),
         heard: linkUp && s.heard,
+        dlHeard: s.device.dlHeard,
+        linkDegraded: s.device.linkDegraded == 1,
       ),
   ]..sort((a, b) {
       final byLayer = a.layer.compareTo(b.layer);

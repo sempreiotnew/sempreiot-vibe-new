@@ -457,6 +457,14 @@ class _CardFooter extends StatelessWidget {
             color:
                 node.sleeping ? context.textSecondary : signalColor(node.rssi),
           ),
+        // The "enlace degradado" trouble is up (protocol §9.4): what the
+        // unit itself counted of the board's heartbeats.
+        if (node.linkDegraded && node.dlLost != null)
+          _Pill(
+            icon: Icons.network_check_rounded,
+            text: 'perde ${node.dlLost} de ${TopologyNode.dlHeardExpected}',
+            color: AppColors.trouble,
+          ),
         if (node.batteryPct != null)
           _Pill(
             icon: Icons.battery_std_rounded,

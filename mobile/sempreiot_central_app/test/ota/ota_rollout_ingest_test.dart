@@ -39,7 +39,8 @@ void main() {
       onOtaRolloutEvent: events.add,
       onAckRequired: (f) async => acked.add(f),
       onAckReceived: (ack, _) => confirmed.add(ack),
-      onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS) =>
+      onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS,
+              dlHeard, dlMap) =>
           traffic.add((mac, msgType)),
     );
   });

@@ -61,12 +61,11 @@ class MeshStatusBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // A unit the tablet never heard is no "offline" unit: it waits for its
-    // first frame (aguardando), and is not in the tree yet.
+    // first frame (aguardando), and is not in the tree yet. The counts by
+    // state (ativos, dormindo, offline, enlace fraco) left the strip on
+    // 2026-10-27: the legend at the bottom left of the map says them.
     final placed = nodes.where((n) => !n.awaitingSignal);
     final awaiting = nodes.where((n) => n.awaitingSignal).toList();
-    final online = placed.where((n) => n.online && !n.sleeping).length;
-    final sleeping = placed.where((n) => n.sleeping).length;
-    final offline = placed.where((n) => !n.online).length;
     DateTime? lastSeen;
     for (final n in placed) {
       if (lastSeen == null || n.lastSeenAt.isAfter(lastSeen)) {
@@ -101,18 +100,7 @@ class MeshStatusBar extends StatelessWidget {
                     _ElectionPill(election: election),
                     const SizedBox(width: 14),
                   ],
-                  _StatusCount(
-                      color: AppColors.success, label: 'ATIVOS', count: online),
-                  const SizedBox(width: 14),
-                  _StatusCount(
-                      color: context.textSecondary,
-                      label: 'DORMINDO',
-                      count: sleeping),
-                  const SizedBox(width: 14),
-                  _StatusCount(
-                      color: AppColors.error, label: 'OFFLINE', count: offline),
                   if (awaiting.isNotEmpty) ...[
-                    const SizedBox(width: 14),
                     Tooltip(
                       message: 'Conhecidos pela placa, ainda sem sinal neste '
                           'tablet',

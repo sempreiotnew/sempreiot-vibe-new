@@ -19,6 +19,8 @@ class SafrTrafficTick {
     this.msgType,
     this.eventCode,
     this.uptimeS,
+    this.dlHeard,
+    this.dlMap,
   });
 
   /// Uplink: the parent the frame itself names (HEARTBEAT / TOPOLOGY
@@ -47,6 +49,16 @@ class SafrTrafficTick {
   /// HEARTBEAT only: the unit's UPTIME_S — tells a reboot apart (the alarm
   /// lives in RAM on the unit, so a reboot ends it).
   final int? uptimeS;
+
+  /// HEARTBEAT of a v3.6 powered node only: the board's heartbeats it heard
+  /// in its last 120 s (protocol §7.3 DL_HEARD), for the popover's monitor
+  /// (heartbeat_widgets.dart); null when the frame did not say.
+  final int? dlHeard;
+
+  /// HEARTBEAT of a v3.7 powered node only: which of those 8 were heard
+  /// (protocol §7.3 DL_MAP, bit 0 the newest); null when the frame did not
+  /// say.
+  final int? dlMap;
 }
 
 class SafrTrafficBus {

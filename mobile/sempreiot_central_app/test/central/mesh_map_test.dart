@@ -98,6 +98,31 @@ void main() {
   }
 
   const ring = ValueKey('ota-board-ring');
+
+  group('a weak link (protocol §9.4, 2026-10-26)', () {
+    testWidgets('the legend counts it and says where the new node goes',
+        (tester) async {
+      final far = TopologyNode(
+        mac: '5A:46:52:00:00:02',
+        role: SafrNodeRole.node,
+        layer: 2,
+        parentMac: root,
+        rssi: -91,
+        batteryPct: null,
+        online: true,
+        lastSeenAt: now,
+        alarmLatched: false,
+      );
+      await pump(tester, showOta: false, units: [...mesh, far]);
+      expect(find.text('1 enlace fraco · falta um nó no caminho'),
+          findsOneWidget);
+    });
+
+    testWidgets('a good link has no such row', (tester) async {
+      await pump(tester, showOta: false);
+      expect(find.textContaining('enlace fraco'), findsNothing);
+    });
+  });
   const tablet = ValueKey('ota-tablet-chip');
 
   testWidgets('showOta: a running push is drawn (ring, tablet beside it)',

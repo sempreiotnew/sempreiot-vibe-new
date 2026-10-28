@@ -66,7 +66,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 13);
+    expect(version, 14);
   });
 
   test('schema v10 -> v11 adds the firmware update history, rows kept',
@@ -117,7 +117,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 13);
+    expect(version, 14);
   });
 
   test('schema v11 -> v12 adds where the image came from, rows kept', () async {
@@ -162,7 +162,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 13);
+    expect(version, 14);
   });
 
   test('schema v12 -> v13 adds the system tests, rows kept', () async {
@@ -210,6 +210,39 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 13);
+    expect(version, 14);
+  });
+
+  test('schema v13 -> v14 adds the downlink-loss columns, rows kept',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('siot_migr_');
+    addTearDown(() => dir.delete(recursive: true));
+    final file = File('${dir.path}/sempreiot.sqlite');
+
+    final fresh = AppDatabase.forTesting(NativeDatabase(file));
+    await fresh.into(fresh.meshDevices).insert(MeshDevicesCompanion.insert(
+          mac: _unitA,
+          firstSeenAt: DateTime.utc(2026, 10, 1),
+          lastSeenAt: DateTime.utc(2026, 10, 2),
+        ));
+    await fresh.close();
+
+    final upgraded = AppDatabase.forTesting(NativeDatabase(file, setup: (raw) {
+      raw.execute('ALTER TABLE mesh_devices DROP COLUMN dl_heard');
+      raw.execute('ALTER TABLE mesh_devices DROP COLUMN link_degraded');
+      raw.execute('PRAGMA user_version = 13');
+    }));
+    addTearDown(upgraded.close);
+
+    final r = await (upgraded.select(upgraded.meshDevices)
+          ..where((t) => t.mac.equals(_unitA)))
+        .getSingle();
+    expect(r.dlHeard, isNull);
+    expect(r.linkDegraded, 0);
+    final version = await upgraded
+        .customSelect('PRAGMA user_version')
+        .map((row) => row.read<int>('user_version'))
+        .getSingle();
+    expect(version, 14);
   });
 }

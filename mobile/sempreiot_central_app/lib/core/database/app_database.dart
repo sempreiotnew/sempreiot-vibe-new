@@ -47,6 +47,12 @@ class MeshDevices extends Table {
   TextColumn get parentMac => text().nullable()();
   IntColumn get lastRssi => integer().nullable()(); // dBm
   IntColumn get batteryPct => integer().nullable()();
+  // v3.6 DL_HEARD (spec §7.3): board heartbeats the unit heard in the last
+  // 120 s, 0..8; null = not reported (leaf, older firmware, window restarted).
+  IntColumn get dlHeard => integer().nullable()();
+  // 0 = link ok, 1 = "qualidade do enlace degradada" raised (spec §9.4):
+  // persisted so the trouble is not raised again on every restart.
+  IntColumn get linkDegraded => integer().withDefault(const Constant(0))();
   DateTimeColumn get firstSeenAt => dateTime()();
   DateTimeColumn get lastSeenAt => dateTime()();
   DateTimeColumn get lastHeartbeatAt => dateTime().nullable()();
@@ -208,7 +214,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 13;
+  int get schemaVersion => 14;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -280,8 +286,24 @@ class AppDatabase extends _$AppDatabase {
             // System tests kept and reported (2026-10-14).
             await m.createTable(systemTests);
           }
+          if (from < 14) {
+            // SAFR v3.6 downlink loss (protocol §7.3 DL_HEARD, §9.4). Added
+            // only when absent: a file created by this version and taken
+            // back to an older one (the migration tests) already has them.
+            if (!await _hasColumn('mesh_devices', 'dl_heard')) {
+              await m.addColumn(meshDevices, meshDevices.dlHeard);
+            }
+            if (!await _hasColumn('mesh_devices', 'link_degraded')) {
+              await m.addColumn(meshDevices, meshDevices.linkDegraded);
+            }
+          }
         },
       );
+
+  Future<bool> _hasColumn(String table, String column) async {
+    final rows = await customSelect('PRAGMA table_info($table)').get();
+    return rows.any((r) => r.read<String>('name') == column);
+  }
 
   Future<void> _createDeviceEventIndexes() async {
     await customStatement(

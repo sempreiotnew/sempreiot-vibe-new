@@ -610,7 +610,14 @@ static void handle_downlink(const siot_safr_frame_t *f, const uint8_t *raw, size
         /* fall through */
     case SAFR_MSG_TIME_SYNC:
         send_ack(f->msg_id, SAFR_ACK_OK, SAFR_ACK_D_NONE, f->src_mac); /* board ACKs every time */
-        if (!dup) relay(SIOT_LINK_MESH, raw, raw_len);                 /* nodes ACK on their own */
+        /* Relayed every time, the duplicates too (spec §9.1, v3.6): a
+         * duplicate is the tablet's retransmission (same MSG_ID, fresh
+         * MSG_CTR) for a unit whose own ACK has not come back — the first
+         * copy was lost on a hop down the mesh, where every hop is one
+         * broadcast with no retry. Nodes dedupe (process once, ACK every
+         * time) and relay it onward likewise. Before, the board's own ACK
+         * ended the tablet's retries and the one copy was all a unit got. */
+        relay(SIOT_LINK_MESH, raw, raw_len); /* nodes ACK on their own */
         return;
     case SAFR_MSG_EVENT_LOG_REQ:
         if (f->payload_len >= 5) {

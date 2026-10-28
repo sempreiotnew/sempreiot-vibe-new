@@ -877,6 +877,20 @@ class $MeshDevicesTable extends MeshDevices
   late final GeneratedColumn<int> batteryPct = GeneratedColumn<int>(
       'battery_pct', aliasedName, true,
       type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _dlHeardMeta =
+      const VerificationMeta('dlHeard');
+  @override
+  late final GeneratedColumn<int> dlHeard = GeneratedColumn<int>(
+      'dl_heard', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _linkDegradedMeta =
+      const VerificationMeta('linkDegraded');
+  @override
+  late final GeneratedColumn<int> linkDegraded = GeneratedColumn<int>(
+      'link_degraded', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
   static const VerificationMeta _firstSeenAtMeta =
       const VerificationMeta('firstSeenAt');
   @override
@@ -1008,6 +1022,8 @@ class $MeshDevicesTable extends MeshDevices
         parentMac,
         lastRssi,
         batteryPct,
+        dlHeard,
+        linkDegraded,
         firstSeenAt,
         lastSeenAt,
         lastHeartbeatAt,
@@ -1065,6 +1081,16 @@ class $MeshDevicesTable extends MeshDevices
           _batteryPctMeta,
           batteryPct.isAcceptableOrUnknown(
               data['battery_pct']!, _batteryPctMeta));
+    }
+    if (data.containsKey('dl_heard')) {
+      context.handle(_dlHeardMeta,
+          dlHeard.isAcceptableOrUnknown(data['dl_heard']!, _dlHeardMeta));
+    }
+    if (data.containsKey('link_degraded')) {
+      context.handle(
+          _linkDegradedMeta,
+          linkDegraded.isAcceptableOrUnknown(
+              data['link_degraded']!, _linkDegradedMeta));
     }
     if (data.containsKey('first_seen_at')) {
       context.handle(
@@ -1197,6 +1223,10 @@ class $MeshDevicesTable extends MeshDevices
           .read(DriftSqlType.int, data['${effectivePrefix}last_rssi']),
       batteryPct: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}battery_pct']),
+      dlHeard: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}dl_heard']),
+      linkDegraded: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}link_degraded'])!,
       firstSeenAt: attachedDatabase.typeMapping.read(
           DriftSqlType.dateTime, data['${effectivePrefix}first_seen_at'])!,
       lastSeenAt: attachedDatabase.typeMapping
@@ -1251,6 +1281,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
   final String? parentMac;
   final int? lastRssi;
   final int? batteryPct;
+  final int? dlHeard;
+  final int linkDegraded;
   final DateTime firstSeenAt;
   final DateTime lastSeenAt;
   final DateTime? lastHeartbeatAt;
@@ -1277,6 +1309,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       this.parentMac,
       this.lastRssi,
       this.batteryPct,
+      this.dlHeard,
+      required this.linkDegraded,
       required this.firstSeenAt,
       required this.lastSeenAt,
       this.lastHeartbeatAt,
@@ -1311,6 +1345,10 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
     if (!nullToAbsent || batteryPct != null) {
       map['battery_pct'] = Variable<int>(batteryPct);
     }
+    if (!nullToAbsent || dlHeard != null) {
+      map['dl_heard'] = Variable<int>(dlHeard);
+    }
+    map['link_degraded'] = Variable<int>(linkDegraded);
     map['first_seen_at'] = Variable<DateTime>(firstSeenAt);
     map['last_seen_at'] = Variable<DateTime>(lastSeenAt);
     if (!nullToAbsent || lastHeartbeatAt != null) {
@@ -1369,6 +1407,10 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       batteryPct: batteryPct == null && nullToAbsent
           ? const Value.absent()
           : Value(batteryPct),
+      dlHeard: dlHeard == null && nullToAbsent
+          ? const Value.absent()
+          : Value(dlHeard),
+      linkDegraded: Value(linkDegraded),
       firstSeenAt: Value(firstSeenAt),
       lastSeenAt: Value(lastSeenAt),
       lastHeartbeatAt: lastHeartbeatAt == null && nullToAbsent
@@ -1418,6 +1460,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       parentMac: serializer.fromJson<String?>(json['parentMac']),
       lastRssi: serializer.fromJson<int?>(json['lastRssi']),
       batteryPct: serializer.fromJson<int?>(json['batteryPct']),
+      dlHeard: serializer.fromJson<int?>(json['dlHeard']),
+      linkDegraded: serializer.fromJson<int>(json['linkDegraded']),
       firstSeenAt: serializer.fromJson<DateTime>(json['firstSeenAt']),
       lastSeenAt: serializer.fromJson<DateTime>(json['lastSeenAt']),
       lastHeartbeatAt: serializer.fromJson<DateTime?>(json['lastHeartbeatAt']),
@@ -1449,6 +1493,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       'parentMac': serializer.toJson<String?>(parentMac),
       'lastRssi': serializer.toJson<int?>(lastRssi),
       'batteryPct': serializer.toJson<int?>(batteryPct),
+      'dlHeard': serializer.toJson<int?>(dlHeard),
+      'linkDegraded': serializer.toJson<int>(linkDegraded),
       'firstSeenAt': serializer.toJson<DateTime>(firstSeenAt),
       'lastSeenAt': serializer.toJson<DateTime>(lastSeenAt),
       'lastHeartbeatAt': serializer.toJson<DateTime?>(lastHeartbeatAt),
@@ -1478,6 +1524,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           Value<String?> parentMac = const Value.absent(),
           Value<int?> lastRssi = const Value.absent(),
           Value<int?> batteryPct = const Value.absent(),
+          Value<int?> dlHeard = const Value.absent(),
+          int? linkDegraded,
           DateTime? firstSeenAt,
           DateTime? lastSeenAt,
           Value<DateTime?> lastHeartbeatAt = const Value.absent(),
@@ -1504,6 +1552,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
         parentMac: parentMac.present ? parentMac.value : this.parentMac,
         lastRssi: lastRssi.present ? lastRssi.value : this.lastRssi,
         batteryPct: batteryPct.present ? batteryPct.value : this.batteryPct,
+        dlHeard: dlHeard.present ? dlHeard.value : this.dlHeard,
+        linkDegraded: linkDegraded ?? this.linkDegraded,
         firstSeenAt: firstSeenAt ?? this.firstSeenAt,
         lastSeenAt: lastSeenAt ?? this.lastSeenAt,
         lastHeartbeatAt: lastHeartbeatAt.present
@@ -1540,6 +1590,10 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       lastRssi: data.lastRssi.present ? data.lastRssi.value : this.lastRssi,
       batteryPct:
           data.batteryPct.present ? data.batteryPct.value : this.batteryPct,
+      dlHeard: data.dlHeard.present ? data.dlHeard.value : this.dlHeard,
+      linkDegraded: data.linkDegraded.present
+          ? data.linkDegraded.value
+          : this.linkDegraded,
       firstSeenAt:
           data.firstSeenAt.present ? data.firstSeenAt.value : this.firstSeenAt,
       lastSeenAt:
@@ -1593,6 +1647,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           ..write('parentMac: $parentMac, ')
           ..write('lastRssi: $lastRssi, ')
           ..write('batteryPct: $batteryPct, ')
+          ..write('dlHeard: $dlHeard, ')
+          ..write('linkDegraded: $linkDegraded, ')
           ..write('firstSeenAt: $firstSeenAt, ')
           ..write('lastSeenAt: $lastSeenAt, ')
           ..write('lastHeartbeatAt: $lastHeartbeatAt, ')
@@ -1624,6 +1680,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
         parentMac,
         lastRssi,
         batteryPct,
+        dlHeard,
+        linkDegraded,
         firstSeenAt,
         lastSeenAt,
         lastHeartbeatAt,
@@ -1654,6 +1712,8 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           other.parentMac == this.parentMac &&
           other.lastRssi == this.lastRssi &&
           other.batteryPct == this.batteryPct &&
+          other.dlHeard == this.dlHeard &&
+          other.linkDegraded == this.linkDegraded &&
           other.firstSeenAt == this.firstSeenAt &&
           other.lastSeenAt == this.lastSeenAt &&
           other.lastHeartbeatAt == this.lastHeartbeatAt &&
@@ -1682,6 +1742,8 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
   final Value<String?> parentMac;
   final Value<int?> lastRssi;
   final Value<int?> batteryPct;
+  final Value<int?> dlHeard;
+  final Value<int> linkDegraded;
   final Value<DateTime> firstSeenAt;
   final Value<DateTime> lastSeenAt;
   final Value<DateTime?> lastHeartbeatAt;
@@ -1709,6 +1771,8 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     this.parentMac = const Value.absent(),
     this.lastRssi = const Value.absent(),
     this.batteryPct = const Value.absent(),
+    this.dlHeard = const Value.absent(),
+    this.linkDegraded = const Value.absent(),
     this.firstSeenAt = const Value.absent(),
     this.lastSeenAt = const Value.absent(),
     this.lastHeartbeatAt = const Value.absent(),
@@ -1737,6 +1801,8 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     this.parentMac = const Value.absent(),
     this.lastRssi = const Value.absent(),
     this.batteryPct = const Value.absent(),
+    this.dlHeard = const Value.absent(),
+    this.linkDegraded = const Value.absent(),
     required DateTime firstSeenAt,
     required DateTime lastSeenAt,
     this.lastHeartbeatAt = const Value.absent(),
@@ -1767,6 +1833,8 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     Expression<String>? parentMac,
     Expression<int>? lastRssi,
     Expression<int>? batteryPct,
+    Expression<int>? dlHeard,
+    Expression<int>? linkDegraded,
     Expression<DateTime>? firstSeenAt,
     Expression<DateTime>? lastSeenAt,
     Expression<DateTime>? lastHeartbeatAt,
@@ -1795,6 +1863,8 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
       if (parentMac != null) 'parent_mac': parentMac,
       if (lastRssi != null) 'last_rssi': lastRssi,
       if (batteryPct != null) 'battery_pct': batteryPct,
+      if (dlHeard != null) 'dl_heard': dlHeard,
+      if (linkDegraded != null) 'link_degraded': linkDegraded,
       if (firstSeenAt != null) 'first_seen_at': firstSeenAt,
       if (lastSeenAt != null) 'last_seen_at': lastSeenAt,
       if (lastHeartbeatAt != null) 'last_heartbeat_at': lastHeartbeatAt,
@@ -1825,6 +1895,8 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
       Value<String?>? parentMac,
       Value<int?>? lastRssi,
       Value<int?>? batteryPct,
+      Value<int?>? dlHeard,
+      Value<int>? linkDegraded,
       Value<DateTime>? firstSeenAt,
       Value<DateTime>? lastSeenAt,
       Value<DateTime?>? lastHeartbeatAt,
@@ -1852,6 +1924,8 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
       parentMac: parentMac ?? this.parentMac,
       lastRssi: lastRssi ?? this.lastRssi,
       batteryPct: batteryPct ?? this.batteryPct,
+      dlHeard: dlHeard ?? this.dlHeard,
+      linkDegraded: linkDegraded ?? this.linkDegraded,
       firstSeenAt: firstSeenAt ?? this.firstSeenAt,
       lastSeenAt: lastSeenAt ?? this.lastSeenAt,
       lastHeartbeatAt: lastHeartbeatAt ?? this.lastHeartbeatAt,
@@ -1895,6 +1969,12 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     }
     if (batteryPct.present) {
       map['battery_pct'] = Variable<int>(batteryPct.value);
+    }
+    if (dlHeard.present) {
+      map['dl_heard'] = Variable<int>(dlHeard.value);
+    }
+    if (linkDegraded.present) {
+      map['link_degraded'] = Variable<int>(linkDegraded.value);
     }
     if (firstSeenAt.present) {
       map['first_seen_at'] = Variable<DateTime>(firstSeenAt.value);
@@ -1968,6 +2048,8 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
           ..write('parentMac: $parentMac, ')
           ..write('lastRssi: $lastRssi, ')
           ..write('batteryPct: $batteryPct, ')
+          ..write('dlHeard: $dlHeard, ')
+          ..write('linkDegraded: $linkDegraded, ')
           ..write('firstSeenAt: $firstSeenAt, ')
           ..write('lastSeenAt: $lastSeenAt, ')
           ..write('lastHeartbeatAt: $lastHeartbeatAt, ')
@@ -4591,6 +4673,8 @@ typedef $$MeshDevicesTableCreateCompanionBuilder = MeshDevicesCompanion
   Value<String?> parentMac,
   Value<int?> lastRssi,
   Value<int?> batteryPct,
+  Value<int?> dlHeard,
+  Value<int> linkDegraded,
   required DateTime firstSeenAt,
   required DateTime lastSeenAt,
   Value<DateTime?> lastHeartbeatAt,
@@ -4620,6 +4704,8 @@ typedef $$MeshDevicesTableUpdateCompanionBuilder = MeshDevicesCompanion
   Value<String?> parentMac,
   Value<int?> lastRssi,
   Value<int?> batteryPct,
+  Value<int?> dlHeard,
+  Value<int> linkDegraded,
   Value<DateTime> firstSeenAt,
   Value<DateTime> lastSeenAt,
   Value<DateTime?> lastHeartbeatAt,
@@ -4668,6 +4754,12 @@ class $$MeshDevicesTableFilterComposer
 
   ColumnFilters<int> get batteryPct => $composableBuilder(
       column: $table.batteryPct, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get dlHeard => $composableBuilder(
+      column: $table.dlHeard, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get linkDegraded => $composableBuilder(
+      column: $table.linkDegraded, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<DateTime> get firstSeenAt => $composableBuilder(
       column: $table.firstSeenAt, builder: (column) => ColumnFilters(column));
@@ -4757,6 +4849,13 @@ class $$MeshDevicesTableOrderingComposer
 
   ColumnOrderings<int> get batteryPct => $composableBuilder(
       column: $table.batteryPct, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get dlHeard => $composableBuilder(
+      column: $table.dlHeard, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get linkDegraded => $composableBuilder(
+      column: $table.linkDegraded,
+      builder: (column) => ColumnOrderings(column));
 
   ColumnOrderings<DateTime> get firstSeenAt => $composableBuilder(
       column: $table.firstSeenAt, builder: (column) => ColumnOrderings(column));
@@ -4850,6 +4949,12 @@ class $$MeshDevicesTableAnnotationComposer
   GeneratedColumn<int> get batteryPct => $composableBuilder(
       column: $table.batteryPct, builder: (column) => column);
 
+  GeneratedColumn<int> get dlHeard =>
+      $composableBuilder(column: $table.dlHeard, builder: (column) => column);
+
+  GeneratedColumn<int> get linkDegraded => $composableBuilder(
+      column: $table.linkDegraded, builder: (column) => column);
+
   GeneratedColumn<DateTime> get firstSeenAt => $composableBuilder(
       column: $table.firstSeenAt, builder: (column) => column);
 
@@ -4937,6 +5042,8 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             Value<String?> parentMac = const Value.absent(),
             Value<int?> lastRssi = const Value.absent(),
             Value<int?> batteryPct = const Value.absent(),
+            Value<int?> dlHeard = const Value.absent(),
+            Value<int> linkDegraded = const Value.absent(),
             Value<DateTime> firstSeenAt = const Value.absent(),
             Value<DateTime> lastSeenAt = const Value.absent(),
             Value<DateTime?> lastHeartbeatAt = const Value.absent(),
@@ -4965,6 +5072,8 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             parentMac: parentMac,
             lastRssi: lastRssi,
             batteryPct: batteryPct,
+            dlHeard: dlHeard,
+            linkDegraded: linkDegraded,
             firstSeenAt: firstSeenAt,
             lastSeenAt: lastSeenAt,
             lastHeartbeatAt: lastHeartbeatAt,
@@ -4993,6 +5102,8 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             Value<String?> parentMac = const Value.absent(),
             Value<int?> lastRssi = const Value.absent(),
             Value<int?> batteryPct = const Value.absent(),
+            Value<int?> dlHeard = const Value.absent(),
+            Value<int> linkDegraded = const Value.absent(),
             required DateTime firstSeenAt,
             required DateTime lastSeenAt,
             Value<DateTime?> lastHeartbeatAt = const Value.absent(),
@@ -5021,6 +5132,8 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             parentMac: parentMac,
             lastRssi: lastRssi,
             batteryPct: batteryPct,
+            dlHeard: dlHeard,
+            linkDegraded: linkDegraded,
             firstSeenAt: firstSeenAt,
             lastSeenAt: lastSeenAt,
             lastHeartbeatAt: lastHeartbeatAt,

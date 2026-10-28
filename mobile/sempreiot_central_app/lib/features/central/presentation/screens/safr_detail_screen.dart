@@ -1233,6 +1233,27 @@ class _WireDetailScaffold extends ConsumerWidget {
           ),
           ('Pai', _endpointLabel(p.parentMac), null),
           ('Camada', '${p.layer}', 'Profundidade na mesh (root = 0).'),
+          if (p.dlHeard != null)
+            (
+              'Batimentos da placa ouvidos',
+              '${p.dlHeard} de ${v2p.SafrHeartbeatPayload.dlHeardExpected} '
+                  '(últimos 2 min)',
+              'DL_HEARD (v3.6, §7.3): a perda no enlace de descida, contada '
+                  'pela própria unidade. ≤ 6 de 8 gera o TROUBLE "qualidade '
+                  'do enlace degradada" (§9.4).',
+            ),
+          if (p.dlMap != null)
+            (
+              'Quais batimentos (mais recente à esquerda)',
+              [
+                for (var i = 0; i < v2p.SafrHeartbeatPayload.dlHeardExpected; i++)
+                  v2p.SafrHeartbeatPayload.heardAt(p.dlMap!, i) ? '✓' : '✗',
+              ].join(' '),
+              'DL_MAP (v3.7, §7.3): os últimos 8 batimentos da placa, ouvido '
+                  '(✓) ou perdido (✗), posicionados pelo UPTIME da placa nos '
+                  'que chegaram. O monitor do dispositivo desenha os perdidos '
+                  'como vazios.',
+            ),
         ];
       case v2p.SafrTopologyPayload p:
         return [

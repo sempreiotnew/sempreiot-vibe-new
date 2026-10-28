@@ -340,7 +340,7 @@ void main() {
       final zoom = tester.getRect(find.byTooltip(tip));
       expect(clear.overlaps(zoom), isFalse, reason: 'clear vs $tip');
     }
-    final strip = tester.getRect(find.text('ATIVOS'));
+    final strip = tester.getRect(find.text('ÚLTIMO QUADRO'));
     expect((clear.center.dy - strip.center.dy).abs(), lessThan(40),
         reason: 'clear button is on the status strip row');
   });

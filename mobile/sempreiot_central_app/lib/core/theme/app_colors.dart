@@ -34,4 +34,9 @@ class AppColors {
   /// ACK reached the unit, red = alarm, orange = trouble.
   static const Color ledBlue = Color(0xFF3B82F6);
   static const Color ledCyan = Color(0xFF22D3EE);
+
+  /// The small heart that beats on a unit when its HEARTBEAT arrives
+  /// (heartbeat_widgets.dart). Not an LED and not in the LED language —
+  /// a pink no LED uses, so a beat never reads as an alarm or a frame.
+  static const Color heartbeat = Color(0xFFEC4899);
 }

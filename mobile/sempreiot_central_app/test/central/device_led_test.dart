@@ -375,7 +375,8 @@ void main() {
       final ticks = <SafrTrafficTick>[];
       final ingest = SafrIngestService(
         db: db,
-        onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS) {
+        onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS,
+            dlHeard, dlMap) {
           final tick = SafrTrafficTick(
             mac: mac,
             direction: SafrTrafficDirection.uplink,
@@ -539,7 +540,8 @@ void main() {
       final ingest = SafrIngestService(
         db: db,
         onAckRequired: (f) async => toAck.add(f),
-        onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS) {
+        onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS,
+            dlHeard, dlMap) {
           final tick = SafrTrafficTick(
             mac: mac,
             direction: SafrTrafficDirection.uplink,

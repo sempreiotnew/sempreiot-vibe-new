@@ -286,6 +286,8 @@ Map<String, dynamic> _unitToJson(TopologyNode n, {bool volatile = true}) => {
       'layer': n.layer,
       if (n.parentMac != null) 'parent': n.parentMac,
       if (volatile && n.rssi != null) 'rssi': n.rssi,
+      if (volatile && n.dlHeard != null) 'dl': n.dlHeard,
+      if (n.linkDegraded) 'degraded': true,
       if (n.batteryPct != null) 'bat': n.batteryPct,
       'online': n.online,
       'heard': n.heard,
@@ -368,6 +370,8 @@ TopologyNode? _unitFromJson(Object? raw, DateTime fallbackSeen) {
     layer: (raw['layer'] as num?)?.toInt() ?? 0,
     parentMac: raw['parent'] as String?,
     rssi: (raw['rssi'] as num?)?.toInt(),
+    dlHeard: (raw['dl'] as num?)?.toInt(),
+    linkDegraded: raw['degraded'] == true,
     batteryPct: (raw['bat'] as num?)?.toInt(),
     online: raw['online'] == true,
     heard: raw['heard'] == true,
@@ -470,8 +474,10 @@ class MirrorFrames {
 }
 
 /// A tick is `[ms since t0, mac, direction (0 up, 1 down), severity, ack,
-/// parentMac, msgType, eventCode, uptimeS]`: short, because this is the
-/// message that is sent several times a second.
+/// parentMac, msgType, eventCode, uptimeS, dlHeard, dlMap]`: short, because
+/// this is the message that is sent several times a second. The tenth and
+/// eleventh elements (2026-10-27) are read when present: a phone on an
+/// older app ignores them, a newer phone reads an older central's nine.
 String encodeMirrorFrames({
   required int seq,
   required DateTime t0,
@@ -499,6 +505,8 @@ String encodeMirrorFrames({
             t.tick.msgType?.wire,
             t.tick.eventCode?.wire,
             t.tick.uptimeS,
+            t.tick.dlHeard,
+            t.tick.dlMap,
           ],
       ],
     });
@@ -527,6 +535,8 @@ MirrorFrames? decodeMirrorFrames(String payload) {
           msgType: type is num ? SafrMsgType.fromWire(type.toInt()) : null,
           eventCode: code is num ? SafrEventCode.fromWire(code.toInt()) : null,
           uptimeS: (t[8] as num?)?.toInt(),
+          dlHeard: t.length > 9 ? (t[9] as num?)?.toInt() : null,
+          dlMap: t.length > 10 ? (t[10] as num?)?.toInt() : null,
         ),
       ));
     }
