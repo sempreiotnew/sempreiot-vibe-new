@@ -25,6 +25,11 @@ class _ScanStepState extends ConsumerState<ScanStep> {
   final _popCtrl = TextEditingController();
   String? _error;
 
+  /// The sticker as scanned: keeps the product and type the QR carries,
+  /// which the text fields do not hold. Dropped the moment the installer
+  /// edits a field, since the typed credentials may be another unit's.
+  DeviceQrPayload? _scanned;
+
   @override
   void dispose() {
     _idCtrl.dispose();
@@ -51,26 +56,34 @@ class _ScanStepState extends ConsumerState<ScanStep> {
 
     final payload = DeviceQrPayload.tryParse(scanned);
     if (payload == null) {
-      setState(() => _error =
-          'QR Code inválido. Use a etiqueta impressa no dispositivo.');
+      setState(() =>
+          _error = 'QR Code inválido. Use a etiqueta impressa no dispositivo.');
       return;
     }
     _idCtrl.text = payload.id;
     _macCtrl.text = payload.mac;
     _popCtrl.text = payload.pop;
-    setState(() => _error = null);
+    setState(() {
+      _error = null;
+      _scanned = payload;
+    });
     _continue();
   }
+
+  /// What goes to the wizard: the scanned sticker while the fields still
+  /// say what it said (product and type included), else the typed fields.
+  DeviceQrPayload get _payload => stickerFromFields(
+        scanned: _scanned,
+        id: _idCtrl.text,
+        mac: _macCtrl.text,
+        pop: _popCtrl.text,
+      );
 
   void _continue() {
     if (!_canContinue) return;
     ref
         .read(provisioningWizardProvider(widget.installationId).notifier)
-        .setSticker(DeviceQrPayload(
-          id: _idCtrl.text.trim(),
-          mac: _macCtrl.text.trim(),
-          pop: _popCtrl.text.trim(),
-        ));
+        .setSticker(_payload);
   }
 
   @override
@@ -164,6 +177,25 @@ class _ScanStepState extends ConsumerState<ScanStep> {
       ),
     );
   }
+}
+
+/// The sticker the wizard gets from the scan step's fields: [scanned] as
+/// long as the fields still hold its id, MAC and pop (so the product and
+/// type it printed come along); the bare typed fields otherwise.
+DeviceQrPayload stickerFromFields({
+  required DeviceQrPayload? scanned,
+  required String id,
+  required String mac,
+  required String pop,
+}) {
+  final i = id.trim(), m = mac.trim(), p = pop.trim();
+  if (scanned != null &&
+      scanned.id == i &&
+      scanned.mac == m &&
+      scanned.pop == p) {
+    return scanned;
+  }
+  return DeviceQrPayload(id: i, mac: m, pop: p);
 }
 
 class _QrIllustration extends StatelessWidget {

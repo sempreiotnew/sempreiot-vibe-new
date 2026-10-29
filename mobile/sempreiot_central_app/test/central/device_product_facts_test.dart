@@ -85,9 +85,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
   }
 
-  Future<void> reveal(WidgetTester tester, Finder f) =>
-      tester.scrollUntilVisible(f, 80,
-          scrollable: find.byType(Scrollable).first);
+  Future<void> reveal(WidgetTester tester, Finder f) => tester
+      .scrollUntilVisible(f, 80, scrollable: find.byType(Scrollable).first);
 
   group('Dispositivo screen', () {
     for (final s in sizes.entries) {
@@ -105,16 +104,16 @@ void main() {
       });
     }
 
-    testWidgets('firmware older than v3.5: both facts read "—"',
+    testWidgets('firmware older than v3.5: product not informed, firmware "—"',
         (tester) async {
       await pump(
           tester, const Size(800, 1280), const DeviceSettingsScreen(mac: old));
       await reveal(tester, find.text('Firmware'));
-      final card = find.ancestor(
-          of: find.text('Produto'), matching: find.byType(Column));
-      expect(
-          find.descendant(of: card.first, matching: find.text('—')),
-          findsOneWidget);
+      expect(find.text('Produto'), findsOneWidget);
+      expect(find.textContaining('não informado ainda'), findsOneWidget);
+      // Its type is how it lives, never the product code (2026-10-29).
+      expect(find.text('Tipo'), findsOneWidget);
+      expect(find.text('Dispositivo AC'), findsOneWidget);
       final fw = find.ancestor(
           of: find.text('Firmware'), matching: find.byType(Column));
       expect(find.descendant(of: fw.first, matching: find.text('—')),
@@ -125,8 +124,8 @@ void main() {
 
     testWidgets('a product this app does not know is still shown',
         (tester) async {
-      await pump(tester, const Size(360, 640),
-          const DeviceSettingsScreen(mac: newer));
+      await pump(
+          tester, const Size(360, 640), const DeviceSettingsScreen(mac: newer));
       await reveal(tester, find.text('Firmware'));
       expect(find.text('Produto desconhecido 0x0206 · rede elétrica'),
           findsOneWidget);
@@ -137,13 +136,8 @@ void main() {
 
   group('device popover on the Rede map', () {
     for (final s in sizes.entries) {
-      testWidgets('shows the product and the firmware — ${s.key}',
-          (tester) async {
+      testWidgets('shows the type and the product — ${s.key}', (tester) async {
         await pump(tester, s.value, const TopologyScreen());
-        // The map's chips show the version too: count the popover's own.
-        int versions() =>
-            find.text('v0.1.0-dev', skipOffstage: false).evaluate().length;
-        final onMap = versions();
         await tester.tap(find.text(siren));
         await tester.pump(const Duration(milliseconds: 400));
         expect(find.byTooltip('Fechar'), findsOneWidget);
@@ -152,24 +146,32 @@ void main() {
             find.textContaining('Sirene · SIOT\u2011SIREN\u201101',
                 skipOffstage: false),
             findsOneWidget);
-        expect(find.text('FIRMWARE', skipOffstage: false), findsOneWidget);
-        expect(versions(), onMap + 1);
+        // The tiles (2026-10-29): TIPO and PRODUTO; PAI and FIRMWARE left
+        // for the Dispositivo screen.
+        expect(find.text('TIPO', skipOffstage: false), findsOneWidget);
+        expect(
+            find.text('Dispositivo AC', skipOffstage: false), findsOneWidget);
+        expect(find.text('PRODUTO', skipOffstage: false), findsOneWidget);
+        expect(find.text('SIOT-SIREN-01', skipOffstage: false), findsOneWidget);
+        expect(find.text('FIRMWARE', skipOffstage: false), findsNothing);
+        expect(find.text('PAI', skipOffstage: false), findsNothing);
         expect(tester.takeException(), isNull);
       });
     }
 
-    testWidgets('firmware older than v3.5: no product, firmware "—"',
+    testWidgets('firmware older than v3.5: product "não informado"',
         (tester) async {
       await pump(tester, const Size(1280, 800), const TopologyScreen());
       await tester.tap(find.text(old));
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.textContaining('SIOT\u2011'), findsNothing);
-      expect(find.text('FIRMWARE'), findsOneWidget);
-      // Three unset facts read "—": ENDEREÇAMENTO, ZONA (protocol §14.1,
-      // none assigned) and FIRMWARE (older than v3.5).
+      expect(find.text('PRODUTO'), findsOneWidget);
+      expect(find.text('não informado'), findsOneWidget);
+      // Two unset facts read "—": ENDEREÇAMENTO and ZONA (protocol §14.1,
+      // none assigned).
       expect(find.text('ENDEREÇAMENTO'), findsOneWidget);
       expect(find.text('ZONA'), findsOneWidget);
-      expect(find.text('—'), findsNWidgets(3));
+      expect(find.text('—'), findsNWidgets(2));
       expect(tester.takeException(), isNull);
     });
   });

@@ -23,6 +23,7 @@ import '../../domain/safr/safr_v2_frame.dart' show SafrMsgType;
 import 'device_command_widgets.dart';
 import 'device_menu.dart' show deviceAnchorOf;
 import 'device_avatar.dart';
+import 'network_3d/device_model_sprites.dart';
 import 'mesh_legend.dart';
 import 'ota_rede_widgets.dart';
 
@@ -2258,6 +2259,26 @@ class _CentralChip extends StatelessWidget {
     );
   }
 
+  /// The CENTRAL as its 3D model — the tablet (system reference §2.1.1,
+  /// the factory's `central` model) with the board's LED on its camera —
+  /// once the board is heard and no push runs; the disc otherwise (and
+  /// while the model loads).
+  /// The tablet model is drawn (its LED on the model's camera, so the
+  /// chip's own LED lens stays off).
+  bool get _modelShown =>
+      deviceCentralModel != null && board != null && activity == null;
+
+  Widget _avatar() {
+    final model = deviceCentralModel;
+    if (!_modelShown) return _disc();
+    return DeviceModelAvatar(
+      node: board!,
+      spec: model!,
+      size: _CentralChip._circle,
+      placeholder: _disc(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final tap = onTap;
@@ -2271,7 +2292,7 @@ class _CentralChip extends StatelessWidget {
             clipBehavior: Clip.none,
             children: [
               if (selected) const _SelectionRing(diameter: _circle),
-              _disc(),
+              _avatar(),
               if (selected) const _SelectionCheck(),
               if (activity != null)
                 Positioned(
@@ -2286,7 +2307,7 @@ class _CentralChip extends StatelessWidget {
                     diameter: _CentralChip._circle,
                   ),
                 ),
-              if (board != null)
+              if (board != null && !_modelShown)
                 Positioned(
                   top: -3,
                   left: (_CentralChip._circle - 11) / 2,

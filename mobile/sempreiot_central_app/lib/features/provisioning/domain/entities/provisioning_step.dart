@@ -19,6 +19,10 @@ enum ProvisioningStep {
   /// Device rejected the credentials (proof mismatch).
   identifyFailed,
 
+  /// The unit says it is another product than its sticker prints (a wrong
+  /// label on a unit): nothing is sent, the installer checks the label.
+  stickerMismatch,
+
   /// Summary before sending the envelope.
   confirm,
 
@@ -42,7 +46,8 @@ extension ProvisioningStepX on ProvisioningStep {
         ProvisioningStep.nameAddress => 1,
         ProvisioningStep.connecting ||
         ProvisioningStep.identifying ||
-        ProvisioningStep.identifyFailed =>
+        ProvisioningStep.identifyFailed ||
+        ProvisioningStep.stickerMismatch =>
           2,
         ProvisioningStep.confirm || ProvisioningStep.provisioning => 3,
         _ => 4,

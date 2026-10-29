@@ -45,6 +45,14 @@ const siot_board_def_t *siot_board_def(void);
  * entry is only lending its pins. */
 uint16_t siot_board_def_product(void);
 
+/* The family of the image this firmware IS — "board" | "node" | "leaf" — read
+ * from the entry of its build-default model (CONFIG_SIOT_DEV_MODEL:
+ * SIOT-BOARD-01 / SIOT-NODE-01 / SIOT-LEAF-01). A unit may run a product of
+ * another native family (bench, 2026-10-29: a push-button station flashed as a
+ * battery unit): its PRODUCT keeps the product's code, but what it reports as
+ * its type (`/info.family`) is this — how it lives on the network. */
+const char *siot_board_def_image_family(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -13,15 +13,46 @@ const _unitA = '5A:46:52:00:00:02';
 const _unitB = '5A:46:52:00:00:03';
 
 Uint8List _heartbeat({int layer = 2}) => Uint8List.fromList([
-      0x68, 0x6E, 0x2F, 0x01, 0x00, 0x00, 0x0E, 0x10,
-      0x01, 0x64, 0x00, 0xFA, 0xBE,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x01, layer,
+      0x68,
+      0x6E,
+      0x2F,
+      0x01,
+      0x00,
+      0x00,
+      0x0E,
+      0x10,
+      0x01,
+      0x64,
+      0x00,
+      0xFA,
+      0xBE,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x01,
+      layer,
     ]);
 
 Uint8List _alarm({int devSeq = 100}) => Uint8List.fromList([
-      0x03, 0x01, 0x68, 0x6E, 0x2F, 0x00,
-      0x05, 85, 0x10, 0x68, 0x02, 0x26, 0x2A, 0x00, 0x00,
-      (devSeq >> 8) & 0xFF, devSeq & 0xFF,
+      0x03,
+      0x01,
+      0x68,
+      0x6E,
+      0x2F,
+      0x00,
+      0x05,
+      85,
+      0x10,
+      0x68,
+      0x02,
+      0x26,
+      0x2A,
+      0x00,
+      0x00,
+      (devSeq >> 8) & 0xFF,
+      devSeq & 0xFF,
     ]);
 
 SafrDeviceTableEntry _entry(
@@ -59,7 +90,8 @@ void main() {
 
   tearDown(() => db.close());
 
-  Future<void> feed(Uint8List frame) => ingest.handleFrame(frame, deviceId: 't');
+  Future<void> feed(Uint8List frame) =>
+      ingest.handleFrame(frame, deviceId: 't');
 
   Future<MeshDevice> row(String mac) =>
       (db.select(db.meshDevices)..where((t) => t.mac.equals(mac))).getSingle();
@@ -124,8 +156,8 @@ void main() {
       expect(r.fwVersion, '0.1.0-dev', reason: after);
     }
 
-    await feed(unit.encode(
-        msgType: SafrMsgType.heartbeat, payload: _heartbeat()));
+    await feed(
+        unit.encode(msgType: SafrMsgType.heartbeat, payload: _heartbeat()));
     await stillThere('HEARTBEAT');
 
     await feed(unit.encode(
@@ -138,9 +170,8 @@ void main() {
 
     await announce(role: null); // v3.1 announce
     await stillThere('NAME_ANNOUNCE without ROLE');
-
-    await announce(productCode: 0); // extension present, nothing stated
-    await stillThere('NAME_ANNOUNCE with product 0 / hw 0 / empty version');
+    // (An announce WITH the extension saying product 0 is the unit's own
+    // word and does replace — see "reflashed as something else".)
 
     await table([_entry(_unitA)], productFields: false);
     await stillThere('DEVICE_TABLE v3.2 page');
@@ -160,6 +191,18 @@ void main() {
     ));
     await stillThere('EVENT_LOG_DATA');
     expect((await row(_unitA)).lastDevSeq, 101);
+  });
+
+  test(
+      'the unit reflashed as something else: its announce replaces all (2026-10-29)',
+      () async {
+    await announce(productCode: 0x0202, hwRev: 2, fwVersion: '0.1.0-dev');
+    // Now a devkit with no model: the fields are there and say 0 / 0.
+    await announce(productCode: 0, hwRev: 0, fwVersion: '0.2.0');
+    final r = await row(_unitA);
+    expect(r.productCode, isNull, reason: 'PRODUCT 0 said by the unit itself');
+    expect(r.hwRev, isNull);
+    expect(r.fwVersion, '0.2.0');
   });
 
   test('a new version replaces the old one (after an update)', () async {

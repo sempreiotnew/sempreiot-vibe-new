@@ -42,9 +42,11 @@ import 'topology_provider.dart';
 ///    RESET clears the latch, the unit reboots (HEARTBEAT uptime) or the
 ///    re-announces stop.
 ///
-/// What never crosses the wire is not shown: survey, button hold, setup,
-/// and the white "finding the network" of an offline unit (offline keeps
-/// the app's red look). Pulses reach the screen after the frame's trip
+/// What never crosses the wire is not shown here: survey, button hold,
+/// setup, and the white "finding the network" of an offline unit (offline
+/// keeps the app's red look). The one place that knows a unit is in setup
+/// is the provisioning wizard, on its network: it draws the white blink and
+/// the white breathe itself (`ledSetupLook`, `SetupDevicePreview`). Pulses reach the screen after the frame's trip
 /// through the mesh and the USB — same order and duration, a little late.
 ///
 /// On a user's phone viewing a central (central mirror,

@@ -65,7 +65,7 @@ Status words are the reference's: `Implemented` · `POC` · `Planned` · `Open`.
 
 | Ref | Function | Board's part | Status |
 |---|---|---|---|
-| 1.1 | Factory identity + sticker | `id` + `pop` in the read-only `nvs_factory` partition; QR `{id, mac, pop}` | POC → Phase 1 |
+| 1.1 | Factory identity + sticker | `id` + `pop` (+ `model`) in the read-only `nvs_factory` partition; QR `{id, mac, pop, model, family}` (product + type since 2026-10-29; the wizard shows "Central") | POC → Phase 1 |
 | 1.2 | The code | Holds the same bundle as every unit: `SYSTEM_ID`, `NET_SSID = SIOT-<hex4>`, `NET_PSK`, `SAFR_PSK`, `CHANNEL`, `MESH_ID` | POC (firmware) |
 | 1.3 | Setup network | Unprovisioned: raises `SIOT-SETUP-<id>` (WPA2 = `pop`) with the HTTP server | POC |
 | 1.4 | Provisioning handshake | `/info` → `/identify` (HMAC of `pop`) → `/provision` (AES-CCM envelope) → `/enroll` hint list; stores code + installation name, reboots | POC |

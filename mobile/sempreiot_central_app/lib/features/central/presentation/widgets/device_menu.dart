@@ -405,7 +405,7 @@ class _DevicePopover extends ConsumerWidget {
             isRoot: isRoot,
             isCandidate: isCandidate,
           );
-          final facts = _Facts(node: node, all: all);
+          final facts = _Facts(node: node);
           final commands = _Commands(
             node: node,
             viewOnly: viewOnly,
@@ -605,7 +605,8 @@ class _Header extends StatelessWidget {
                     // Below −85 dBm to its parent, or losing the board's
                     // heartbeats (protocol §9.4): put a node between them.
                     if (node.linkAttention)
-                      const _Chip(label: 'ENLACE FRACO', color: AppColors.trouble),
+                      const _Chip(
+                          label: 'ENLACE FRACO', color: AppColors.trouble),
                   ],
                 ),
               ],
@@ -674,25 +675,13 @@ class _Chip extends StatelessWidget {
 // ── Facts ──────────────────────────────────────────────────────────────────
 
 class _Facts extends StatelessWidget {
-  const _Facts({required this.node, required this.all});
+  const _Facts({required this.node});
   final TopologyNode node;
-  final List<TopologyNode> all;
-
-  String? _parentLabel() {
-    final mac = node.parentMac;
-    if (mac == null) return null;
-    for (final n in all) {
-      if (n.mac == mac) {
-        return n.layer == 0 ? 'Central' : deviceDisplayName(n);
-      }
-    }
-    return mac;
-  }
 
   @override
   Widget build(BuildContext context) {
-    final parent = _parentLabel();
     final wake = node.nextWakeInSeconds;
+    final product = node.product;
     final tiles = <Widget>[
       // Where it is and which group it fires with (protocol §14.1): the
       // names behind the board's ids, set on the Dispositivo screen.
@@ -721,12 +710,21 @@ class _Facts extends StatelessWidget {
                     : 'acorda em $wake s')
                 : 'acordado agora',
       ),
-      if (parent != null)
-        _FactTile(
-          icon: Icons.account_tree_outlined,
-          label: 'PAI',
-          value: parent,
-        ),
+      // What it is (2026-10-29): its type — how it lives, never read from
+      // the product code — and its product. The parent and the firmware
+      // left the popover for the Dispositivo screen.
+      _FactTile(
+        icon: deviceFamilyIcon(node.family),
+        label: 'TIPO',
+        value: node.family.title,
+      ),
+      _FactTile(
+        icon: Icons.inventory_2_outlined,
+        label: 'PRODUTO',
+        value: product?.label ?? 'não informado',
+        valueColor: product == null ? context.textSecondary : null,
+        sub: product?.model,
+      ),
       if (node.isLeaf)
         _FactTile(
           icon: Icons.device_hub_rounded,
@@ -742,14 +740,6 @@ class _Facts extends StatelessWidget {
           value: '${node.batteryPct}%',
           valueColor: node.batteryPct! < 20 ? AppColors.warning : null,
         ),
-      _FactTile(
-        icon: Icons.memory_rounded,
-        label: 'FIRMWARE',
-        value: node.firmwareLabel.isEmpty
-            ? '—'
-            : firmwareTagText(node.firmwareLabel),
-        valueColor: node.firmwareLabel.isEmpty ? context.textSecondary : null,
-      ),
     ];
     return LayoutBuilder(builder: (context, c) {
       const gap = 8.0;

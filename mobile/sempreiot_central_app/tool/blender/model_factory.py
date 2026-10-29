@@ -79,6 +79,7 @@ def load_manifest(cat, dart_codes):
     man = json.load(open(MANIFEST, encoding="utf-8"))
     d = man["defaults"]
     seen_products, seen_fallback, slugs = {}, {}, set()
+    central = None
     for m in man["models"]:
         s = m["slug"]
         if not re.fullmatch(r"[a-z][a-z0-9_]*", s):
@@ -88,8 +89,16 @@ def load_manifest(cat, dart_codes):
         slugs.add(s)
         if not os.path.exists(os.path.join(APP, m["glb"])):
             fail(f"{s}: {m['glb']} not found")
-        if not m.get("products") and not m.get("familyFallback"):
-            fail(f"{s}: needs products and/or familyFallback")
+        m.setdefault("central", False)
+        if m["central"]:
+            # The CENTRAL (the tablet) is not a product: drawn on the Rede maps' hub.
+            if central:
+                fail(f"'central' on both '{central}' and '{s}' — one model draws the CENTRAL")
+            central = s
+            if m.get("products") or m.get("familyFallback"):
+                fail(f"{s}: a central model takes no products / familyFallback")
+        elif not m.get("products") and not m.get("familyFallback"):
+            fail(f"{s}: needs products and/or familyFallback (or central: true)")
         for p in m.get("products", []):
             if p not in cat:
                 fail(f"{s}: product '{p}' is not in §2.1. Known: " + ", ".join(sorted(cat)))
@@ -458,6 +467,7 @@ def codegen(man, cat):
             f"    slug: '{m['slug']}',",
             f"    productCodes: [{codes}],{' // ' + names if names else ''}",
             f"    familyFallback: {'SafrProductFamily.' + fb if fb else 'null'},",
+            f"    central: {'true' if m['central'] else 'false'},",
             f"    atlas: '{rel(p['atlas'])}',",
             f"    spin: '{rel(p['spin'])}',",
             f"    glow: {repr(rel(p['glow'])) if 'glow' in p else 'null'},",
@@ -476,7 +486,7 @@ def codegen(man, cat):
 
     rows = ["| Product(s) | 3D model (source) | In alarm | Also drawn for |", "|---|---|---|---|"]
     for m in models:
-        prods = "<br>".join(f"`0x{cat[x]['code']:04X}` `{x}` {cat[x]['name']}" for x in m.get("products", [])) or "—"
+        prods = "<br>".join(f"`0x{cat[x]['code']:04X}` `{x}` {cat[x]['name']}" for x in m.get("products", [])) or ("**CENTRAL** (the tablet; not a product)" if m["central"] else "—")
         fb = m.get("familyFallback")
         also = f"every **{fb}** unit whose product has no model of its own or is not reported" if fb else "—"
         alarm = ", ".join(filter(None, ["red lights" if has_glow(m) else "", "sound waves" if m["alarm"]["sound"] else ""])) or "—"

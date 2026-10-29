@@ -17,6 +17,7 @@ Produces, under --out-dir/<id>/:
                   skipped with a warning if not installed — tools/flash.sh
                   installs it into the IDF python env on first use)
 
+  --family F      the image the unit runs (board/node/leaf); default = the model's native family
   --qr-only DIR   regenerate only sticker.png from an existing DIR/sticker.json
                   (units created before the PNG existed, or after a MAC fix)
 
@@ -28,7 +29,14 @@ sticker's printed/QR MAC field (read it off the board/chip silkscreen, or via
 
 QR payload schema (pinned — the Flutter app's sticker-scan feature is built
 against this exact shape, do not change without updating both sides):
-    {"id": "<id>", "mac": "AA:BB:CC:DD:EE:FF", "pop": "<pop>"}
+    {"id": "<id>", "mac": "AA:BB:CC:DD:EE:FF", "pop": "<pop>",
+     "model": "SIOT-SIREN-01", "family": "node"}
+  `model` is the product (reference §2.1) and `family` its type — board (Central),
+  node (Dispositivo AC) or leaf (Dispositivo Bateria), read from tools/pinmap/pinmap.yaml —
+  so the installer app shows the unit's real picture and type before it joins the setup
+  network (2026-10-29). Both are absent when no --model was given; a QR without them still
+  parses (the app then learns the product from GET /info only).
+  The label under the code prints id, MAC, product and type.
 
 Usage:
     python3 make_sticker.py --mac AA:BB:CC:DD:EE:FF
@@ -52,6 +60,42 @@ SIOT_POP_MAX_LEN = 63
 SIOT_POP_MIN_LEN = 16  # blueprint §0: sticker POP should be 16+ chars
 
 MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
+
+PINMAP = Path(__file__).resolve().parent / "pinmap" / "pinmap.yaml"
+
+# The type's name as the installer app and the label print it (pt-BR, decided 2026-10-29).
+FAMILY_TITLE = {"board": "Central", "node": "Dispositivo AC", "leaf": "Dispositivo Bateria"}
+
+
+def pinmap_models() -> dict[str, str]:
+    """model string -> family, from tools/pinmap/pinmap.yaml (the catalogue, reference §2.1).
+    Empty when the pin map is not next to this tool."""
+    if not PINMAP.is_file():
+        return {}
+    out: dict[str, str] = {}
+    model = None
+    for line in PINMAP.read_text().splitlines():
+        m = re.match(r"^\s*-\s*model:\s*(\S+)", line)
+        if m:
+            model = m.group(1)
+            continue
+        f = re.match(r"^\s*family:\s*(\S+)", line)
+        if f and model:
+            out[model] = f.group(1)
+            model = None
+    return out
+
+
+def family_of(model: str | None) -> str | None:
+    """The product's native family (board / node / leaf) from the pin map; None when
+    unknown or no model. The sticker's `family` is the image the unit RUNS (`--family`,
+    flash.sh passes the image it flashes): on the bench a product runs on the other
+    family's image (a push-button station as a battery unit) and the type printed must
+    be the one the installer will meet."""
+    return pinmap_models().get(model) if model else None
+
+
+FAMILIES = ("board", "node", "leaf")
 
 # Default size of the generated .bin = the read-only "nvs_factory" partition
 # of the product firmware (firmware/apps/{board,node}/partitions_*.csv, OTA
@@ -158,7 +202,12 @@ def generate_qr_png(payload: dict, png_path: Path) -> bool:
     try:  # id + MAC under the code so the printed label is readable by a human too
         from PIL import Image, ImageDraw, ImageFont
         font = ImageFont.load_default()
-        lines = [f"id  {payload.get('id') or ''}", f"mac {payload.get('mac') or '(not set)'}"]
+        lines = [f"id    {payload.get('id') or ''}", f"mac   {payload.get('mac') or '(not set)'}"]
+        if payload.get("model"):
+            lines.append(f"model {payload['model']}")
+        fam = payload.get("family")
+        if fam:
+            lines.append(f"type  {FAMILY_TITLE.get(fam, fam)}")
         line_h = 14
         canvas = Image.new("RGB", (img.width, img.height + line_h * len(lines) + 8), "white")
         canvas.paste(img, (0, 0))
@@ -181,6 +230,10 @@ def main() -> int:
     ap.add_argument("--model", default=None,
                     help="product model written into the factory identity, e.g. SIOT-SIREN-01 "
                          "(docs/sempreiot-system-reference.md §2.1); omitted = the firmware's build default")
+    ap.add_argument("--family", default=None, choices=list(FAMILIES),
+                    help="the image the unit runs (board / node / leaf) = the type printed on the sticker; "
+                         "default: the model's native family from the pin map. flash.sh passes the image "
+                         "it flashes, so a product run on another family's image is labelled as it lives")
     ap.add_argument("--qr-only", default=None, metavar="DIR",
                     help="only (re)write DIR/sticker.png from DIR/sticker.json; nothing else is touched")
     ap.add_argument(
@@ -194,10 +247,9 @@ def main() -> int:
     if args.model:
         # The model must be a catalogue row (reference §2.1): a typo here would give a unit the
         # firmware cannot identify — it would report PRODUCT 0x0000 and miss every targeted update.
-        pinmap = Path(__file__).resolve().parent / "pinmap" / "pinmap.yaml"
-        known = re.findall(r"^\s*-\s*model:\s*(\S+)", pinmap.read_text(), flags=re.M) if pinmap.is_file() else []
+        known = pinmap_models()
         if known and args.model not in known:
-            print(f"error: model {args.model!r} is not in {pinmap.name}; known: {', '.join(known)}", file=sys.stderr)
+            print(f"error: model {args.model!r} is not in {PINMAP.name}; known: {', '.join(known)}", file=sys.stderr)
             return 1
 
     if args.qr_only:
@@ -206,7 +258,15 @@ def main() -> int:
         if not json_path.is_file():
             print(f"error: no {json_path}", file=sys.stderr)
             return 1
-        ok = generate_qr_png(json.loads(json_path.read_text()), png_path)
+        record = json.loads(json_path.read_text())
+        if record.get("model") and not record.get("family"):
+            fam = family_of(record["model"])
+            if fam is None:
+                print(f"error: model {record['model']!r} is not in {PINMAP.name}", file=sys.stderr)
+                return 1
+            record["family"] = fam  # a sticker made before the type was on the QR
+            json_path.write_text(json.dumps(record, indent=2) + "\n")
+        ok = generate_qr_png(record, png_path)
         print(f"png:  {png_path if ok else '(skipped — see warning above)'}")
         return 0 if ok else 1
 
@@ -238,16 +298,26 @@ def main() -> int:
     bin_ok = generate_nvs_bin(csv_path, bin_path, int(args.nvs_size, 0))
 
     payload = {"id": id_, "mac": mac, "pop": pop}
-    record = dict(payload)
+    native = family_of(args.model)
+    family = args.family or native
+    if args.family and native and args.family != native:
+        print(f"note: {args.model} is a {FAMILY_TITLE[native]} by catalogue, flashed as "
+              f"{FAMILY_TITLE[args.family]} — the sticker says {FAMILY_TITLE[args.family]}",
+              file=sys.stderr)
     if args.model:
-        record["model"] = args.model  # kept in sticker.json for tools; the QR stays {id, mac, pop}
-    json_path.write_text(json.dumps(record, indent=2) + "\n")
+        # The product and its type ride on the QR (2026-10-29): the installer app draws the
+        # unit's real picture and names its type before it joins the setup network.
+        payload["model"] = args.model
+        if family:
+            payload["family"] = family
+    json_path.write_text(json.dumps(payload, indent=2) + "\n")
     png_ok = generate_qr_png(payload, png_path)
 
     print(f"id:   {id_}")
     print(f"pop:  {pop}")
     print(f"mac:  {mac or '(not set)'}")
     print(f"model: {args.model or '(build default)'}")
+    print(f"type:  {FAMILY_TITLE.get(family, family) if family else '(build default)'}")
     print(f"csv:  {csv_path}")
     print(f"bin:  {bin_path if bin_ok else '(skipped — see warning above)'}")
     print(f"json: {json_path}")

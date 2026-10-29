@@ -77,8 +77,10 @@ exactly** on screen. Source of truth: `firmware/components/ui/siot_ui_led` (`sio
    test/central/device_led_test.dart`. Same for the packet colours on the Rede map.
 4. **And the docs:** reference §3.7 row 7.7, protocol §12.8 (leafs), `docs/devices/*.md` LED tables,
    and the installer texts in the app that name a colour (provisioning wizard, "Entrar pela placa").
-5. What never crosses the wire (survey blinks, setup, button hold) cannot be mirrored; say so in
-   `device_led_provider.dart`'s header instead of guessing.
+5. What never crosses the wire (survey blinks, setup, button hold) cannot be mirrored on the tablet; say so in
+   `device_led_provider.dart`'s header instead of guessing. The one exception is the phone's
+   provisioning wizard, which is on the unit's setup network and knows its state: it draws the setup
+   white blink and the white breathe (`ledSetupLook` in `led_language.dart`, `setup_device_preview.dart`).
 
 ---
 

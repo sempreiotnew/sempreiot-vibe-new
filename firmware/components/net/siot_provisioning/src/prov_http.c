@@ -138,10 +138,11 @@ static esp_err_t handle_info(httpd_req_t *req)
     cJSON_AddStringToObject(body, "model", s_id->model);
     cJSON_AddStringToObject(body, "fw", siot_version_string());
     /* What the unit is (reference §2.1): the same PRODUCT it reports in
-     * NAME_ANNOUNCE (0 = the model is not in this image's catalogue), and the
-     * family = which firmware image it runs. */
+     * NAME_ANNOUNCE (0 = the model is not in the catalogue), and the family =
+     * which firmware image it runs — the image's, not the product's native
+     * one, so a product flashed as a battery unit says "leaf" (2026-10-29). */
     cJSON_AddNumberToObject(body, "product", siot_board_def_product());
-    cJSON_AddStringToObject(body, "family", siot_board_def()->family);
+    cJSON_AddStringToObject(body, "family", siot_board_def_image_family());
     cJSON_AddNumberToObject(body, "hw_rev", siot_board_def()->hw_rev);
     cJSON_AddStringToObject(body, "state", state_str(s_state));
     cJSON_AddStringToObject(body, "nonce", nonce_hex);

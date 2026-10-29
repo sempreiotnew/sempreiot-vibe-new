@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_report.dart';
@@ -141,6 +142,44 @@ void main() {
     expect(find.byKey(tablet), findsNothing);
     expect(find.text('CENTRAL'), findsOneWidget);
     expect(find.text(root), findsOneWidget);
+  });
+
+  group('the CENTRAL as the tablet model (2026-10-29)', () {
+    testWidgets('the board heard: the tablet, its LED on the camera, no disc',
+        (tester) async {
+      // An earlier map in this file started the tablet's load under the
+      // fake clock, where it never finishes — and the asset bundle caches
+      // that pending read. Forget both and load afresh, for real.
+      rootBundle.clear();
+      DeviceModelSprites.resetCache();
+      await tester.runAsync(() => DeviceModelSprites.load(deviceCentralModel!));
+      await pump(tester, showOta: false);
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pump();
+      final central = find.ancestor(
+          of: find.text('CENTRAL'), matching: find.byType(Column));
+      expect(
+          find.descendant(
+              of: central, matching: find.byType(DeviceModelAvatar)),
+          findsOneWidget);
+      expect(
+          find.descendant(
+              of: central, matching: find.byIcon(Icons.tablet_mac_rounded)),
+          findsNothing);
+      expect(find.descendant(of: central, matching: find.byType(DeviceLedDot)),
+          findsOneWidget,
+          reason: "the board's LED once, on the model");
+    });
+
+    testWidgets('during a push the disc with the board icon stays',
+        (tester) async {
+      await pump(tester, showOta: true);
+      expect(find.byIcon(Icons.developer_board_rounded), findsOneWidget);
+      expect(
+          find.byWidgetPredicate(
+              (w) => w is DeviceModelAvatar && w.spec == deviceCentralModel),
+          findsNothing);
+    });
   });
 
   group('a brand-new central (2026-10-26)', () {
@@ -295,7 +334,12 @@ void main() {
       'every unit is drawn as its 3D model; one without communication says '
       'OFFLINE (2026-10-05)', (tester) async {
     final siren = deviceModelSpecs.firstWhere((m) => m.slug == 'siren');
+    // The tablet too (the CENTRAL), loaded afresh: an earlier map may have
+    // started it under the fake clock, where it never finishes.
+    rootBundle.clear();
+    DeviceModelSprites.resetCache();
     await tester.runAsync(() => DeviceModelSprites.load(siren));
+    await tester.runAsync(() => DeviceModelSprites.load(deviceCentralModel!));
     const sirenMac = '5A:46:52:00:00:02';
     const deadMac = '5A:46:52:00:00:03';
     await pump(tester, showOta: false, units: [
@@ -305,11 +349,12 @@ void main() {
     ]);
     await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     await tester.pump();
-    expect(find.byType(DeviceModelAvatar), findsNWidgets(3));
+    // The three units — and the CENTRAL, drawn as the tablet since 2026-10-29.
+    expect(find.byType(DeviceModelAvatar), findsNWidgets(4));
     expect(
         find.byWidgetPredicate(
             (w) => w is CustomPaint && w.painter is DeviceModelPainter),
-        findsNWidgets(3),
+        findsNWidgets(4),
         reason: 'the models, not the circles');
     expect(find.byType(DeviceLedDot), findsNWidgets(4),
         reason: 'each unit keeps its LED, and the board has its own');

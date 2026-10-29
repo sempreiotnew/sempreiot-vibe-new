@@ -227,6 +227,14 @@ esp_err_t siot_safr_register_default(siot_safr_handler_t handler, void *ctx)
 
 /* ---- replay (spec §4) — lock held ------------------------------------ */
 
+/* A peer silent for this long is forgotten by the replay table (2026-10-29,
+ * lifecycle §5 L): its next frame is taken as a new life whatever its
+ * counters say. Longer than any live cadence (node 15 s, leaf 60 s, the
+ * board's 450 s leaf timeout), shorter than a re-provisioning by hand. A
+ * recorded frame of the SAME boot replayed after this is still useless to an
+ * attacker: every unit it could reach has moved on with the live unit. */
+#define SAFR_REPLAY_FORGET_MS (10 * 60 * 1000)
+
 static bool replay_check_and_update(const siot_safr_frame_t *f, int64_t now_ms)
 {
     peer_entry_t *hit = NULL, *free_slot = NULL, *oldest = NULL;
@@ -240,7 +248,8 @@ static bool replay_check_and_update(const siot_safr_frame_t *f, int64_t now_ms)
         if (oldest == NULL || e->seen_ms < oldest->seen_ms) oldest = e;
     }
     if (hit != NULL) {
-        if (f->boot_ctr == hit->boot_ctr && f->msg_ctr <= hit->msg_ctr) {
+        if (now_ms - hit->seen_ms < SAFR_REPLAY_FORGET_MS &&
+            f->boot_ctr == hit->boot_ctr && f->msg_ctr <= hit->msg_ctr) {
             return true; /* replay: same boot, counter not strictly newer */
         }
     } else {

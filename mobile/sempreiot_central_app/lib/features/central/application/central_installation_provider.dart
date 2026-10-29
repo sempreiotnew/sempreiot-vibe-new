@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../../../core/database/app_database.dart';
 import '../../installation/domain/entities/installation.dart';
 import '../../installation/domain/services/installation_backup_codec.dart';
 import '../domain/safr/safr_identity.dart';
@@ -79,8 +80,8 @@ ParsedBackup parseInstallationBackup(String raw, {String? passphrase}) {
     case BackupFormat.legacyPlaintext:
       legacy = true;
       try {
-        installation = Installation.fromJson(
-            jsonDecode(text) as Map<String, dynamic>);
+        installation =
+            Installation.fromJson(jsonDecode(text) as Map<String, dynamic>);
       } on TypeError {
         throw const FormatException('JSON de instalação incompleto.');
       } on FormatException {
@@ -101,11 +102,34 @@ ParsedBackup parseInstallationBackup(String raw, {String? passphrase}) {
 
 class CentralInstallationNotifier
     extends StateNotifier<AsyncValue<Installation?>> {
-  CentralInstallationNotifier(this._store) : super(const AsyncValue.loading()) {
+  CentralInstallationNotifier(this._store, {this.forgetUnits})
+      : super(const AsyncValue.loading()) {
     _load();
   }
 
   final CentralInstallationStore _store;
+
+  /// Runs whenever the central's identity changes to another SYSTEM_ID
+  /// (or to none): the units, labels and events of the installation it is
+  /// leaving are not the next one's (`AppDatabase.forgetInstallationUnits`).
+  final Future<void> Function()? forgetUnits;
+
+  /// Stores [next] (or nothing) and, when that is another installation than
+  /// the one held now, forgets the current one's units first. Re-adopting
+  /// the same SYSTEM_ID (a renamed share, the board's code read again)
+  /// keeps everything.
+  Future<void> _become(Installation? next) async {
+    final current = state.valueOrNull;
+    if (current?.systemId != next?.systemId && forgetUnits != null) {
+      await forgetUnits!();
+    }
+    if (next == null) {
+      await _store.clear();
+    } else {
+      await _store.save(next);
+    }
+    state = AsyncValue.data(next);
+  }
 
   Future<void> _load() async {
     try {
@@ -122,17 +146,13 @@ class CentralInstallationNotifier
     // The tablet keeps the code and endereçamentos; the installer's work log is not
     // the roster (lifecycle §1) and is dropped here.
     final kept = parsed.installation.copyWith(devices: const []);
-    await _store.save(kept);
-    state = AsyncValue.data(kept);
+    await _become(kept);
     return ParsedBackup(kept, legacyPlaintext: parsed.legacyPlaintext);
   }
 
   /// Stores a code received from the board (lifecycle §4.1, GET_CODE) or
   /// generated here (Case B).
-  Future<void> adopt(Installation installation) async {
-    await _store.save(installation);
-    state = AsyncValue.data(installation);
-  }
+  Future<void> adopt(Installation installation) => _become(installation);
 
   /// The encrypted envelope to show as a QR for a phone (lifecycle §5 D/I).
   String exportEncrypted(String passphrase) {
@@ -143,16 +163,17 @@ class CentralInstallationNotifier
     return InstallationBackupCodec.encode(installation, passphrase);
   }
 
-  Future<void> clear() async {
-    await _store.clear();
-    state = const AsyncValue.data(null);
-  }
+  /// "Desvincular": back to the bench identity, with no unit, label or
+  /// event of the installation left behind.
+  Future<void> clear() => _become(null);
 }
 
 final centralInstallationProvider = StateNotifierProvider<
     CentralInstallationNotifier, AsyncValue<Installation?>>(
-  (ref) =>
-      CentralInstallationNotifier(ref.watch(centralInstallationStoreProvider)),
+  (ref) => CentralInstallationNotifier(
+    ref.watch(centralInstallationStoreProvider),
+    forgetUnits: ref.watch(appDatabaseProvider).forgetInstallationUnits,
+  ),
 );
 
 /// What the SAFR pipeline authenticates with right now: the imported

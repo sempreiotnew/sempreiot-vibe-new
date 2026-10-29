@@ -82,6 +82,14 @@ uint16_t siot_config_dev_seq_next(void);
  * The caller reboots. */
 esp_err_t siot_config_factory_reset(void);
 
+/* Root ban (2026-10-29, brief §6): the board holds ONE root session and refuses
+ * a second root; the refused node marks itself banned from level 1, restarts
+ * and joins the mesh under a parent node. The ban lives in siot_inst (gone
+ * with a factory reset) and is lifted by siot_netcore when the node hears no
+ * board for a while — the root died: the slot is free, try it. */
+bool      siot_config_root_banned(void);
+esp_err_t siot_config_set_root_banned(bool banned);
+
 #ifdef __cplusplus
 }
 #endif

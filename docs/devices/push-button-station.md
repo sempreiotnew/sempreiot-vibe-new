@@ -75,6 +75,8 @@ The node's, plus **red solid while the station is in alarm** (already the alarm-
 
 ## 8. Where it lives
 
-Image `firmware/apps/node`; pin map `SIOT-PBS-01` (family node); feature
+Image `firmware/apps/node`; pin map `SIOT-PBS-01` (native family node — on the bench it also runs on
+the leaf image as a battery unit, `tools/flash.sh leaf <port> --model SIOT-PBS-01`: same product code
+and picture, type "Dispositivo Bateria", reference §2.1, 2026-10-29); feature
 `firmware/components/features/siot_station/` (not yet). Specs: reference §2.1, rows 5.1 / 5.3; spec §7.1,
 §7.2, §7.1.4; blueprint §6.

@@ -18,8 +18,9 @@ every brief. Wire details live in `docs/safr/protocol-safr-v3.md` (v3.2) and win
    *annotated* by the operator on the tablet. Phone-side lists are work logs. Two work logs are never
    merged; they do not need to be.
 4. **The sticker `pop` is the only proof of physical authority.** It provisions a unit today. It also
-   arms a fresh board from the tablet (Case B) and, later, lets the board hand the code to a new
-   installer or a replacement tablet. Nothing in this document introduces an account, a role, or an
+   lets the board hand the code to a replacement tablet (`GET_CODE`) and, later, to a new installer.
+   *(Until 2026-10-29 it also let the tablet arm a fresh board over USB, `SET_INSTALLATION`; that
+   screen was removed — the board is provisioned from the phone like every unit, §5 B.)* Nothing in this document introduces an account, a role, or an
    internet dependency for installation work.
 5. **Secrets never travel in clear.** The plaintext backup QR is gone. The code leaves a device only
    inside a passphrase-encrypted envelope (phone ⇄ phone, phone ⇄ tablet) or inside the `pop`-derived
@@ -34,7 +35,7 @@ every brief. Wire details live in `docs/safr/protocol-safr-v3.md` (v3.2) and win
 | Artefact | Where it lives | What it is |
 |---|---|---|
 | The code | every unit (`siot_inst.code`), tablet secure storage, each installer phone's secure storage, encrypted backups | blueprint §0 |
-| Sticker | printed on every unit, board included | `{id, mac, pop}`; `pop` ≥ 16 chars (resolved, §8) |
+| Sticker | printed on every unit, board included | `{id, mac, pop, model, family}` (product + type since 2026-10-29); `pop` ≥ 16 chars (resolved, §8) |
 | Phone work log | installer phone, per installation | units this phone provisioned: `{mac, id, name, zone, provisionedAt}`. A log, not the roster. |
 | Encrypted backup (v2) | QR on a phone or tablet screen, or text | the code + installation name, AES-128-GCM under a key derived from a passphrase (PBKDF2-SHA256, 200 000 iterations). Format `{"v":2,"kdf":"pbkdf2-sha256","iter":…,"salt":…,"nonce":…,"ct":…}`. v1 (plaintext) is read-only legacy and warned about. |
 | Board device table | board NVS namespace `siot_devtab` | one entry per MAC (§3) |
@@ -99,8 +100,8 @@ which is paged.
 |---|---|---|
 | Installer phone (creator) | generates it | units (provisioning), other phones and tablets (encrypted QR) |
 | Installer phone (second) | encrypted QR from any holder; Phase 3: board admin window | units, other phones, tablets |
-| Tablet | **from the board over USB** (`GET_CODE`, operator types or scans the board sticker `pop`) — the primary path, no camera or phone needed; or encrypted QR from a phone (camera only); or generates it (Case B) | board (`SET_INSTALLATION`, Case B), phones (encrypted QR) |
-| Board | provisioning like any unit; or `SET_INSTALLATION` from the tablet | the tablet, over USB, after it proves the board's `pop` (`GET_CODE`); Phase 3: an installer with the board sticker (admin window) |
+| Tablet | **from the board over USB** (`GET_CODE`, operator types or scans the board sticker `pop`) — the primary path, no camera or phone needed; or encrypted QR from a phone (camera only); or generates it (Case B) | phones (encrypted QR) |
+| Board | provisioning like any unit (the phone's wizard, from any code holder — the tablet's QR in Case B) | the tablet, over USB, after it proves the board's `pop` (`GET_CODE`); Phase 3: an installer with the board sticker (admin window) |
 | Node / leaf | provisioning | nobody — units never hand out the code |
 | Cloud | not in scope (Phase 4 option: store the **encrypted** v2 envelope only) | — |
 
@@ -124,8 +125,8 @@ The board has no screen and never shows a QR. The tablet may have no camera. The
 
 The `pop` step exists so that a laptop plugged into the board's USB port cannot pull the site key. The
 encrypted QR from a phone is an alternative for tablets with a camera, and it is the only path for
-phone ⇄ phone sharing. Case B (§5 B) needs no camera either: the operator types the board's `pop` and
-the tablet writes the code it generated.
+phone ⇄ phone sharing. Case B (§5 B) needs no tablet camera either: the tablet shows the QR of the
+code it generated and the phone scans it.
 
 ---
 
@@ -144,12 +145,14 @@ the board (`GET_CODE`, §4.1) — no camera, no phone needed. On link-up the tab
 `GET_INSTALLATION` (legacy) and `GET_DEVICE_TABLE`. Units come online and are discovered; `expected`
 entries flip to `online`; names arrive by `NAME_ANNOUNCE`.
 
-**B. Tablet and board first.** Operator taps "Criar instalação nesta central" on the tablet: the tablet
-generates the code, asks for the board sticker (camera or typed `{id, pop}`), and sends
-`SET_INSTALLATION` over USB under the **setup channel** (SYSTEM_ID `0x0000`, key
-`HKDF-SHA256(ikm = pop, salt = id, info = "siot-setinst-v1")`). The board must be in SETUP (no code);
-it stores the code, ACKs and reboots into normal mode. The tablet stores the code and shows the
-encrypted QR; each installer scans it. Units are provisioned as in A and go `online` within seconds.
+**B. Tablet first.** Operator taps "Criar instalação nesta central" on the tablet: the tablet
+generates the code, stores it, forgets every unit of the installation it held before (N) and shows
+the encrypted QR at once (passphrase). Each installer scans it; the board and every unit are then
+provisioned from the phone exactly as in A — the board like any unit. Nothing goes over USB to create
+an installation. *(Until 2026-10-29 this step asked for the board sticker and sent `SET_INSTALLATION`
+on the setup channel; the message stays in the protocol and on the board, no tablet screen sends it.)*
+Once the board is up and the tablet is plugged in, the tablet's stored code already matches and the
+table is built by discovery.
 
 **C. Units first, board days later.** A's per-unit step, any time earlier, by any phone holding the
 code. Units sit in JOINING (white solid) with no network until the board exists — the board raises the
@@ -174,7 +177,14 @@ placa" → `DECOMMISSION` if it is still powered) and "Esquecer" it. *(2026-10-0
 protocol and on the board — it copies name and zone to the new MAC, retires the old MAC and
 decommissions it if `online` — but no tablet screen sends it.)*
 
-**G. Retire or remove a unit.** "Aposentar" → `RETIRE_DEVICE`: the board drops the MAC's frames from
+**G. Retire or remove a unit.** *(Reworked 2026-10-29: "Apagar da placa" on the tablet now also
+removes the unit from the installation. A mains unit the board hears: `DECOMMISSION` (it erases
+itself, white blink), then — the board holds it retired — `FORGET_DEVICE` and the tablet's row is
+deleted; the mirror publishes the map without it, so every connected phone drops it. A unit that is not
+talking, or a battery unit (reached only on a wake that may never come after a reset by hand), gets the
+choice: "Apagar quando falar / ao acordar" = `DECOMMISSION` pending on the board as before, or
+"Remover agora" = `RETIRE_DEVICE` + `FORGET_DEVICE` + the row deleted. Typed-name confirmation,
+`EditorGate`, audit rows `device_decommission` / `device_remove`.)* "Aposentar" → `RETIRE_DEVICE`: the board drops the MAC's frames from
 now on and the tablet hides it from supervision. Optional "Apagar da placa" → `DECOMMISSION` (typed
 confirmation, `EditorGate`, audit row): the unit erases its code and returns to setup mode. Then
 "Esquecer" → `FORGET_DEVICE`. A retired unit left powered shows the badge "aposentado mas
@@ -189,8 +199,8 @@ rename on the phone only edits the phone's log.
 installer's phone; Phase 3 admin window; Phase 4 cloud escrow. If the phone is believed compromised,
 re-key (M).
 
-**J. Dead board.** Provision the new board from any code holder (phone, A3) or arm it from the tablet
-(B, `SET_INSTALLATION`). Plug USB. The tablet's stored code already matches; the table is rebuilt by
+**J. Dead board.** Provision the new board from any code holder (phone, A3; the tablet's encrypted QR
+is one). Plug USB. The tablet's stored code already matches; the table is rebuilt by
 discovery within about two minutes of AC units rejoining. Operator annotations were on the old board;
 the tablet offers "Reenviar nomes à placa", which sends `SET_DEVICE` for every row it has a name for.
 
@@ -200,8 +210,24 @@ tablet pulls the code from the board (`GET_CODE`, §4.1). Nothing else is needed
 
 **L. Factory-reset unit re-added.** Re-provision it (E). If it had been retired, the board keeps
 dropping it and sets `HEARD_WHILE_RETIRED`; the tablet offers "Reativar" → `UNRETIRE_DEVICE`. If it
-was never retired, it simply comes back `online`. Firmware note: after a reset `BOOT_CTR` restarts at 2,
-so the replay table must accept a lower `BOOT_CTR` from a MAC unheard for longer than the dedupe window.
+was never retired, it simply comes back `online`. Firmware note (fixed 2026-10-29): `BOOT_CTR` used to
+restart at 2 after a reset, and every receiver still holding the MAC's previous `(BOOT_CTR, MSG_CTR)`
+dropped the first frames of the new life as replays — on the bench a freshly provisioned leaf showed up
+with no parent and no name. Now `BOOT_CTR` lives in `siot_sys`, which no reset erases, every replay
+table forgets a MAC silent for 10 min (protocol §4), and a leaf repeats TOPOLOGY + NAME_ANNOUNCE on
+its first three bound wakes (protocol §12.9). **The unit may come back as
+another thing** (reflashed as another product, or as a mains unit where a battery one was): the tablet
+keeps nothing of the MAC's past that the unit does not say again — role, battery and parent candidates
+come from every heartbeat (reference §3.6.1), product and name from its announce, zone and
+endereçamento from the board's table. Units are swapped and reflashed often; a registry row is a mirror
+of what the unit sends, never a memory of what it was (2026-10-29).
+
+**N. Unlink or switch installation on the tablet (2026-10-29).** "Desvincular", or adopting a code
+with another SYSTEM_ID (QR, `GET_CODE`, "Criar instalação"), erases from the tablet every unit of the
+installation it is leaving — the device registry, the zone / endereçamento tables and the event feed
+(`AppDatabase.forgetInstallationUnits`). The next installation starts with zero units; nothing of the
+old roster can leak into it. Re-adopting the same SYSTEM_ID (a renamed share, the board's code read
+again) keeps everything. Audit, OTA history and system-test records stay: they are the tablet's own.
 
 **M. Re-key (Phase 4, optional).** `REKEY {envelope, switch_at}` sent under the old key; units switch
 at `switch_at`, the board last, the tablet on the operator's confirmation. `switch_at` must be at least

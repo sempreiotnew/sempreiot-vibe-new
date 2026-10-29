@@ -5,8 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
+import '../../../central/domain/led/led_language.dart';
 import '../../../installation/application/installation_provider.dart';
 import '../../application/provisioning_wizard_provider.dart';
+import 'setup_device_preview.dart';
 import 'wizard_buttons.dart';
 
 /// Step 2 — the installer names the device (mandatory) and may say where
@@ -61,12 +63,26 @@ class _NameAddressStepState extends ConsumerState<NameAddressStep> {
             .map((i) => i.addresses)
             .firstOrNull ??
         const <String>[];
+    final wizard = ref.watch(provisioningWizardProvider(widget.installationId)
+        .select((s) => (product: s.product, family: s.productFamily)));
 
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 8),
+          // The unit as the sticker says it is, blinking white as the real
+          // one does in setup mode — the installer sees they are naming the
+          // right device before anything is sent.
+          Center(
+            child: SetupDevicePreview(
+              product: wizard.product,
+              family: wizard.family,
+              pattern: LedSetupPattern.whiteBlink,
+              size: 104,
+            ),
+          ),
+          const SizedBox(height: 20),
           Text(
             'Nome e endereçamento',
             style: TextStyle(
@@ -86,7 +102,7 @@ class _NameAddressStepState extends ConsumerState<NameAddressStep> {
           const SizedBox(height: 8),
           _TextField(
             controller: _nameCtrl,
-            hint: 'ex: Sirene 1',
+            hint: 'ex: ${wizard.product?.label ?? 'Sirene'} 1',
             onChanged: _onChanged,
             onSubmitted: (_) => _continue(),
           ),

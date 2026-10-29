@@ -6,8 +6,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
+import '../../../central/domain/led/led_language.dart';
+import '../../../central/domain/safr/safr_product.dart';
 import '../../application/provisioning_wizard_provider.dart';
 import '../../data/services/wifi_join_service.dart';
+import 'setup_device_preview.dart';
 import 'wizard_buttons.dart';
 
 /// Step 3 — programmatic join of the device's setup SoftAP (POC-BRIEF.md
@@ -23,6 +26,8 @@ class ConnectingStep extends ConsumerWidget {
     final provider = provisioningWizardProvider(installationId);
     final notifier = ref.read(provider.notifier);
     final error = ref.watch(provider.select((s) => s.error));
+    final wizard = ref.watch(
+        provider.select((s) => (product: s.product, family: s.productFamily)));
     final ssid = notifier.ssidHint;
     final automatic =
         !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
@@ -32,7 +37,19 @@ class ConnectingStep extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 8),
-          const Center(child: _RadarPulse()),
+          // The unit we are listening for, blinking white as the real one
+          // does while its setup network is up.
+          Center(
+            child: _RadarPulse(
+              child: SetupDevicePreview(
+                product: wizard.product,
+                family: wizard.family,
+                pattern: LedSetupPattern.whiteBlink,
+                size: 64,
+                labels: false,
+              ),
+            ),
+          ),
           const SizedBox(height: 24),
           Text(
             'Conectando ao dispositivo',
@@ -42,6 +59,18 @@ class ConnectingStep extends ConsumerWidget {
               fontWeight: FontWeight.w700,
             ),
           ),
+          if (wizard.product != null ||
+              wizard.family != SafrProductFamily.unknown) ...[
+            const SizedBox(height: 4),
+            Text(
+              [
+                if (wizard.product != null) wizard.product!.display,
+                if (wizard.family != SafrProductFamily.unknown)
+                  wizard.family.title,
+              ].join(' · '),
+              style: TextStyle(color: context.textSecondary, fontSize: 12),
+            ),
+          ],
           const SizedBox(height: 6),
           Text.rich(
             TextSpan(
@@ -116,7 +145,8 @@ class _ErrorBanner extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.error_outline_rounded, color: AppColors.error, size: 18),
+          const Icon(Icons.error_outline_rounded,
+              color: AppColors.error, size: 18),
           const SizedBox(width: 10),
           Expanded(
             child: Text(message,
@@ -128,9 +158,10 @@ class _ErrorBanner extends StatelessWidget {
   }
 }
 
-/// Pulsing radar rings around a device icon — "we're listening for it".
+/// Pulsing radar rings around the device — "we're listening for it".
 class _RadarPulse extends StatefulWidget {
-  const _RadarPulse();
+  const _RadarPulse({required this.child});
+  final Widget child;
 
   @override
   State<_RadarPulse> createState() => _RadarPulseState();
@@ -158,13 +189,7 @@ class _RadarPulseState extends State<_RadarPulse>
         animation: _controller,
         builder: (context, _) => CustomPaint(
           painter: _RadarPainter(progress: _controller.value),
-          child: const Center(
-            child: Icon(
-              Icons.router_rounded,
-              size: 40,
-              color: AppColors.secondary,
-            ),
-          ),
+          child: Center(child: widget.child),
         ),
       ),
     );
@@ -209,8 +234,7 @@ class _RadarPainter extends CustomPainter {
     final sweepAngle = progress * 2 * math.pi;
     final dotRadius = minRadius + (maxRadius - minRadius) * 0.5;
     canvas.drawCircle(
-      center +
-          Offset(math.cos(sweepAngle), math.sin(sweepAngle)) * dotRadius,
+      center + Offset(math.cos(sweepAngle), math.sin(sweepAngle)) * dotRadius,
       3,
       Paint()..color = AppColors.secondary.withValues(alpha: 0.8),
     );

@@ -18,10 +18,24 @@ class DeviceApInfo {
   /// PCB revision; null when not reported or not stated (0).
   final int? hwRev;
 
+  /// `board` / `node` / `leaf`: the firmware image the unit runs = how it
+  /// lives on the network (since 2026-10-29 the image's family, not the
+  /// product's native one: a push-button station flashed as a battery unit
+  /// says `leaf`). Null on firmware that does not report it.
+  final String? family;
+
   /// What the unit is: from the code it reports, else from its model string
   /// (older firmware); null when neither is in the catalogue.
   SafrProduct? get product =>
       SafrProduct.fromCode(productCode) ?? SafrProduct.fromModel(model);
+
+  /// Its type: what it reports as [family]; for older firmware, the
+  /// product's native family; unknown when neither says.
+  SafrProductFamily get productFamily {
+    final said = SafrProductFamily.fromName(family);
+    if (said != SafrProductFamily.unknown) return said;
+    return product?.family ?? SafrProductFamily.unknown;
+  }
 
   /// "Sirene · SIOT-SIREN-01"; the bare model when it is not in the
   /// catalogue; "—" when the unit reported nothing.
@@ -37,6 +51,7 @@ class DeviceApInfo {
     required this.nonceHex,
     this.productCode,
     this.hwRev,
+    this.family,
   });
 
   factory DeviceApInfo.fromMap(Map<String, dynamic> map) => DeviceApInfo(
@@ -48,6 +63,7 @@ class DeviceApInfo {
         nonceHex: map['nonce'] as String? ?? '',
         productCode: _positive(map['product']),
         hwRev: _positive(map['hw_rev']),
+        family: (map['family'] as String?)?.trim().toLowerCase(),
       );
 
   static int? _positive(Object? v) => v is num && v > 0 ? v.toInt() : null;

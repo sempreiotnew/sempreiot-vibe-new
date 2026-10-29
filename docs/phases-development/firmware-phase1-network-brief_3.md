@@ -186,7 +186,7 @@ blueprint §1: 0x8000, read-only in firmware, survives a full erase of `nvs`), n
 the keys stay the POC's, as decided: `id` (string, ≤ 31), `pop` (string, 16..63 chars; the sticker
 secret, the setup-network WPA2 password, the HMAC key of `/identify` and the HKDF ikm of the
 `/provision` envelope). `model` comes from Kconfig (`CONFIG_SIOT_DEV_MODEL`, `"SIOT-BOARD-…"` prefix
-identifies a board to the app wizard). Sticker QR payload: `{id, mac, pop}`. The OTA blueprint's
+identifies a board to the app wizard). Sticker QR payload: `{id, mac, pop}` (+ `model`, `family` since 2026-10-29, reference row 1.1). The OTA blueprint's
 `serial / pair_key` scheme (§4.1 there) is superseded by this; that doc gets a one-line edit saying so.
 Immutable id = `esp_read_mac(…, ESP_MAC_WIFI_STA)` (6 bytes) = `SRC_MAC` in every SAFR frame — the board
 too, even though it runs AP-only.
@@ -355,7 +355,7 @@ Init sequence (mirrors `managed_components/espressif__mesh_lite/external_example
 STA netifs, `esp_wifi_init/start`) → `esp_bridge_wifi_set_config(WIFI_IF_STA, {0})` →
 `esp_bridge_wifi_set_config(WIFI_IF_AP, {ssid = "<net_ssid>-<mac[3..5] hex>", password = net_psk,
 channel})` → `ESP_MESH_LITE_DEFAULT_INIT()` with `mesh_id`, `max_level = 4`,
-**`join_mesh_ignore_router_status = true`**, `softap_ssid/password` → `esp_mesh_lite_init` →
+**`join_mesh_ignore_router_status = true`**, `softap_ssid/password` → `esp_mesh_lite_init` → *(2026-10-29)* `esp_mesh_lite_set_networking_mode(ROUTER, −70 dBm)` (a board weaker than that loses to a parent node in reach; no hard router minimum, so a lone far unit can still be root) + `esp_mesh_lite_set_fusion_config` (first check 10 s, then every 60 s, −85 dBm: two roots that hear each other merge within a minute instead of the library's 600 s) →
 `esp_mesh_lite_set_softap_info` → `esp_mesh_lite_set_router_config({net_ssid, net_psk})` →
 `esp_mesh_lite_raw_msg_action_list_register` → `esp_mesh_lite_start` →
 `esp_wifi_set_inactive_time(WIFI_IF_STA, 6)`.
@@ -365,6 +365,27 @@ Facts that came out of the bench and are now rules:
 - **Each node's SoftAP SSID must differ from the board's** (suffix = last 3 STA-MAC bytes). Mesh-Lite
   treats `net_ssid` as "the router"; a child that found a sibling under that SSID elected itself root.
   Password = `net_psk`; parents are found by Mesh-Lite's vendor IE / mesh id, not by SSID.
+- **Mesh-Lite 1.0.2 on ESP-IDF v5.5.2 cannot see other nodes without a shim (found 2026-10-29).** The
+  prebuilt library was compiled against an IDF whose `wifi_scan_config_t` was 32 bytes; its three scan
+  call sites zero-fill 32 bytes and leave v5.5.2's last 12 (`channel_bitmap`, `coex_background_scan`)
+  as stack garbage. The router scan names a channel, so the bitmap is ignored and finding the board
+  works; the parent scan runs on all channels, the driver logs `2g bitmap contains only invalid
+  channels` and returns **no networks** — a node never discovered a sibling, every unit that heard the
+  board became root, nobody ever joined a parent. `siot_link/src/link_mesh_scan_shim.c` wraps
+  `esp_wifi_scan_start` (`-Wl,--wrap`, node image only) and rebuilds the struct with the 32 bytes the
+  library fills and the rest zero. The log line disappearing is the proof. Remove the shim when
+  Mesh-Lite ships a build for this IDF (a `_Static_assert` on the layout guards it).
+- **One root, decided by the board (2026-10-29).** The board's link server (`link_mesh_board.c`) keeps its
+  root and refuses a second one while that root is alive (accept, close; the same address back is the
+  root reconnecting and replaces its own session). A node whose session to the board is closed at once
+  twice in a row knows it is not the root: it sets the **root ban** (`siot_config_set_root_banned`, in
+  `siot_inst`), forgets Mesh-Lite's RTC store and restarts; on boot a banned node calls
+  `esp_mesh_lite_set_disallowed_level(1)` before start and can only join under a parent node. A root attached to the board's Wi-Fi below −70 dBm that cannot open the session three times in a row (a timeout, not a refusal: the far unit of the bench at −92 dBm) bans itself the same way. The ban is
+  lifted by `siot_netcore` after 45 s without a board frame (three missed board HEARTBEATs: the root
+  died, or no parent was ever found) with another restart, so the first survivor to reach the board is
+  the new root and the others ban themselves again. Until that day the newest root won the slot: two
+  nodes that both heard the board took turns on it every 4 s, every frame sent in the other's turn was
+  lost, and the tablet showed two ROOTs.
 - **No `esp_mesh_lite_set_allowed_level()`** — it pins a node to a level and defeats failover. Root =
   whichever node Mesh-Lite puts at level 1 (`esp_mesh_lite_get_level() == 1`).
 - **Mesh survives the board:** `join_mesh_ignore_router_status = true`. With the default (false) a root

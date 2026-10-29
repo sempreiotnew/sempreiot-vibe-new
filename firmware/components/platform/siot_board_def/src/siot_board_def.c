@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "sdkconfig.h"
 #include "siot_board_def_gen.h"
 
 static const siot_board_def_t *s_selected;
@@ -49,4 +50,12 @@ const siot_board_def_t *siot_board_def(void)
 uint16_t siot_board_def_product(void)
 {
     return s_fallback ? 0 : siot_board_def()->product;
+}
+
+const char *siot_board_def_image_family(void)
+{
+    for (int i = 0; i < SIOT_BOARD_DEF_COUNT; i++) {
+        if (strcmp(SIOT_BOARD_DEFS[i].model, CONFIG_SIOT_DEV_MODEL) == 0) return SIOT_BOARD_DEFS[i].family;
+    }
+    return siot_board_def()->family;
 }

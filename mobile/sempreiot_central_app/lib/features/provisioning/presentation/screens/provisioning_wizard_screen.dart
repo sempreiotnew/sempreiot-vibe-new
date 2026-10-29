@@ -120,7 +120,8 @@ class ProvisioningWizardScreen extends ConsumerWidget {
           ConnectingStep(installationId: installationId),
         ProvisioningStep.identifying =>
           IdentifyingStep(installationId: installationId),
-        ProvisioningStep.identifyFailed =>
+        ProvisioningStep.identifyFailed ||
+        ProvisioningStep.stickerMismatch =>
           IdentifyFailedStep(installationId: installationId),
         ProvisioningStep.confirm => ConfirmStep(installationId: installationId),
         ProvisioningStep.provisioning =>

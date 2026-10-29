@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sempreiot_central_app/core/database/app_database.dart';
@@ -15,9 +16,23 @@ Uint8List _eventPayload({
   int devSeq = 100,
 }) =>
     Uint8List.fromList([
-      type, code, 0x68, 0x6E, 0x2F, 0x00,
-      0x05, battery, 0x10, 0x68, 0x02, 0x26, 0x2A, 0x00, 0x00,
-      (devSeq >> 8) & 0xFF, devSeq & 0xFF,
+      type,
+      code,
+      0x68,
+      0x6E,
+      0x2F,
+      0x00,
+      0x05,
+      battery,
+      0x10,
+      0x68,
+      0x02,
+      0x26,
+      0x2A,
+      0x00,
+      0x00,
+      (devSeq >> 8) & 0xFF,
+      devSeq & 0xFF,
     ]);
 
 /// TOPOLOGY (spec §7.4) as a battery leaf sends it after a bind (§12.7):
@@ -33,9 +48,26 @@ Uint8List _leafTopologyPayload() => Uint8List.fromList([
     ]);
 
 Uint8List _heartbeatPayload({int layer = 0}) => Uint8List.fromList([
-      0x68, 0x6E, 0x2F, 0x01, 0x00, 0x00, 0x0E, 0x10,
-      0x01, 0x64, 0x00, 0xFA, 0xBE,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x01, layer,
+      0x68,
+      0x6E,
+      0x2F,
+      0x01,
+      0x00,
+      0x00,
+      0x0E,
+      0x10,
+      0x01,
+      0x64,
+      0x00,
+      0xFA,
+      0xBE,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x01,
+      layer,
     ]);
 
 void main() {
@@ -211,8 +243,7 @@ void main() {
       srcMac: safrMacToBytes('5A:46:52:00:00:01'),
       bootCtr: 3,
     );
-    Uint8List logData(int jrn, int devSeq, {bool last = false}) =>
-        root.encode(
+    Uint8List logData(int jrn, int devSeq, {bool last = false}) => root.encode(
           msgType: SafrMsgType.eventLogData,
           payload: SafrEventLogDataPayload.build(
             jrnSeq: jrn,
@@ -301,7 +332,9 @@ void main() {
 
   test('v1 frames are stored raw without touching trusted state', () async {
     // A minimal v1-shaped frame (VER=0x01): stored, not parsed as v2/v3.
-    final v1 = Uint8List(48)..[0] = safrSof..[1] = safrVer1;
+    final v1 = Uint8List(48)
+      ..[0] = safrSof
+      ..[1] = safrVer1;
     v1[2] = 0;
     v1[3] = 48;
     await ingest.handleFrame(v1, deviceId: 'test');
@@ -311,11 +344,14 @@ void main() {
     expect(await db.select(db.deviceEvents).get(), isEmpty);
   });
 
-  test('leaf: TOPOLOGY stores parent candidates; a later HEARTBEAT keeps the leaf role',
+  test(
+      'leaf: TOPOLOGY stores parent candidates; its HEARTBEATs (F_ACK_REQ) keep the leaf role',
       () async {
-    final leaf = SafrEncoder(srcMac: safrMacToBytes('5A:46:52:00:00:77'), bootCtr: 3);
+    final leaf =
+        SafrEncoder(srcMac: safrMacToBytes('5A:46:52:00:00:77'), bootCtr: 3);
     await ingest.handleFrame(
-      leaf.encode(msgType: SafrMsgType.topology, payload: _leafTopologyPayload()),
+      leaf.encode(
+          msgType: SafrMsgType.topology, payload: _leafTopologyPayload()),
       deviceId: 'test',
     );
     var row = await (db.select(db.meshDevices)
@@ -326,10 +362,13 @@ void main() {
     expect(row.parentCandidates, contains('5A:46:52:00:00:04'));
     expect(row.parentCandidates, contains('-80'));
 
-    // Heartbeat from layer 3 (parent + 1): a node would read as "node", a
-    // known leaf must stay a leaf (spec §12 — TOPOLOGY comes only on a bind).
+    // Heartbeat from layer 3 (parent + 1) with F_ACK_REQ, as every leaf
+    // heartbeat carries (spec §12.2): still a leaf, candidates kept.
     await ingest.handleFrame(
-      leaf.encode(msgType: SafrMsgType.heartbeat, payload: _heartbeatPayload(layer: 3)),
+      leaf.encode(
+          msgType: SafrMsgType.heartbeat,
+          payload: _heartbeatPayload(layer: 3),
+          ackRequired: true),
       deviceId: 'test',
     );
     row = await (db.select(db.meshDevices)
@@ -338,6 +377,90 @@ void main() {
     expect(row.role, SafrNodeRole.leaf.wire);
     expect(row.parentCandidates, contains('5A:46:52:00:00:04'),
         reason: 'candidates survive heartbeats');
+  });
+
+  test(
+      'the same MAC reflashed as a mains unit: its heartbeat says so (2026-10-29)',
+      () async {
+    // A battery unit's life first.
+    final unit =
+        SafrEncoder(srcMac: safrMacToBytes('5A:46:52:00:00:77'), bootCtr: 3);
+    await ingest.handleFrame(
+      unit.encode(
+          msgType: SafrMsgType.topology, payload: _leafTopologyPayload()),
+      deviceId: 'test',
+    );
+    await ingest.handleFrame(
+      unit.encode(
+          msgType: SafrMsgType.heartbeat,
+          payload: _heartbeatPayload(layer: 3),
+          ackRequired: true),
+      deviceId: 'test',
+    );
+    var row = await (db.select(db.meshDevices)
+          ..where((t) => t.mac.equals('5A:46:52:00:00:77')))
+        .getSingle();
+    expect(row.role, SafrNodeRole.leaf.wire);
+    expect(row.batteryPct, 100);
+
+    // Reflashed as a push-button station on mains: a new boot, heartbeats
+    // without F_ACK_REQ and no battery. Nothing of the battery life stays.
+    final reflashed =
+        SafrEncoder(srcMac: safrMacToBytes('5A:46:52:00:00:77'), bootCtr: 2);
+    final hb = _heartbeatPayload(layer: 2)..[9] = 0xFF;
+    await ingest.handleFrame(
+      reflashed.encode(msgType: SafrMsgType.heartbeat, payload: hb),
+      deviceId: 'test',
+    );
+    row = await (db.select(db.meshDevices)
+          ..where((t) => t.mac.equals('5A:46:52:00:00:77')))
+        .getSingle();
+    expect(row.role, SafrNodeRole.node.wire);
+    expect(row.batteryPct, isNull);
+    expect(row.parentCandidates, isNull);
+    expect(row.lastBootCtr, 2,
+        reason: 'a lower BOOT_CTR after a reflash is accepted');
+  });
+  test('a unit silent for 10 min is a new life: old counters do not drop it',
+      () async {
+    final unit =
+        SafrEncoder(srcMac: safrMacToBytes('5A:46:52:00:00:88'), bootCtr: 2);
+    // Its previous life reached boot 2, frame 5.
+    for (var i = 0; i < 5; i++) {
+      await ingest.handleFrame(
+        unit.encode(
+            msgType: SafrMsgType.heartbeat,
+            payload: _heartbeatPayload(layer: 2)),
+        deviceId: 'test',
+      );
+    }
+    // Reflashed: boot 2 again, counting from 1 — dropped while the old life
+    // is fresh in the registry...
+    final reborn =
+        SafrEncoder(srcMac: safrMacToBytes('5A:46:52:00:00:88'), bootCtr: 2);
+    await ingest.handleFrame(
+      reborn.encode(
+          msgType: SafrMsgType.heartbeat, payload: _heartbeatPayload(layer: 3)),
+      deviceId: 'test',
+    );
+    Future<MeshDevice> row() => (db.select(db.meshDevices)
+          ..where((t) => t.mac.equals('5A:46:52:00:00:88')))
+        .getSingle();
+    expect((await row()).layer, 2, reason: 'same boot, lower counter: replay');
+    // ...and taken once the unit has been silent long enough.
+    await (db.update(db.meshDevices)
+          ..where((t) => t.mac.equals('5A:46:52:00:00:88')))
+        .write(MeshDevicesCompanion(
+            lastSeenAt: Value(DateTime.now()
+                .toUtc()
+                .subtract(replayForget + const Duration(seconds: 1)))));
+    await ingest.handleFrame(
+      reborn.encode(
+          msgType: SafrMsgType.heartbeat, payload: _heartbeatPayload(layer: 3)),
+      deviceId: 'test',
+    );
+    expect((await row()).layer, 3);
+    expect((await row()).lastMsgCtr, 2);
   });
 }
 
@@ -353,5 +476,4 @@ void _fixCrc(Uint8List f) {
   }
   f[f.length - 2] = (crc >> 8) & 0xFF;
   f[f.length - 1] = crc & 0xFF;
-
 }

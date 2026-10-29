@@ -408,6 +408,19 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> clearAllMeta() => delete(deviceMetadata).go();
 
+  /// Everything this central knows about the units of the installation it
+  /// is leaving: the device registry (the Rede map and its names), the zone
+  /// / endereçamento tables and the event feed. Called whenever the central
+  /// changes identity — "Desvincular", or a code with another SYSTEM_ID
+  /// adopted — so the next installation starts empty and never inherits the
+  /// units of the one before (lifecycle §5 N). Audit, OTA history, system
+  /// tests and raw packets stay: they are this tablet's record.
+  Future<void> forgetInstallationUnits() => transaction(() async {
+        await delete(meshDevices).go();
+        await delete(deviceLabels).go();
+        await delete(deviceEvents).go();
+      });
+
   /// Wipes the mesh device registry (the Rede map). Live devices
   /// reappear on their next heartbeat; history in deviceEvents is kept.
   /// After a complete DEVICE_TABLE sync. Rows the board no longer lists:

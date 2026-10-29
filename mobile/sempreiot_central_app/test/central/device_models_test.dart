@@ -35,6 +35,19 @@ void main() {
       }
     });
 
+    test('one central model (the tablet), never picked for a product', () {
+      final centrals = deviceModelSpecs.where((s) => s.central).toList();
+      expect(centrals.length, 1);
+      expect(centrals.single.slug, 'tablet');
+      expect(centrals.single.productCodes, isEmpty);
+      expect(centrals.single.familyFallback, isNull);
+      expect(deviceCentralModel, same(centrals.single));
+      for (final code in [null, 0x0100, 0x0201, 0x0301]) {
+        expect(deviceModelFor(code, isLeaf: false)?.central ?? false, isFalse);
+        expect(deviceModelFor(code, isLeaf: true)?.central ?? false, isFalse);
+      }
+    });
+
     test('no product and no family fallback is claimed twice', () {
       final codes = <int>{};
       final fallbacks = <SafrProductFamily>{};

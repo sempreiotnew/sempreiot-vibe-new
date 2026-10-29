@@ -32,6 +32,10 @@ const kSafrSystemId = safrDevSystemId;
 /// trusted MeshDevices registry + the humanized DeviceEvents feed.
 /// Unauthenticated frames NEVER update device state — they only produce
 /// diagnostic feed rows. Accepted ALARMs latch (§7.1.4) until operator RESET.
+/// Silence after which the replay guard forgets a unit's last counters
+/// (the board's `SAFR_REPLAY_FORGET_MS` says the same).
+const replayForget = Duration(minutes: 10);
+
 class SafrIngestService {
   SafrIngestService({
     required this.db,
@@ -70,13 +74,8 @@ class SafrIngestService {
   /// Journal replay bookkeeping (spec §7.9) — the downlink service persists
   /// the JRN_SEQ high-water mark and paginates with further EVENT_LOG_REQs.
   final void Function(SafrEventLogDataPayload log)? onJournalData;
-  final void Function(
-      String mac,
-      int severity,
-      String? parentMac,
-      SafrMsgType msgType,
-      SafrEventCode? eventCode,
-      int? uptimeS)? onTraffic;
+  final void Function(String mac, int severity, String? parentMac,
+      SafrMsgType msgType, SafrEventCode? eventCode, int? uptimeS)? onTraffic;
 
   /// A frame whose header SYSTEM_ID is not ours (spec §3.1 "neighbouring
   /// system"). Null = ours again (a valid frame arrived). Feeds the
@@ -337,8 +336,12 @@ class SafrIngestService {
           .getSingleOrNull();
 
       // Replay detection (spec §4): equal-or-older counters from the same
-      // boot are replays — never let them touch trusted state.
+      // boot are replays — never let them touch trusted state. A unit silent
+      // for [replayForget] is a new life whatever its counters say
+      // (2026-10-29, lifecycle §5 L): a reflashed unit restarted counting
+      // and its first frames were dropped against its previous life.
       if (existing != null &&
+          now.difference(existing.lastSeenAt) < replayForget &&
           frame.bootCtr == existing.lastBootCtr &&
           frame.msgCtr <= existing.lastMsgCtr) {
         return (eventId: null, fresh: false);
@@ -417,20 +420,26 @@ class SafrIngestService {
         layer = p.layer;
         parentMac = p.parentMac;
         rssi = p.rssiToParent ?? rssi;
-        battery = p.batteryPct ?? battery;
+        // What this heartbeat says, nothing older: a mains unit sends no
+        // battery (0xFF) and must not keep one from a battery life of the
+        // same MAC (2026-10-29).
+        battery = p.batteryPct;
         lastHb = now;
         // v3.6 DL_HEARD: what this heartbeat says, nothing older — a
         // 20-byte heartbeat or a restarted window (0xFF) clears it.
         dlHeard = p.dlHeard;
-        // Role tracks layer from the 15 s heartbeat so a root change shows
-        // fast; TOPOLOGY (sent on a level change) also carries role and refines it. Board
-        // (layer 0) and the mesh root (layer 1) are "root"; layer 2+ are
-        // relays/children. A battery leaf (spec §12) heartbeats from layer
-        // parent+1 and sends TOPOLOGY only when it binds: once known as a
-        // leaf it stays one — its heartbeats never demote it to "node".
-        role = existing?.role == SafrNodeRole.leaf.wire
+        // The role from THIS frame, every time (2026-10-29): a battery leaf
+        // asks its parent for an ACK on every heartbeat (spec §4 F_ACK_REQ,
+        // §12.2); a mains unit never does. Then the layer: the board (0) and
+        // the mesh root (1) are "root", layer 2+ relays. The old rule "once a
+        // leaf, always a leaf" kept a unit reflashed as a mains product drawn
+        // as a battery one for ever; units are swapped and reflashed often,
+        // so nothing about a MAC's past may outlive what it sends now.
+        role = frame.ackRequired
             ? SafrNodeRole.leaf.wire
             : (p.layer <= 1 ? SafrNodeRole.root.wire : SafrNodeRole.node.wire);
+        // A unit that is not a leaf has no parent candidates (spec §12.7).
+        if (role != SafrNodeRole.leaf.wire) parentCandidates = null;
       case SafrTopologyPayload p:
         role = p.role.wire;
         layer = p.layer;
@@ -471,10 +480,16 @@ class SafrIngestService {
       name = p.name;
       // v3.2 trailing ROLE byte: a leaf says so on its very first frame.
       if (p.role != SafrNodeRole.unknown) role = p.role.wire;
-      // v3.5 extension: unknown/empty never replaces a known value.
-      productCode = _knownProduct(p.productCode) ?? productCode;
-      hwRev = _knownHwRev(p.hwRev) ?? hwRev;
-      fwVersion = _knownFw(p.fwVersion) ?? fwVersion;
+      // v3.5 extension: the unit's own word, as said (2026-10-29). A unit
+      // that carries the fields and says PRODUCT 0 is not in the catalogue
+      // NOW (reflashed as a devkit, say) and the old product must not stay.
+      // Only an announce without the fields (older firmware) leaves the
+      // known values alone.
+      if (p.hasProductFields) {
+        productCode = _knownProduct(p.productCode);
+        hwRev = _knownHwRev(p.hwRev);
+        fwVersion = _knownFw(p.fwVersion) ?? fwVersion;
+      }
     }
     // Spec §13.4: an OTA_RESULT's VERSION is what the unit runs NOW — the
     // new image, or the old one after a rollback. A leaf says its name only

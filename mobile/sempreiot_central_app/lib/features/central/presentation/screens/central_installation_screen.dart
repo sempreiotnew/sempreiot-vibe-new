@@ -15,7 +15,6 @@ import '../../application/central_installation_provider.dart';
 import '../../application/credentials_admin_provider.dart';
 import '../../application/device_labels_provider.dart';
 import '../../application/safr_downlink_provider.dart';
-import '../../domain/safr/safr_identity.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
 import '../../application/topology_provider.dart';
 import '../widgets/device_detail_widgets.dart';
@@ -158,7 +157,8 @@ class _CentralInstallationScreenState
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
-            child: Text(why, style: TextStyle(color: ctx.textSecondary, fontSize: 13)),
+            child: Text(why,
+                style: TextStyle(color: ctx.textSecondary, fontSize: 13)),
           ),
           SimpleDialogOption(
             onPressed: () => Navigator.pop(ctx, 'scan'),
@@ -175,7 +175,8 @@ class _CentralInstallationScreenState
     if (choice == 'scan') {
       final raw = await Navigator.of(context).push<String>(
         MaterialPageRoute<String>(
-          builder: (_) => const QrScannerScreen(hint: 'Aponte para a etiqueta da PLACA'),
+          builder: (_) =>
+              const QrScannerScreen(hint: 'Aponte para a etiqueta da PLACA'),
         ),
       );
       if (raw == null) return null;
@@ -201,18 +202,24 @@ class _CentralInstallationScreenState
             TextField(
               controller: idCtrl,
               autofocus: true,
-              decoration: const InputDecoration(labelText: 'id', hintText: 'ex.: dev-1a2b3c4d'),
+              decoration: const InputDecoration(
+                  labelText: 'id', hintText: 'ex.: dev-1a2b3c4d'),
             ),
             TextField(
               controller: popCtrl,
-              decoration: const InputDecoration(labelText: 'pop', hintText: '16+ caracteres'),
+              decoration: const InputDecoration(
+                  labelText: 'pop', hintText: '16+ caracteres'),
               onSubmitted: (_) => Navigator.pop(ctx, true),
             ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Continuar')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Continuar')),
         ],
       ),
     );
@@ -230,13 +237,16 @@ class _CentralInstallationScreenState
         'Digite (ou escaneie) o id e o pop impressos na placa.');
     if (sticker == null || !mounted) return;
     final messenger = ScaffoldMessenger.of(context);
-    final key = ProvisioningCrypto.deriveSetupKey(id: sticker.id, pop: sticker.pop);
-    messenger.showSnackBar(const SnackBar(content: Text('Pedindo o código à placa…')));
+    final key =
+        ProvisioningCrypto.deriveSetupKey(id: sticker.id, pop: sticker.pop);
+    messenger.showSnackBar(
+        const SnackBar(content: Text('Pedindo o código à placa…')));
     final code = await ref.read(safrDownlinkProvider).sendGetCode(key);
     if (!mounted) return;
     if (code == null) {
       messenger.showSnackBar(const SnackBar(
-        content: Text('A placa não respondeu. Confira o cabo da placa, o pop da etiqueta '
+        content: Text(
+            'A placa não respondeu. Confira o cabo da placa, o pop da etiqueta '
             'e se a placa já foi configurada (LED magenta).'),
         backgroundColor: AppColors.error,
         duration: Duration(seconds: 8),
@@ -245,81 +255,85 @@ class _CentralInstallationScreenState
     }
     final installation = Installation(
       localId: InstallationGenerator.newLocalId(),
-      displayName: code.name.isNotEmpty ? code.name : 'Instalação ${code.systemId}',
+      displayName:
+          code.name.isNotEmpty ? code.name : 'Instalação ${code.systemId}',
       systemId: code.systemId,
       netSsid: code.netSsid,
       netPsk: code.netPsk,
-      safrPskHex: code.safrPsk.map((b) => b.toRadixString(16).padLeft(2, '0')).join(),
+      safrPskHex:
+          code.safrPsk.map((b) => b.toRadixString(16).padLeft(2, '0')).join(),
       channel: code.channel,
       meshId: code.meshId,
       addresses: const [],
       createdAt: DateTime.now().toUtc(),
     );
     await ref.read(centralInstallationProvider.notifier).adopt(installation);
-    await _audit('installation_from_board', {'system_id': code.systemId, 'name': code.name});
+    await _audit('installation_from_board',
+        {'system_id': code.systemId, 'name': code.name});
     messenger.showSnackBar(SnackBar(
-      content: Text('Código lido da placa: "${installation.displayName}" vinculada.'),
+      content: Text(
+          'Código lido da placa: "${installation.displayName}" vinculada.'),
     ));
   }
 
-  /// Lifecycle §5 B (Case B): this tablet creates the code and writes it
-  /// into a board that has none.
-  Future<void> _createOnBoard() async {
+  /// Lifecycle §5 B (Case B): this central creates the code. Nothing goes
+  /// over the cable: the code is stored here, the QR is shown at once, and
+  /// the installer's phone provisions the board like any other unit from
+  /// that QR (sticker → setup network → /provision). The previous
+  /// installation's units are forgotten by the adopt.
+  Future<void> _create() async {
     final nameCtrl = TextEditingController();
     final name = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: ctx.surfaceColor,
-        title: const Text('Criar instalação nesta central'),
-        content: TextField(
-          controller: nameCtrl,
-          autofocus: true,
-          maxLength: 32,
-          decoration: const InputDecoration(labelText: 'Nome da instalação'),
-          onSubmitted: (v) => Navigator.pop(ctx, v),
+        title: const Text('Criar instalação'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameCtrl,
+              autofocus: true,
+              maxLength: 32,
+              decoration:
+                  const InputDecoration(labelText: 'Nome da instalação'),
+              onSubmitted: (v) => Navigator.pop(ctx, v),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Esta central gera o código da instalação e mostra o QR. '
+              'Com ele, o app do instalador configura a placa e cada '
+              'dispositivo. Os dispositivos da instalação anterior são '
+              'apagados desta central.',
+              style: TextStyle(color: ctx.textSecondary, fontSize: 13),
+            ),
+          ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, nameCtrl.text), child: const Text('Continuar')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, nameCtrl.text),
+              child: const Text('Criar')),
         ],
       ),
     );
     if (name == null || name.trim().isEmpty || !mounted) return;
-    final sticker = await _askBoardSticker(
-        'A placa deve estar em modo de instalação (LED branco piscando) e '
-        'ligada a esta central. Digite (ou escaneie) o id e o pop da etiqueta dela.');
-    if (sticker == null || !mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
-    final installation = InstallationGenerator.generate(displayName: name.trim());
-    final key = ProvisioningCrypto.deriveSetupKey(id: sticker.id, pop: sticker.pop);
-    final code = SafrInstallationCode(
-      systemId: installation.systemId,
-      channel: installation.channel,
-      meshId: installation.meshId,
-      netSsid: installation.netSsid,
-      netPsk: installation.netPsk,
-      safrPsk: SafrIdentity.keyFromHex(installation.safrPskHex)!,
-      name: installation.displayName,
-    );
-    messenger.showSnackBar(const SnackBar(content: Text('Gravando o código na placa…')));
-    final boardMac = sticker.mac.isNotEmpty ? sticker.mac : 'FF:FF:FF:FF:FF:FF';
-    final r = await ref.read(safrDownlinkProvider).sendSetInstallation(key, code, boardMac);
-    if (!mounted) return;
-    if (!r.ok) {
-      messenger.showSnackBar(SnackBar(
-        content: Text('A placa não aceitou: ${r.message}'),
-        backgroundColor: AppColors.error,
-        duration: const Duration(seconds: 8),
-      ));
-      return;
-    }
+    final installation =
+        InstallationGenerator.generate(displayName: name.trim());
     await ref.read(centralInstallationProvider.notifier).adopt(installation);
-    await _audit('installation_create_case_b', {'system_id': installation.systemId, 'name': installation.displayName});
-    messenger.showSnackBar(SnackBar(
-      content: Text('Placa configurada. "${installation.displayName}" criada; ela reinicia agora. '
-          'Toque em "Compartilhar" para passar o código aos instaladores.'),
-      duration: const Duration(seconds: 8),
+    await _audit('installation_create_case_b', {
+      'system_id': installation.systemId,
+      'name': installation.displayName,
+    });
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('"${installation.displayName}" criada. Defina uma senha '
+          'para o QR e escaneie-o no app do instalador.'),
+      duration: const Duration(seconds: 6),
     ));
+    await _share(installation);
   }
 
   void _openDevices() {
@@ -381,7 +395,9 @@ class _CentralInstallationScreenState
         title: const Text('Desvincular instalação?'),
         content: const Text(
             'A central volta à identidade de bancada e deixa de aceitar os '
-            'quadros desta instalação até vincular de novo.'),
+            'quadros desta instalação até vincular de novo. Todos os '
+            'dispositivos, zonas, endereçamentos e eventos desta instalação '
+            'são apagados desta central.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -510,10 +526,11 @@ class _CentralInstallationScreenState
                         const InfoRowDivider(),
                         InfoActionRow(
                           label: 'Criar instalação nesta central',
-                          hint: 'Placa nova (LED branco piscando): esta '
-                              'central gera o código',
+                          hint: 'Esta central gera o código e mostra o QR; '
+                              'o app do instalador configura a placa e os '
+                              'dispositivos com ele',
                           icon: Icons.add_circle_outline_rounded,
-                          onTap: _createOnBoard,
+                          onTap: _create,
                         ),
                       ]),
                       if (installation != null) ...[
@@ -521,7 +538,8 @@ class _CentralInstallationScreenState
                         InfoCard(children: [
                           InfoActionRow(
                             label: 'Desvincular',
-                            hint: 'A central volta à identidade de bancada',
+                            hint: 'Volta à identidade de bancada e apaga os '
+                                'dispositivos desta instalação',
                             icon: Icons.link_off_rounded,
                             destructive: true,
                             onTap: () => _clear(installation),
@@ -554,14 +572,20 @@ class _DevicesSummary extends ConsumerWidget {
         spacing: 20,
         runSpacing: 10,
         children: [
-          _Count(value: active.length, label: 'ativos', color: context.textPrimary),
+          _Count(
+              value: active.length,
+              label: 'ativos',
+              color: context.textPrimary),
           _Count(value: online, label: 'online', color: AppColors.success),
           _Count(
               value: silent,
               label: 'sem comunicação',
               color: silent > 0 ? AppColors.warning : context.textSecondary),
           if (retired > 0)
-            _Count(value: retired, label: 'aposentados', color: context.textSecondary),
+            _Count(
+                value: retired,
+                label: 'aposentados',
+                color: context.textSecondary),
         ],
       ),
     );
@@ -579,7 +603,8 @@ class _Count extends StatelessWidget {
     return Text.rich(TextSpan(children: [
       TextSpan(
           text: '$value ',
-          style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.w700)),
+          style: TextStyle(
+              color: color, fontSize: 18, fontWeight: FontWeight.w700)),
       TextSpan(
           text: label,
           style: TextStyle(color: context.textSecondary, fontSize: 12.5)),
@@ -608,7 +633,8 @@ class _EmptyCard extends StatelessWidget {
               'identidade de bancada e vai rejeitar os quadros da placa '
               'provisionada. Se a placa já foi configurada, toque em '
               '"Ler código da placa" e digite o pop da etiqueta dela. Se a '
-              'placa está nova, "Criar instalação nesta central".',
+              'instalação ainda não existe, "Criar instalação nesta central" '
+              'e configure a placa pelo app do instalador com o QR.',
               style: TextStyle(color: context.textSecondary, fontSize: 13),
             ),
           ),

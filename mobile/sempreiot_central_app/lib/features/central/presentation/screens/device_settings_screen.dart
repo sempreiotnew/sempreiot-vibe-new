@@ -98,8 +98,7 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
 
     // A user's phone viewing a central: the facts, nothing to edit.
     final viewOnly = ref.watch(mirrorViewOnlyProvider);
-    final canManage =
-        !viewOnly && (node.layer > 0 || node.boardState != null);
+    final canManage = !viewOnly && (node.layer > 0 || node.boardState != null);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
@@ -113,24 +112,29 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
             icon: Icons.label_rounded,
             label: 'Nome',
             value: node.name ?? '',
-            trailing:
-                viewOnly ? null : _EditButton(onTap: () => _rename(node)),
+            trailing: viewOnly ? null : _EditButton(onTap: () => _rename(node)),
+          ),
+          const InfoRowDivider(),
+          // Its type (2026-10-29): how the unit lives on the network —
+          // never read from the product code.
+          _Fact(
+            icon: deviceFamilyIcon(node.family),
+            label: 'Tipo',
+            value: node.family.title,
           ),
           const InfoRowDivider(),
           _Fact(
             icon: Icons.account_tree_outlined,
             label: 'Zona',
             value: node.zone ?? '',
-            trailing:
-                viewOnly ? null : _EditButton(onTap: () => _assign(node)),
+            trailing: viewOnly ? null : _EditButton(onTap: () => _assign(node)),
           ),
           const InfoRowDivider(),
           _Fact(
             icon: Icons.place_rounded,
             label: 'Endereçamento',
             value: node.address ?? '',
-            trailing:
-                viewOnly ? null : _EditButton(onTap: () => _assign(node)),
+            trailing: viewOnly ? null : _EditButton(onTap: () => _assign(node)),
           ),
           const InfoRowDivider(),
           _Fact(
@@ -144,7 +148,11 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
           _Fact(
             icon: Icons.inventory_2_outlined,
             label: 'Produto',
-            value: node.productLabel,
+            value: node.productLabel.isEmpty
+                ? 'não informado ainda (chega com o anúncio da unidade)'
+                : node.productLabel,
+            valueColor:
+                node.productLabel.isEmpty ? context.textSecondary : null,
           ),
           if ((node.hwRev ?? 0) > 0) ...[
             const InfoRowDivider(),
@@ -355,7 +363,8 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
             const InfoRowDivider(),
             InfoActionRow(
               label: 'Apagar da placa',
-              hint: 'Reset de fábrica remoto (digite o nome para confirmar)',
+              hint: 'Apaga a unidade e a remove da instalação (digite o '
+                  'nome para confirmar)',
               icon: Icons.delete_forever_outlined,
               destructive: true,
               onTap: () => _decommission(node),
@@ -577,12 +586,25 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
     _show(r.message, r.ok);
   }
 
+  /// "Apagar da placa" (lifecycle §5 G, reworked 2026-10-29). A unit the
+  /// board hears is told to erase itself (`DECOMMISSION`: it resets to setup
+  /// mode) and, once the board has it retired, is removed from the
+  /// installation ([_removeFromInstallation]). A unit that is not talking —
+  /// no signal, or a battery unit that may already have been reset by hand
+  /// and will never wake again — gets the choice: wait for it (the board
+  /// erases it when it speaks) or remove it now. Removing deletes the
+  /// board's record and this tablet's row; the mirror publishes the map
+  /// without it, so every connected phone drops it too.
   Future<void> _decommission(TopologyNode node) async {
     final role = await _gate('apagar este dispositivo da placa');
     if (role == null || !mounted) return;
     final expected = deviceDisplayName(node);
     final ctrl = TextEditingController();
-    final ok = await showDialog<bool>(
+    // A mains unit the board hears right now can be erased on the spot. A
+    // battery unit is only reached on its next wake, if it ever wakes; a
+    // silent unit maybe never.
+    final reachableNow = node.online && !node.isLeaf;
+    final choice = await showDialog<_EraseChoice>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: ctx.surfaceColor,
@@ -593,9 +615,33 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'O dispositivo apaga a própria configuração e volta ao modo de '
-                'instalação (LED branco piscando). Para confirmar, digite '
-                'exatamente: $expected',
+                reachableNow
+                    ? 'O dispositivo apaga a própria configuração, volta ao '
+                        'modo de instalação (LED branco piscando) e sai '
+                        'desta instalação: a placa esquece o registro e as '
+                        'centrais e telefones conectados deixam de mostrá-lo.'
+                    : node.isLeaf && node.online
+                        ? 'Dispositivo a bateria: a placa só o alcança quando '
+                            'ele acordar (até 60 s). Se ele ainda está '
+                            'instalado, "Apagar ao acordar". Se já foi '
+                            'apagado à mão (reset de fábrica) ou retirado, '
+                            'ele nunca mais acorda nesta rede: "Remover '
+                            'agora" apaga o registro da placa e desta '
+                            'central, e os telefones conectados deixam de '
+                            'mostrá-lo.'
+                        : 'Este dispositivo não fala com a rede '
+                            '(${relativeTime(node.lastSeenAt)}). Se ele ainda '
+                            'está instalado, "Apagar quando falar": a placa '
+                            'o apaga assim que ele voltar. Se já foi apagado '
+                            'à mão (reset de fábrica) ou retirado, "Remover '
+                            'agora" apaga o registro da placa e desta '
+                            'central, e os telefones conectados deixam de '
+                            'mostrá-lo.',
+                style: TextStyle(color: ctx.textSecondary, fontSize: 13),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Para confirmar, digite exatamente: $expected',
                 style: TextStyle(color: ctx.textSecondary, fontSize: 13),
               ),
               const SizedBox(height: 12),
@@ -605,29 +651,140 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
+              onPressed: () => Navigator.pop(ctx, _EraseChoice.cancel),
               child: const Text('Cancelar')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
-            onPressed: () => Navigator.pop(ctx, ctrl.text.trim() == expected),
-            child: const Text('Apagar'),
-          ),
+          if (reachableNow)
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+              onPressed: () => Navigator.pop(
+                  ctx,
+                  ctrl.text.trim() == expected
+                      ? _EraseChoice.eraseNow
+                      : _EraseChoice.wrongName),
+              child: const Text('Apagar'),
+            )
+          else ...[
+            OutlinedButton(
+              onPressed: () => Navigator.pop(
+                  ctx,
+                  ctrl.text.trim() == expected
+                      ? _EraseChoice.eraseWhenHeard
+                      : _EraseChoice.wrongName),
+              child: Text(node.isLeaf && node.online
+                  ? 'Apagar ao acordar'
+                  : 'Apagar quando falar'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+              onPressed: () => Navigator.pop(
+                  ctx,
+                  ctrl.text.trim() == expected
+                      ? _EraseChoice.removeNow
+                      : _EraseChoice.wrongName),
+              child: const Text('Remover agora'),
+            ),
+          ],
         ],
       ),
     );
-    if (ok != true) {
-      if (ok == false && ctrl.text.isNotEmpty) {
+    if (!mounted) return;
+    switch (choice) {
+      case null || _EraseChoice.cancel:
+        return;
+      case _EraseChoice.wrongName:
         _show('Nome não confere. Nada foi feito.', false);
-      }
-      return;
+        return;
+      case _EraseChoice.removeNow:
+        await _removeFromInstallation(node, role);
+        return;
+      case _EraseChoice.eraseNow || _EraseChoice.eraseWhenHeard:
+        break;
     }
-    final r = await ref.read(safrDownlinkProvider).sendDecommission(node.mac);
+    final downlink = ref.read(safrDownlinkProvider);
+    final r = await downlink.sendDecommission(node.mac);
     await ref.read(appDatabaseProvider).addAudit(
         role.auditName, 'device_decommission', {'mac': node.mac, 'ok': r.ok});
-    if (r.ok) ref.read(safrDownlinkProvider).sendGetDeviceTable();
-    _show(r.ok ? 'Enviado. A unidade será apagada (ou ao acordar).' : r.message,
-        r.ok);
+    if (!r.ok) {
+      _show(r.message, false);
+      return;
+    }
+    if (choice == _EraseChoice.eraseWhenHeard) {
+      downlink.sendGetDeviceTable();
+      _show(
+          node.isLeaf
+              ? 'Enviado. A placa apaga o dispositivo no próximo despertar; '
+                  'depois, "Esquecer" remove o registro.'
+              : 'Enviado. A placa apaga o dispositivo quando ele voltar a '
+                  'falar; depois, "Esquecer" remove o registro.',
+          true);
+      return;
+    }
+    // The unit erases itself ~300 ms after the relayed command and reboots;
+    // the board already holds it retired. Then it leaves the installation.
+    // If the command never reached it, it keeps the code and comes back as
+    // a newly discovered unit — visible, so the operator tries again.
+    _show('Enviado. O dispositivo apaga a configuração e sai da instalação…',
+        true);
+    await Future<void>.delayed(const Duration(seconds: 3));
+    if (!mounted) return;
+    await _removeFromInstallation(node, role, retireFirst: false);
   }
+
+  /// Removes [node] from the installation: retires it on the board (unless
+  /// [retireFirst] is false because it already is), deletes its record
+  /// there (`FORGET_DEVICE`) and this tablet's row. A row the board never
+  /// held (tablet-only) is just dropped here. The mirror publishes the map
+  /// on the row's disappearance: the connected phones drop it too.
+  Future<void> _removeFromInstallation(TopologyNode node, EditorRole role,
+      {bool retireFirst = true}) async {
+    final downlink = ref.read(safrDownlinkProvider);
+    final db = ref.read(appDatabaseProvider);
+    var boardOk = node.boardState == null;
+    if (!boardOk) {
+      if (retireFirst && !node.retired) {
+        final retire = await downlink.sendRetireDevice(node.mac);
+        if (!retire.ok) {
+          _show(
+              'A placa não aposentou o dispositivo: ${retire.message}', false);
+          return;
+        }
+      }
+      final forget = await downlink.sendForgetDevice(node.mac);
+      boardOk = forget.ok;
+      if (!boardOk) {
+        _show('A placa não removeu o registro: ${forget.message}', false);
+        return;
+      }
+    }
+    await db.addAudit(role.auditName, 'device_remove',
+        {'mac': node.mac, 'board': node.boardState != null});
+    await (db.delete(db.meshDevices)..where((t) => t.mac.equals(node.mac)))
+        .go();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text('${deviceDisplayName(node)} removido da instalação.'),
+        behavior: SnackBarBehavior.floating,
+      ));
+    Navigator.pop(context);
+  }
+}
+
+/// What the operator chose on "Apagar da placa?".
+enum _EraseChoice {
+  cancel,
+  wrongName,
+
+  /// A mains unit the board hears: erase it now, then remove it.
+  eraseNow,
+
+  /// Not reachable now: the board erases it when it speaks (pending).
+  eraseWhenHeard,
+
+  /// It will never speak again (reset by hand, taken away): remove the
+  /// record from the board and this central now.
+  removeNow,
 }
 
 // ── Pieces ───────────────────────────────────────────────────────────────────

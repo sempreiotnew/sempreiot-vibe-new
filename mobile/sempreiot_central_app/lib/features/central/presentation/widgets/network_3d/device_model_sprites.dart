@@ -16,6 +16,7 @@ class DeviceModelSpec {
     required this.slug,
     required this.productCodes,
     required this.familyFallback,
+    required this.central,
     required this.atlas,
     required this.spin,
     required this.glow,
@@ -34,6 +35,10 @@ class DeviceModelSpec {
   /// Also drawn for a unit of this family whose product has no model of its
   /// own or is not reported; null = only [productCodes].
   final SafrProductFamily? familyFallback;
+
+  /// The CENTRAL's own model (the tablet, on the Rede maps' hub) — not a
+  /// product; [deviceModelFor] never returns it.
+  final bool central;
 
   /// Every turn × tilt of a map camera (rendered by the factory; not
   /// drawn since the Rede 3D view was removed, 2026-10-14).
@@ -55,6 +60,14 @@ class DeviceModelSpec {
 
   /// In ALARME it rings: sound waves come out of its sides.
   final bool alarmSound;
+}
+
+/// The model that draws the CENTRAL (the tablet); null = the blue disc.
+DeviceModelSpec? get deviceCentralModel {
+  for (final s in deviceModelSpecs) {
+    if (s.central) return s;
+  }
+  return null;
 }
 
 /// Which model draws a unit: its product's own model, else its family's

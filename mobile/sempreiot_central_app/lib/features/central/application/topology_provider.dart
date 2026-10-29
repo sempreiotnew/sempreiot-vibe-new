@@ -139,6 +139,16 @@ class TopologyNode {
 
   bool get isLeaf => role == SafrNodeRole.leaf;
 
+  /// Its type — Central / Dispositivo AC / Dispositivo Bateria — from how
+  /// it lives on the network (the board at layer 0, a leaf by its role,
+  /// everything else mains), never from the product code: a product may run
+  /// as the other type (a push-button station on batteries, 2026-10-29).
+  SafrProductFamily get family => layer == 0
+      ? SafrProductFamily.board
+      : isLeaf
+          ? SafrProductFamily.leaf
+          : SafrProductFamily.node;
+
   /// A leaf is awake for the moments after a frame (a press, a wake) and the
   /// whole time an alarm is latched — it stays up until the RESET (§12.6).
   bool get awake =>
@@ -181,6 +191,11 @@ const topologyStaleAfter = Duration(minutes: 10);
 const leafHeartbeatInterval = Duration(seconds: 60);
 const leafAwakeWindow = Duration(seconds: 3);
 const leafWeakLinkDbm = -85;
+
+/// "zona #3" for an id whose name this tablet does not hold yet; null for
+/// none (0 / never reported).
+String? _labelIdText(String kind, int? id) =>
+    id == null || id == 0 ? null : '$kind #$id';
 
 List<({String mac, int rssi})> _decodeCandidates(String? json) {
   if (json == null || json.isEmpty) return const [];
@@ -249,8 +264,13 @@ final topologyProvider = Provider<List<TopologyNode>>((ref) {
         alarmLatched: s.device.alarmLatched == 1,
         alarmLatchedAt: s.device.alarmLatchedAt,
         name: s.device.name,
-        zone: labels.name(SafrLabelKind.zone, s.device.zoneId),
-        address: labels.name(SafrLabelKind.address, s.device.addressId),
+        // The name behind the board's id; the id itself while the label
+        // table has not reached this tablet yet (never "—" for a unit that
+        // has one).
+        zone: labels.name(SafrLabelKind.zone, s.device.zoneId) ??
+            _labelIdText('zona', s.device.zoneId),
+        address: labels.name(SafrLabelKind.address, s.device.addressId) ??
+            _labelIdText('endereçamento', s.device.addressId),
         zoneId: s.device.zoneId,
         addressId: s.device.addressId,
         boardState: s.device.boardState == null

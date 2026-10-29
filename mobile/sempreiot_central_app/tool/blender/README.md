@@ -107,7 +107,7 @@ In the 3D Viewport press **N** → tab **SempreIoT**:
 | Field | What to put |
 |---|---|
 | *Exports collection* | the active collection — click your model's collection in the Outliner first |
-| **Product** | pick it from the list (read live from §2.1). If it already has a model, that model's settings load |
+| **Product** | pick it from the list (read live from §2.1). If it already has a model, that model's settings load. The last entry, **CENTRAL (the tablet)**, is the central itself — not a product: its model is drawn on the Rede maps' hub with the board's LED on it |
 | **Slug** | file name, lower_snake_case — proposed from the model string (`SIOT-PBS-01` → `pbs`); rename if you like (`push_button`) |
 | **Also for** | normally *This product only*. *Every leaf/node without a model* makes it the stand-in for units of that family that have no model of their own (today the smoke detector is the leaf stand-in) |
 | **Hide in sprites** | object name patterns left out of the renders, comma separated: `Wire_*, Tip_*` |
@@ -255,6 +255,7 @@ Where the model sits does not matter: the factory frames the bounding box of the
       "glb": "assets/models/siren.glb",      // required
       "products": ["SIOT-SIREN-01"],         // model strings from §2.1 (one or more)
       "familyFallback": "leaf",              // optional: "leaf" | "node" | "board"
+      "central": true,                       // instead of products: the CENTRAL's tablet (one model at most)
       "scale": 1.0,                          // optional, default 1.0 — only to nudge a model that still looks off
       "orthoScale": 0.125,                   // optional: fixed frame size in metres instead of largest side / bodyFraction
       "hide": ["SIREN_Wire_*"],              // optional: object name patterns (fnmatch) left out of the renders
@@ -286,6 +287,7 @@ The factory stops with `[factory] ERROR: …` before rendering anything when:
 | `product 'X' is not in §2.1. Known: …` | typo, or the product is new → [step 0](#step-0--is-the-product-in-the-catalogue) |
 | `X (0x…) is in §2.1 but not in SafrProduct.catalogue — add it there first` | add it to `safr_product.dart` with the same code |
 | `X is mapped to both 'a' and 'b'` | a product has one model; remove it from one entry |
+| `'central' on both 'a' and 'b'` / `a central model takes no products` | one tablet model, with neither `products` nor `familyFallback` |
 | `familyFallback 'leaf' on both 'a' and 'b'` | one stand-in per family |
 | `slug 'X': lower_snake_case only` / `slug 'X' twice` | rename |
 | `<slug>: assets/models/<slug>.glb not found` | export first, or fix `glb` |
@@ -353,6 +355,7 @@ move is a few seconds. Images are ~5 MB per model in the app.
 | battery smoke detector `0x0301` | smoke detector model |
 | battery heat detector `0x0302`, a leaf with no product reported | smoke detector (leaf fallback) |
 | I/O module, repeater, AC smoke, bench units, board | sphere / circle |
+| the CENTRAL (hub of the Rede maps) | tablet model (`central: true`), the board's LED on its camera; the blue disc while the board is not heard or a push runs |
 
 Where the model is drawn:
 

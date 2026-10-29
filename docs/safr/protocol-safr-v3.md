@@ -251,6 +251,15 @@ The CRC also gives plaintext debug frames (F_ENC = 0) integrity.
 - **Replay protection:** the central stores the last seen `(BOOT_CTR, MSG_CTR)`
   per SRC_MAC. A frame with a lower or equal counter pair from the same boot
   must be treated as a replay (log diagnostic, do not update device state).
+  *(2026-10-29)* A SRC_MAC silent for **10 min** is forgotten by every replay
+  table (board, nodes, tablet: `SAFR_REPLAY_FORGET_MS`, `replayForget`): its
+  next frame is a new life whatever its counters say. And `BOOT_CTR` is kept
+  in its own NVS namespace (`siot_sys`) that no factory reset, remote erase
+  or re-provisioning touches, so it never restarts on a live MAC. Both were
+  learned on the bench: a reflashed unit restarted at `BOOT_CTR` 2, every
+  receiver still held its previous life's `(2, n)`, and the first frames of
+  the new life — a leaf's TOPOLOGY, NAME_ANNOUNCE and verdict — were
+  dropped as replays (lifecycle §5 L).
 
 ### 4.1 Plaintext frames are rejected in production
 
@@ -1077,8 +1086,11 @@ provisioning, a button press, and the COMM_FAULT chirp (§12.8).
   with link ≥ **−85 dBm**; if none reaches it, bind to the best anyway (a weak
   parent beats none) — the leaf's `TOPOLOGY` (§12.7) exposes the weakness to the
   tablet.
-- **After a bind:** `NAME_ANNOUNCE` (only once ever after provisioning, RTC
-  flag; §7.11), `TOPOLOGY` (§12.7), then the first `HEARTBEAT`.
+- **After a bind:** `NAME_ANNOUNCE` (once after provisioning, RTC flag; §7.11
+  — *and again every 10th wake since 2026-10-29, ~10 min, one frame: the one
+  announce could be lost between the parent and the board and nothing would
+  ever tell the tablet the unit's name, endereçamento and product*),
+  `TOPOLOGY` (§12.7), then the first `HEARTBEAT`.
 - **Re-probe at once** *(2026-10-03)*: when a unicast to the parent gets **no
   MAC ACK** (two sends — the parent is off or out of reach), the leaf probes
   on that same wake (once per wake), binds to the best answer and sends the
@@ -1270,9 +1282,12 @@ are always awake to answer a leaf's probe.
   contact: 3 probe copies, §12.3) → sleep at `HB_INTERVAL`. Not bound after
   the verdict → a discovery on every one of the next wakes (§12.3 first
   contact), so the leaf joins within a minute of a node being in reach.
-- `NAME_ANNOUNCE` once after provisioning with `ROLE = 2` (§7.11). From that
-  frame (or the first `TOPOLOGY`) the board knows the role and applies the
-  3 × 60 s = 180 s missing rule (§9.2).
+- `NAME_ANNOUNCE` after provisioning with `ROLE = 2` (§7.11); then
+  **TOPOLOGY + NAME_ANNOUNCE again on each of the next 3 bound wakes** and
+  NAME_ANNOUNCE every 10th wake after that (2026-10-29: the verdict's frames
+  can be lost or dropped, and nothing else ever carries the name,
+  endereçamento and product). From that frame (or the first `TOPOLOGY`) the
+  board knows the role and applies the 3 × 60 s = 180 s missing rule (§9.2).
 
 ### 12.10 Numbers
 

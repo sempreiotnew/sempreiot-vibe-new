@@ -223,7 +223,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
       Map<String, Rect> where() => {
-            for (final t in ['COMANDOS', 'Abrir dispositivo', 'FIRMWARE'])
+            for (final t in ['COMANDOS', 'Abrir dispositivo', 'TIPO'])
               t: tester.getRect(find.text(t)),
           };
       final placed = where();

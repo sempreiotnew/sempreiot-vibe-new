@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../central/domain/safr/safr_product.dart';
 import '../../installation/application/installation_provider.dart';
 import '../../installation/domain/entities/installation.dart';
 import '../data/services/device_ap_service.dart';
@@ -16,6 +17,7 @@ class ProvisioningWizardState {
   final DeviceQrPayload? sticker;
   final DeviceApInfo? deviceInfo;
   final String? deviceName;
+
   /// Endereçamento typed at setup; '' when skipped. Never reaches the unit.
   final String? deviceAddress;
   final String? error;
@@ -23,6 +25,24 @@ class ProvisioningWizardState {
   /// Non-fatal note shown on the result screen (e.g. the board did not take
   /// the `/enroll` hints). The unit itself is provisioned.
   final String? warning;
+
+  /// What the unit is: what it said on `GET /info` once reached, until
+  /// then what its sticker prints. Null when neither names a product this
+  /// app knows.
+  SafrProduct? get product => deviceInfo?.product ?? sticker?.product;
+
+  /// Its type (Central / Dispositivo AC / Dispositivo Bateria): what the
+  /// unit reports on `GET /info` (the image it runs), until then what the
+  /// sticker prints. The product's native family is only the last resort:
+  /// a product may run as the other type (a push-button station on
+  /// batteries), and the type shown must be how this unit lives.
+  SafrProductFamily get productFamily {
+    final said = deviceInfo?.productFamily ?? SafrProductFamily.unknown;
+    if (said != SafrProductFamily.unknown) return said;
+    final printed = sticker?.productFamily ?? SafrProductFamily.unknown;
+    if (printed != SafrProductFamily.unknown) return printed;
+    return product?.family ?? SafrProductFamily.unknown;
+  }
 
   const ProvisioningWizardState({
     this.step = ProvisioningStep.scan,
@@ -200,6 +220,18 @@ class ProvisioningWizardNotifier
         if (!mounted || state.step != ProvisioningStep.connecting) return;
         _infoTimer?.cancel();
         _infoTimer = null;
+        final mismatch = stickerMismatch(state.sticker, info);
+        if (mismatch != null) {
+          // The unit is authoritative: a sticker that names another product
+          // is a wrong label, and the wizard must not draw — or enrol — the
+          // wrong device. Nothing is sent.
+          state = state.copyWith(
+            deviceInfo: info,
+            step: ProvisioningStep.stickerMismatch,
+            error: mismatch,
+          );
+          return;
+        }
         state = state.copyWith(
           deviceInfo: info,
           step: ProvisioningStep.identifying,
@@ -228,6 +260,30 @@ class ProvisioningWizardNotifier
 
   String get ssidHint =>
       state.sticker == null ? '' : 'SIOT-SETUP-${state.sticker!.id}';
+
+  /// Why the sticker and the unit disagree, in the installer's words; null
+  /// when they agree or when the sticker names nothing. Only a product the
+  /// unit reports (`product` code, else its model string) can contradict a
+  /// sticker; a type alone is checked against the unit's family.
+  static String? stickerMismatch(DeviceQrPayload? sticker, DeviceApInfo info) {
+    if (sticker == null) return null;
+    final printed = sticker.product;
+    final real = info.product;
+    if (printed != null && real != null && printed != real) {
+      return 'A etiqueta diz ${printed.label} (${printed.model}), mas a '
+          'unidade diz que é ${real.display}. Confira se a etiqueta é desta '
+          'unidade.';
+    }
+    final printedFamily = sticker.productFamily;
+    final realFamily = info.productFamily;
+    if (printedFamily != SafrProductFamily.unknown &&
+        realFamily != SafrProductFamily.unknown &&
+        printedFamily != realFamily) {
+      return 'A etiqueta diz ${printedFamily.title}, mas a unidade é '
+          '${realFamily.title}. Confira se a etiqueta é desta unidade.';
+    }
+    return null;
+  }
 
   // ── Step 4: identify ────────────────────────────────────────────────────
 
@@ -317,7 +373,8 @@ class ProvisioningWizardNotifier
             await DeviceApService.enroll(hints);
             enrolled = true;
           } catch (e) {
-            debugPrint('[Provisioning] /enroll attempt ${attempt + 1} failed: $e');
+            debugPrint(
+                '[Provisioning] /enroll attempt ${attempt + 1} failed: $e');
           }
         }
         if (!enrolled && mounted) {

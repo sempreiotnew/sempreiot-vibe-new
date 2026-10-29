@@ -44,16 +44,61 @@ const alarmRetxGraceMs = 10000;
 /// last ALARM frame (the uptime is whole seconds, plus the frame's trip).
 const rebootSlackMs = 2000;
 
+/// `BREATHE_PERIOD_TICKS` × 50 ms — WHITE_BREATHE: a triangle wave, dark →
+/// [ledBreatheMaxDuty] → dark, over 3 s.
+const ledBreathePeriodMs = 3000;
+
+/// `BREATHE_MAX_DUTY` / 255 — the top of the breathe, ≤ 25 %: visible, not
+/// glaring.
+const ledBreatheMaxDuty = 64 / 255;
+
 /// The steady pattern under the pulses (`pattern_for_state`).
 enum LedBase { off, redSolid, greenFlash, magentaFlash }
 
-/// What the LED shows at one instant: a colour, or dark.
+/// What the LED shows at one instant: a colour, or dark. [intensity] is the
+/// duty, 0..1 (1 = full; the breathe never reaches it).
 class LedLook {
-  const LedLook(this.color);
-  static const dark = LedLook(null);
+  const LedLook(this.color, {this.intensity = 1});
+  static const dark = LedLook(null, intensity: 0);
 
   final LedColor? color;
+  final double intensity;
   bool get lit => color != null;
+}
+
+/// What a unit's LED shows while the phone is on its setup network
+/// (`pattern_for_state`). None of this crosses the wire, so the tablet
+/// never draws it; the provisioning wizard does, because it knows the
+/// state: it is talking to the unit.
+enum LedSetupPattern {
+  /// `SIOT_STATE_SETUP` — the ONLY white blink: 500 ms on / 500 ms off,
+  /// from the moment the unit raises `SIOT-SETUP-<id>` until the code is
+  /// stored. `/identify` and `/provision` change nothing on the LED.
+  whiteBlink,
+
+  /// `SIOT_STATE_JOINING` / `OFFLINE` — configured, finding the network:
+  /// a slow white breathe, never a blink.
+  whiteBreathe,
+}
+
+/// The LED [ms] into a setup pattern (the unit's phase starts "on", as
+/// `pattern_rgb` does: `(phase / BLINK_HALF_TICKS) & 1 == 0`).
+LedLook ledSetupLook(LedSetupPattern pattern, int ms) {
+  switch (pattern) {
+    case LedSetupPattern.whiteBlink:
+      return (ms ~/ ledBlinkHalfMs).isEven
+          ? const LedLook(LedColor.white)
+          : LedLook.dark;
+    case LedSetupPattern.whiteBreathe:
+      // `breathe_duty`: 0 → max → 0 over the period.
+      final t = ms % ledBreathePeriodMs;
+      const half = ledBreathePeriodMs / 2;
+      final up = t < half ? t : ledBreathePeriodMs - t;
+      final duty = up / half * ledBreatheMaxDuty;
+      return duty <= 0
+          ? LedLook.dark
+          : LedLook(LedColor.white, intensity: duty);
+  }
 }
 
 class _Segment {

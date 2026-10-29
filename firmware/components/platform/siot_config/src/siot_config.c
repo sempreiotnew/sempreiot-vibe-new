@@ -8,6 +8,12 @@
 static const char *TAG = "siot_config";
 
 #define NVS_NS_INST "siot_inst"
+/* BOOT_CTR lives apart from the code (2026-10-29): a factory reset, a remote
+ * erase or a reflash erases "siot_inst", and a counter that restarted at 2
+ * collided with the replay tables of every receiver that still held this
+ * MAC's last (BOOT_CTR, MSG_CTR) from before — the first frames of the new
+ * life were dropped as replays (lifecycle §5 L). Here it only ever grows. */
+#define NVS_NS_SYS  "siot_sys"
 
 static siot_installation_t s_code;
 static bool     s_has_code;
@@ -38,27 +44,41 @@ static bool load_code(void)
  * deterministic vectors (brief §8). */
 static esp_err_t bump_boot_ctr(void)
 {
-    nvs_handle_t h;
-    esp_err_t err = open_ns(NVS_READWRITE, &h);
+    nvs_handle_t sys;
+    esp_err_t err = nvs_open(NVS_NS_SYS, NVS_READWRITE, &sys);
     if (err != ESP_OK) return err;
 
     uint16_t ctr = 0;
-    err = nvs_get_u16(h, "boot_ctr", &ctr);
-    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
-        nvs_close(h);
+    err = nvs_get_u16(sys, "boot_ctr", &ctr);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        /* First boot of this firmware: continue from where the old place left
+         * off (a unit updated over the air keeps its counter), else from 0. */
+        nvs_handle_t old;
+        if (open_ns(NVS_READONLY, &old) == ESP_OK) {
+            if (nvs_get_u16(old, "boot_ctr", &ctr) != ESP_OK) ctr = 0;
+            nvs_close(old);
+        }
+        err = ESP_OK;
+    }
+    if (err != ESP_OK) {
+        nvs_close(sys);
         return err;
     }
     ctr = (uint16_t)(ctr + 1);
     if (ctr < 2) ctr = 2;
-    err = nvs_set_u16(h, "boot_ctr", ctr);
-    if (err == ESP_OK) err = nvs_commit(h);
-    if (err == ESP_OK) {
+    err = nvs_set_u16(sys, "boot_ctr", ctr);
+    if (err == ESP_OK) err = nvs_commit(sys);
+    nvs_close(sys);
+    if (err != ESP_OK) return err;
+    s_boot_ctr = ctr;
+
+    nvs_handle_t h;
+    if (open_ns(NVS_READONLY, &h) == ESP_OK) {
         uint16_t seq = 0;
         if (nvs_get_u16(h, "dev_seq", &seq) == ESP_OK) s_dev_seq = seq;
+        nvs_close(h);
     }
-    nvs_close(h);
-    if (err == ESP_OK) s_boot_ctr = ctr;
-    return err;
+    return ESP_OK;
 }
 
 esp_err_t siot_config_init(void)
@@ -157,6 +177,28 @@ uint16_t siot_config_dev_seq_next(void)
     }
     s_dev_seq = next;
     return next;
+}
+
+bool siot_config_root_banned(void)
+{
+    nvs_handle_t h;
+    if (open_ns(NVS_READONLY, &h) != ESP_OK) return false;
+    uint8_t v = 0;
+    const bool banned = nvs_get_u8(h, "root_ban", &v) == ESP_OK && v != 0;
+    nvs_close(h);
+    return banned;
+}
+
+esp_err_t siot_config_set_root_banned(bool banned)
+{
+    nvs_handle_t h;
+    esp_err_t err = open_ns(NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = banned ? nvs_set_u8(h, "root_ban", 1) : nvs_erase_key(h, "root_ban");
+    if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
 }
 
 esp_err_t siot_config_factory_reset(void)

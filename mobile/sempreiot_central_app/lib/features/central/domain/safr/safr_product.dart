@@ -8,21 +8,39 @@ library;
 
 /// The firmware image a product runs (PRODUCT high byte).
 enum SafrProductFamily {
-  board(0x01, 'placa'),
-  node(0x02, 'rede elétrica'),
-  leaf(0x03, 'bateria'),
-  unknown(0x00, '');
+  board(0x01, 'placa', 'Central'),
+  node(0x02, 'rede elétrica', 'Dispositivo AC'),
+  leaf(0x03, 'bateria', 'Dispositivo Bateria'),
+  unknown(0x00, '', '');
 
-  const SafrProductFamily(this.wire, this.label);
+  const SafrProductFamily(this.wire, this.label, this.title);
   final int wire;
 
   /// pt-BR, lower case; empty for [unknown].
   final String label;
 
+  /// The type as the installer sees it (decided 2026-10-29): "Central",
+  /// "Dispositivo AC", "Dispositivo Bateria"; empty for [unknown].
+  final String title;
+
+  /// `board` / `node` / `leaf` — the name on the sticker QR and in
+  /// `GET /info.family` (tools/pinmap/pinmap.yaml).
+  String get wireName => this == SafrProductFamily.unknown ? '' : name;
+
   static SafrProductFamily fromWire(int v) => values.firstWhere(
         (e) => e.wire == v && e != SafrProductFamily.unknown,
         orElse: () => SafrProductFamily.unknown,
       );
+
+  /// From its name (`board`, `node`, `leaf`, any case); [unknown] for
+  /// anything else, null included.
+  static SafrProductFamily fromName(String? name) {
+    final n = name?.trim().toLowerCase();
+    return values.firstWhere(
+      (e) => e != SafrProductFamily.unknown && e.name == n,
+      orElse: () => SafrProductFamily.unknown,
+    );
+  }
 
   /// Family of a PRODUCT code (its high byte).
   static SafrProductFamily ofCode(int code) => fromWire((code >> 8) & 0xFF);
@@ -99,8 +117,7 @@ class SafrProduct {
     SafrProduct._(0x0204, 'SIOT-REPEATER-01', 'Repetidor'),
     SafrProduct._(
         0x0205, 'SIOT-SMOKE-AC-01', 'Detector de fumaça (rede elétrica)'),
-    SafrProduct._(
-        0x02FF, 'SIOT-NODE-01', 'Unidade de bancada (rede elétrica)'),
+    SafrProduct._(0x02FF, 'SIOT-NODE-01', 'Unidade de bancada (rede elétrica)'),
     SafrProduct._(0x0301, 'SIOT-SMOKE-01', 'Detector de fumaça (bateria)'),
     SafrProduct._(0x0302, 'SIOT-HEAT-01', 'Detector de temperatura (bateria)'),
     SafrProduct._(0x03FF, 'SIOT-LEAF-01', 'Unidade de bancada (bateria)'),

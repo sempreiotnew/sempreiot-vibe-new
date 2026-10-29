@@ -66,10 +66,14 @@ def product_items(self, context):
     rows = catalogue(repo_root(context))
     _items = [(model, f"0x{code:04X} {model}", f"{name} ({fam})") for model, code, fam, name in rows] \
         or [("NONE", "— catalogue not found —", "Save the .blend inside the repository or set the repository folder")]
+    if rows:
+        _items.append(("CENTRAL", "CENTRAL (the tablet)", "The central's tablet, drawn on the Rede maps' hub — not a product"))
     return _items
 
 
 def default_slug(model):
+    if model == "CENTRAL":
+        return "tablet"
     core = re.sub(r"^SIOT-|-\d+$", "", model or "")
     return core.lower().replace("-", "_")
 
@@ -83,7 +87,7 @@ def on_product(self, context):
     entry = None
     if path and os.path.exists(path):
         man = json.load(open(path, encoding="utf-8"))
-        entry = next((m for m in man["models"] if self.product in m.get("products", [])), None)
+        entry = next((m for m in man["models"] if (m.get("central") if self.product == "CENTRAL" else self.product in m.get("products", []))), None)
     if entry:
         self["slug"] = entry["slug"]
         self["slug_edited"] = False
@@ -236,12 +240,21 @@ class SIOT_OT_export(bpy.types.Operator):
             entry = {"slug": slug}
             man["models"].append(entry)
         entry["glb"] = glb_rel
-        prods = [p for p in entry.get("products", []) if p != st.product]
-        entry["products"] = [st.product] + prods
-        for other in man["models"]:  # one model per product
-            if other is not entry and st.product in other.get("products", []):
-                other["products"].remove(st.product)
-        if st.family_fallback == "none":
+        if st.product == "CENTRAL":
+            entry["central"] = True
+            entry.pop("products", None)
+            entry.pop("familyFallback", None)
+            for other in man["models"]:  # one central model
+                if other is not entry:
+                    other.pop("central", None)
+        else:
+            entry.pop("central", None)
+            prods = [p for p in entry.get("products", []) if p != st.product]
+            entry["products"] = [st.product] + prods
+            for other in man["models"]:  # one model per product
+                if other is not entry and st.product in other.get("products", []):
+                    other["products"].remove(st.product)
+        if st.product == "CENTRAL" or st.family_fallback == "none":
             entry.pop("familyFallback", None)
         else:
             for other in man["models"]:

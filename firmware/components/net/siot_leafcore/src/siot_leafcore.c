@@ -43,7 +43,9 @@ static const char *TAG = "siot_leaf";
 #define ESPNOW_TYPE        0xD2      /* same prefix as siot_survey: Mesh-Lite routes on it */
 #define RX_QUEUE_LEN       8
 #define SEND_WAIT_MS       50        /* MAC-layer ACK arrives well under 10 ms */
-#define RTC_MAGIC          0x4C454146u /* "LEAF" */
+#define RTC_MAGIC          0x4C454147u /* "LEAG": layout changed 2026-10-29 (announce_left) */
+#define LEAF_REANNOUNCE_WAKES 10u /* NAME_ANNOUNCE again every 10th wake (§12.9 insurance) */
+#define LEAF_ANNOUNCE_WAKES    3u /* TOPOLOGY + NAME_ANNOUNCE on this many bound wakes after provisioning */
 #define HB_INTERVAL_MS     ((uint32_t)CONFIG_SIOT_LEAF_HB_INTERVAL_S * 1000u)
 #define SURVEY_COPIES      4
 #define SURVEY_SPACING_MS  1200
@@ -68,7 +70,8 @@ typedef struct {
     int8_t   parent_link;       /* dBm, the weaker direction at bind time */
     uint8_t  channel;
     uint8_t  misses;
-    bool     announced;         /* NAME_ANNOUNCE sent once after provisioning (§12.9) */
+    bool     announced;         /* NAME_ANNOUNCE sent since provisioning / the last image change (§12.9) */
+    uint8_t  announce_left;     /* bound wakes that still repeat TOPOLOGY + NAME_ANNOUNCE (§12.9, 2026-10-29) */
     bool     verdict_pending;   /* first wake with a code: show the §12.8 verdict */
     bool     no_path;           /* last ACK said NO_PATH */
     bool     heard_any;         /* last probe got offers (none online) → probe every wake */
@@ -210,6 +213,7 @@ static void rtc_reset(void)
     s_rtc.parent_layer = 0xFF;
     s_rtc.parent_link = (int8_t)SAFR_NA_RSSI;
     s_rtc.verdict_pending = true;
+    s_rtc.announce_left = LEAF_ANNOUNCE_WAKES;
     /* No RTC state to continue from (power-on): start away from the ids the
      * previous life may have used in the last 30 s. */
     s_rtc.msg_id = (uint16_t)(siot_config_boot_ctr() << 4);
@@ -1039,6 +1043,19 @@ static void one_wake(esp_sleep_wakeup_cause_t cause)
     }
     if (heard) {
         if (s_ota.report_if_due) s_ota.report_if_due();
+        /* Insurance (2026-10-29): the one announce after provisioning can be lost
+         * between the parent and the board (relay, board busy) and nothing would
+         * ever tell the tablet this unit's name, endereçamento and product — so
+         * it is repeated every LEAF_REANNOUNCE_WAKES wakes (~10 min, one frame). */
+        if (s_rtc.wake_count % LEAF_REANNOUNCE_WAKES == 0) s_rtc.announced = false;
+        /* The first bound wakes after provisioning say it all again (§12.9,
+         * 2026-10-29): the verdict's frames can be dropped as replays by a
+         * receiver that still remembers this MAC's previous life. */
+        if (s_rtc.announce_left > 0) {
+            s_rtc.announce_left--;
+            emit_topology();
+            s_rtc.announced = false;
+        }
         if (!s_rtc.announced && emit_name_announce()) s_rtc.announced = true; /* first wake of another image */
         if (s_ack_last.has_offer && s_ota.on_offer) {
             const bool installed = s_ota.on_offer(s_ack_last.offer_msg_id, &s_ack_last.offer,

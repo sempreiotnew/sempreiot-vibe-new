@@ -14,7 +14,7 @@ _2026-09-14. This is the authoritative step-by-step for installation, network fo
 | **Battery detector** | A detector powered from batteries. Sleeps. Talks by ESP-NOW to one AC device. Never root, never relay. |
 | **Root** | The AC device currently connected directly to the board's access point. Chosen automatically by Mesh-Lite; replaced automatically when it dies. |
 | **The code** (installation bundle) | `SYSTEM_ID` (16-bit, ≠ 0), `NET_SSID = "SIOT-<SYSTEM_ID hex>"`, `NET_PSK` (16 random chars), `SAFR_PSK` (16 random bytes), `CHANNEL` (1/6/11), `MESH_LITE_ID` (derived). Every unit of one installation — board included — holds the same code. |
-| **Sticker** | Factory QR on every unit, board included: `{id, mac, pop}`; `pop` is a per-unit 16+ char secret also burned in NVS. |
+| **Sticker** | Factory QR on every unit, board included: `{id, mac, pop, model, family}` (`model` = the product, `family` = its type board / node / leaf — since 2026-10-29, so the app shows the unit's picture and type before joining it); `pop` is a per-unit 16+ char secret also burned in NVS. |
 | **Installer app / viewer app** | The same Flutter app on a phone. "Installer" functions (create installation, provision units) work **offline**. "Viewer" functions need internet. |
 | **Setup network** | The Wi-Fi access point `SIOT-SETUP-<id>` a unit raises while unprovisioned; WPA2 password = its `pop`. |
 
@@ -37,7 +37,7 @@ _2026-09-14. This is the authoritative step-by-step for installation, network fo
 
 ## 2. Factory state of every unit (board included)
 
-- NVS: `id`, `pop`, no code. Sticker printed with `{id, mac, pop}` plus a peel-off duplicate.
+- NVS: `id`, `pop`, `model`, no code. Sticker printed with `{id, mac, pop, model, family}` plus a peel-off duplicate.
 - On power-up with no code, or after a 5 s button hold (factory reset — already implemented in `pocs/patinha`): **setup mode** for 10 minutes — LED white blink — raising the setup network `SIOT-SETUP-<id>` with WPA2 password `pop`. Battery units stop after **2 minutes without a provisioning request or a phone joining** (2026-09-28, protocol §12.9; was 10; a phone merely associated does not count) and in any case **10 minutes after boot**, then deep sleep with the button as the **only** wake source — a short press opens another window; AC units keep it up.
 - LED language everywhere (proposal, colours not final): **white blink** = waiting for setup (also after a factory reset; the only white blink) · **white solid** = factory-reset armed (button held ≥ 5 s) · **white breathe** (slow dim fade) = configured, no path to the board yet (decided 2026-09-24; the hard white blink stays setup-only) · **green solid 3 s** = installed · **red** = fault · **blue short blink** = test button pressed (as in `patinha`) · survey mode (`installation-lifecycle-v1.md` §6, unit provisioned but no path to the board): passive unit **1 s green / yellow / red solid** = how well it heard the probe (≥ −75 / ≥ −85 / below dBm) · pressed unit goes **dark = locked** for ~5 s and blinks **once per answering unit** in that link's colour, **one red blink** = nobody; breathe back = unlocked. **Leafs** (protocol §12.8): no LED at all while asleep, no white breathe; a press gives an **immediate blue blink** instead of the dark period, and after provisioning the unit does by itself what a press does — the walk test: blue → **cyan** (the panel confirmed) or **one red blink**; with no path to the board, the survey blinks (amended 2026-09-29: cyan is the one "confirmed" colour, no green verdict on a leaf).
 
@@ -61,8 +61,8 @@ Order inside A2/A3 does not matter; the board can be provisioned first or last.
 
 | Step | Who / where | Action | What happens inside |
 |---|---|---|---|
-| B1 | Installer, tablet | Mount the board, plug USB, power. Tablet: "New installation" → name it → scan or type the **board's sticker** (`id`, `pop`). | Tablet generates the code and sends it to the board over USB (`SET_INSTALLATION` on the setup channel: SYSTEM_ID `0x0000`, key derived from the board's `pop` — protocol §3.1/§7.6). Board stores it, ACKs, reboots and raises `NET_SSID`. |
-| B2 | Installer, tablet + phone | Tablet shows the **encrypted** installation QR (passphrase) on its screen; the phone scans it and types the passphrase. | Phone now holds the code (no internet, no tablet camera needed). Same QR is how a second installer or a replacement tablet gets the code. |
+| B1 | Installer, tablet | Tablet: "Criar instalação nesta central" → name it. | Tablet generates the code, stores it, forgets the units of any installation it held before (lifecycle §5 N) and shows the **encrypted** installation QR (passphrase) at once. Nothing goes over USB. *(Until 2026-10-29 this step also asked for the board sticker and armed the board with `SET_INSTALLATION`; the message stays in the protocol, no tablet screen sends it.)* |
+| B2 | Installer, tablet + phone | The phone scans the tablet's QR and types the passphrase. Then the installer provisions the **board** from the phone like any unit (A3: sticker → setup network → `/provision`). | Phone now holds the code (no internet, no tablet camera needed). Same QR is how a second installer or a replacement tablet gets the code. The board stores the code, reboots and raises `NET_SSID`. |
 | B3 | Installer, each unit | As A2 (scan, name, zone, confirm). | As A2, except the unit finds the network immediately and goes to `online`; the tablet shows it green **with its name** within seconds (AC device) or on its next wake (battery detector). The unit's first HEARTBEAT carries its name so the board needs no separate list. |
 | B4 | Installer, tablet | As A5. | — |
 

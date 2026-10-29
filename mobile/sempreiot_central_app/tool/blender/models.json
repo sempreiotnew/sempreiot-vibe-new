@@ -67,6 +67,21 @@
           "normal": [0, 0, 1]
         }
       }
+    },
+    {
+      "slug": "tablet",
+      "glb": "assets/models/tablet.glb",
+      "central": true,
+      "alarm": {
+        "lights": [],
+        "sound": false
+      },
+      "markers": {
+        "led": {
+          "point": [-0.0, 0.14235, 0.00365],
+          "normal": [0, 0, 1]
+        }
+      }
     }
   ]
 }

@@ -9,6 +9,7 @@ import '../../../../core/theme/theme_ext.dart';
 import '../../application/device_led_provider.dart';
 import '../../application/topology_provider.dart';
 import '../../domain/led/led_language.dart';
+import '../../domain/safr/safr_product.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
 import 'network_3d/device_model_painter.dart';
 import 'network_3d/device_model_sprites.dart';
@@ -79,10 +80,12 @@ class DeviceAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final k = diameter / 46;
-    final icon = switch (node.role) {
-      SafrNodeRole.root => Icons.power_rounded,
-      SafrNodeRole.node => Icons.cell_tower_rounded,
-      _ => node.sleeping ? Icons.dark_mode_rounded : Icons.sensors_rounded,
+    // The type's icon (2026-10-29): a mains unit is the plug of the AC
+    // network it hangs on, a battery unit the moon it sleeps under.
+    final icon = switch (node.family) {
+      SafrProductFamily.board => Icons.developer_board_rounded,
+      SafrProductFamily.leaf => Icons.dark_mode_rounded,
+      _ => deviceFamilyIcon(SafrProductFamily.node),
     };
     final ringColor = isRoot
         ? AppColors.warning
@@ -250,9 +253,19 @@ class DeviceModelAvatar extends StatefulWidget {
     this.size = 46,
     this.spin = false,
     this.interactive = false,
+    this.spec,
+    this.placeholder,
   });
 
   final TopologyNode node;
+
+  /// Draw this model instead of the one [deviceModelFor] picks for [node]
+  /// (the CENTRAL: the tablet, with the board as its node for the LED).
+  final DeviceModelSpec? spec;
+
+  /// Shown instead of the [DeviceAvatar] circle while the model loads or
+  /// when there is none (the CENTRAL's blue disc).
+  final Widget? placeholder;
   final bool isRoot;
   final bool isCandidate;
   final double size;
@@ -281,7 +294,7 @@ class _DeviceModelAvatarState extends State<DeviceModelAvatar>
       createTicker((elapsed) => _clock.value = elapsed.inMicroseconds / 1e6);
 
   void _resolve() {
-    final spec =
+    final spec = widget.spec ??
         deviceModelFor(widget.node.productCode, isLeaf: widget.node.isLeaf);
     if (spec?.slug == _spec?.slug && (_future != null || spec == null)) {
       return;
@@ -341,13 +354,14 @@ class _DeviceModelAvatarState extends State<DeviceModelAvatar>
     _syncTicker();
     final Widget shown;
     if (sprites == null) {
-      final circle = DeviceAvatar(
-        key: const ValueKey('model-circle'),
-        node: widget.node,
-        isRoot: widget.isRoot,
-        isCandidate: widget.isCandidate,
-        diameter: widget.size,
-      );
+      final circle = widget.placeholder ??
+          DeviceAvatar(
+            key: const ValueKey('model-circle'),
+            node: widget.node,
+            isRoot: widget.isRoot,
+            isCandidate: widget.isCandidate,
+            diameter: widget.size,
+          );
       // No model for this product: the circle is its picture. A model on
       // its way: the circle a little quieter, with a thin ring turning on
       // its rim — the picture is loading, nothing is wrong.
@@ -460,6 +474,14 @@ class _DeviceModelAvatarState extends State<DeviceModelAvatar>
                   zColor: context.textSecondary,
                 ),
               ),
+            )
+          else if (node.family == SafrProductFamily.node)
+            Positioned(
+              left: -2,
+              top: -2,
+              width: 20 * k,
+              height: 20 * k,
+              child: const DeviceAcBadge(),
             ),
           if (node.alarmLatched) const DeviceAlarmBadge(),
           if (widget.isRoot || widget.isCandidate)
@@ -538,8 +560,38 @@ class _DeviceLedDotState extends ConsumerState<DeviceLedDot>
     } else if (_ticker.isActive) {
       _ticker.stop();
     }
-    final led = _shown == null ? null : ledDisplayColor(_shown!);
-    final size = widget.size;
+    return LedLens(color: _shown, size: widget.size);
+  }
+}
+
+/// The lens itself: dark when [color] is null, the colour with a hot centre
+/// and a glow when lit, dimmed by [intensity] (the breathe). Drawn by
+/// [DeviceLedDot] from the wire, and by the provisioning wizard from the
+/// setup patterns (`ledSetupLook`).
+class LedLens extends StatelessWidget {
+  const LedLens({
+    super.key,
+    required this.color,
+    this.size = 10,
+    this.intensity = 1,
+  });
+
+  final LedColor? color;
+  final double size;
+  final double intensity;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = this.size;
+    final full = color == null ? null : ledDisplayColor(color!);
+    // A low duty on the real LED is a dim lens: the colour towards the dark
+    // lens, the glow fainter.
+    final dark = Color.alphaBlend(
+        Colors.black.withValues(alpha: context.isDark ? 0.35 : 0.55),
+        context.surfaceColor);
+    final led = full == null
+        ? null
+        : Color.lerp(dark, full, intensity.clamp(0.0, 1.0))!;
     return Container(
       width: size,
       height: size,
@@ -550,13 +602,9 @@ class _DeviceLedDotState extends ConsumerState<DeviceLedDot>
             ? null
             : RadialGradient(
                 center: const Alignment(-0.3, -0.3),
-                colors: [Color.lerp(led, Colors.white, 0.55)!, led],
+                colors: [Color.lerp(led, Colors.white, 0.55 * intensity)!, led],
               ),
-        color: led == null
-            ? Color.alphaBlend(
-                Colors.black.withValues(alpha: context.isDark ? 0.35 : 0.55),
-                context.surfaceColor)
-            : null,
+        color: led == null ? dark : null,
         border: Border.all(
           color: led == null
               ? context.borderColor
@@ -567,7 +615,7 @@ class _DeviceLedDotState extends ConsumerState<DeviceLedDot>
             ? null
             : [
                 BoxShadow(
-                  color: led.withValues(alpha: 0.9),
+                  color: full!.withValues(alpha: 0.9 * intensity),
                   blurRadius: size * 0.9,
                   spreadRadius: size * 0.15,
                 ),
@@ -611,6 +659,44 @@ class _Badge extends StatelessWidget {
           fontSize: 7.5,
           fontWeight: FontWeight.w900,
           letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+}
+
+/// The icon of a unit's type (Central / Dispositivo AC / Dispositivo
+/// Bateria), the same wherever a type is named: the board, the plug of the
+/// AC network a mains unit hangs on, the moon a battery unit sleeps under.
+IconData deviceFamilyIcon(SafrProductFamily family) => switch (family) {
+      SafrProductFamily.board => Icons.developer_board_rounded,
+      SafrProductFamily.node => Icons.electrical_services_rounded,
+      SafrProductFamily.leaf => Icons.dark_mode_rounded,
+      SafrProductFamily.unknown => Icons.memory_rounded,
+    };
+
+/// The mains unit's badge where a sleeping leaf shows its moon: the plug
+/// of the AC network (2026-10-29). Same disc, same corner, so every unit
+/// on the map says its type at a glance.
+class DeviceAcBadge extends StatelessWidget {
+  const DeviceAcBadge({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: context.surfaceColor,
+        border: Border.all(color: context.borderColor, width: 0.8),
+      ),
+      child: FittedBox(
+        child: Padding(
+          padding: const EdgeInsets.all(3),
+          child: Icon(
+            deviceFamilyIcon(SafrProductFamily.node),
+            size: 12,
+            color: context.textPrimary,
+          ),
         ),
       ),
     );

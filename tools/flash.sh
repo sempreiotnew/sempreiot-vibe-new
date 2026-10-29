@@ -18,7 +18,9 @@
 #                    Every flash leaves tools/stickers/<id>/sticker.png (the QR the
 #                    installer app scans) next to sticker.bin; the `qrcode[pil]`
 #                    python package is installed into the IDF env on first use.
-#   --model          the product written into the unit's factory identity (reference §2.1:
+#   --model          the product written into the unit's factory identity and, with its type
+#                    (= the image flashed: board / node / leaf, whatever the product's native family),
+#                    (board / node / leaf), onto the sticker QR (reference §2.1:
 #                    SIOT-SIREN-01, SIOT-PBS-01, SIOT-SMOKE-01, …). Default per image:
 #                    board SIOT-BOARD-01, node SIOT-NODE-01, leaf SIOT-LEAF-01. An existing
 #                    sticker whose model differs is re-stamped (same id and pop, new bin/json).
@@ -54,6 +56,11 @@ done
 TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FW_DIR="$TOOLS_DIR/../firmware"
 case "$APP" in board|node|leaf) ;; *) usage ;; esac
+# Default model per image (the generic devkit). Used only for a unit with no sticker yet or a
+# sticker without a model: a sticker that already names a product keeps it unless --model says
+# otherwise (2026-10-29: a reflash without --model used to silently downgrade a SIOT-PBS-01 to the
+# devkit model, and the tablet then drew the wrong unit).
+MODEL_GIVEN="$MODEL"
 if [[ -z "$MODEL" ]]; then case "$APP" in board) MODEL=SIOT-BOARD-01 ;; node) MODEL=SIOT-NODE-01 ;; leaf) MODEL=SIOT-LEAF-01 ;; esac; fi
 case "$FLASH" in 4mb|8mb) ;; *) usage ;; esac
 [[ "$APP" == "node" || "$APP" == "leaf" ]] && FLASH=4mb   # node and leaf images are only ever built for the N4
@@ -99,25 +106,36 @@ if [[ -z "$STICKER_ID" ]]; then
     STICKER_ID="${MAC//:/}"
     if [[ ! -f "$TOOLS_DIR/stickers/$STICKER_ID/sticker.bin" ]]; then
         echo "new unit $MAC: creating identity $STICKER_ID (random pop)"
-        python3 "$TOOLS_DIR/make_sticker.py" --id "$STICKER_ID" --mac "$MAC" --model "$MODEL" --out-dir "$TOOLS_DIR/stickers"
+        python3 "$TOOLS_DIR/make_sticker.py" --id "$STICKER_ID" --mac "$MAC" --model "$MODEL" --family "$APP" --out-dir "$TOOLS_DIR/stickers"
     else
         echo "unit $MAC: reusing identity tools/stickers/$STICKER_ID/"
     fi
 fi
 STICKER_BIN="$TOOLS_DIR/stickers/$STICKER_ID/sticker.bin"
 [[ -f "$STICKER_BIN" ]] || { echo "no $STICKER_BIN — run tools/make_sticker.py --id $STICKER_ID ... or omit the id" >&2; exit 1; }
-# Model on the sticker (reference §2.1): re-stamp an existing unit when it differs, same id + pop.
+# Model and type on the sticker (reference §2.1): the model is kept unless --model names another;
+# the type is the image flashed now. Either changing re-stamps the unit, same id + pop.
 STICKER_JSON="$TOOLS_DIR/stickers/$STICKER_ID/sticker.json"
 if [[ -f "$STICKER_JSON" ]]; then
-    HAVE_MODEL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("model",""))' "$STICKER_JSON")
-    if [[ "$HAVE_MODEL" != "$MODEL" ]]; then
-        echo "sticker $STICKER_ID: model '${HAVE_MODEL:-none}' -> '$MODEL' (re-stamping, same id and pop)"
+    HAVE_MODEL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("model") or "")' "$STICKER_JSON")
+    HAVE_FAMILY=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("family") or "")' "$STICKER_JSON")
+    if [[ -z "$MODEL_GIVEN" && -n "$HAVE_MODEL" ]]; then MODEL="$HAVE_MODEL"; fi
+    if [[ "$HAVE_MODEL" != "$MODEL" || "$HAVE_FAMILY" != "$APP" ]]; then
+        echo "sticker $STICKER_ID: model '${HAVE_MODEL:-none}' -> '$MODEL', type '${HAVE_FAMILY:-none}' -> '$APP' (re-stamping, same id and pop)"
         POP=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pop"])' "$STICKER_JSON")
-        python3 "$TOOLS_DIR/make_sticker.py" --id "$STICKER_ID" --pop "$POP" --mac "$MAC" --model "$MODEL" --out-dir "$TOOLS_DIR/stickers" >/dev/null
+        python3 "$TOOLS_DIR/make_sticker.py" --id "$STICKER_ID" --pop "$POP" --mac "$MAC" --model "$MODEL" --family "$APP" --out-dir "$TOOLS_DIR/stickers" >/dev/null
     fi
 fi
 STICKER_PNG="$TOOLS_DIR/stickers/$STICKER_ID/sticker.png"
-if [[ ! -f "$STICKER_PNG" && -f "$TOOLS_DIR/stickers/$STICKER_ID/sticker.json" ]]; then
+# The QR carries the product and its type since 2026-10-29: a sticker made before has the
+# model in its json but no family — rewrite the QR (same id and pop; the bin is untouched).
+NEEDS_QR=0
+[[ -f "$STICKER_PNG" ]] || NEEDS_QR=1
+if [[ -f "$STICKER_JSON" ]] && ! python3 -c 'import json,sys; j=json.load(open(sys.argv[1])); sys.exit(0 if (not j.get("model")) or j.get("family") else 1)' "$STICKER_JSON"; then
+    echo "sticker $STICKER_ID: adding the type to the QR"
+    NEEDS_QR=1
+fi
+if [[ "$NEEDS_QR" == 1 && -f "$STICKER_JSON" ]]; then
     python3 "$TOOLS_DIR/make_sticker.py" --qr-only "$TOOLS_DIR/stickers/$STICKER_ID" >/dev/null || true
 fi
 

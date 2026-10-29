@@ -60,7 +60,7 @@ mesh.
 
 | Ref | Function | Node's part | Status |
 |---|---|---|---|
-| 1.1 | Factory identity + sticker | `id` + `pop` in `nvs_factory`; QR `{id, mac, pop}` | POC → Phase 1 |
+| 1.1 | Factory identity + sticker | `id` + `pop` (+ `model`) in `nvs_factory`; QR `{id, mac, pop, model, family}` (product + type since 2026-10-29) | POC → Phase 1 |
 | 1.2 | The code | Stores the full bundle; nothing is derived on the device | POC |
 | 1.3 | Setup network | Unprovisioned: `SIOT-SETUP-<id>` (WPA2 = `pop`), HTTP server; AC units keep it up indefinitely | POC |
 | 1.4 | Provisioning handshake | ~20 s from the phone, offline: `/info` → `/identify` → `/provision {envelope, name, zone}` → `stored`; reboots with the code and its own name | POC |
