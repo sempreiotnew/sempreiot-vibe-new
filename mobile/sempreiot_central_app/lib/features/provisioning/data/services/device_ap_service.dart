@@ -62,7 +62,7 @@ class DeviceApService {
     required String nonceHex,
     required Map<String, dynamic> codeJson,
     required String name,
-    required String zone,
+    required String address,
   }) async {
     final nonce = _hexDecode(nonceHex);
     final key = ProvisioningCrypto.deriveKey(pop: pop, nonce: nonce);
@@ -79,7 +79,10 @@ class DeviceApService {
           body: jsonEncode({
             'envelope': envelope,
             'name': name,
-            'zone': zone,
+            // The endereçamento, in the unit's "zone" slot (protocol §7.11
+            // ADDRESS, ≤ 16 bytes): the unit announces it once and the board
+            // turns it into a label id.
+            'zone': address,
             'epoch': DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000,
           }),
         )
@@ -95,7 +98,7 @@ class DeviceApService {
   /// nodes of this installation so the board can answer INSTALLATION
   /// (spec §7.10) with the enrolled list.
   static Future<int> enroll(
-    List<({String mac, String id, String name, String zone})> devices,
+    List<({String mac, String id, String name, String address})> devices,
   ) async {
     final res = await http
         .post(
@@ -103,7 +106,7 @@ class DeviceApService {
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode([
             for (final d in devices)
-              {'mac': d.mac, 'id': d.id, 'name': d.name, 'zone': d.zone},
+              {'mac': d.mac, 'id': d.id, 'name': d.name, 'zone': d.address},
           ]),
         )
         .timeout(_timeout);

@@ -113,7 +113,9 @@ enum SafrCommand {
   /// only (SYSTEM_ID 0x0000, pop-derived key).
   setInstallation(0x11),
 
-  /// Rename / re-zone a unit; board updates its table and relays.
+  /// Rename a unit; board updates its table and relays. The zone slot is
+  /// reserved since v3.8 (sent empty): a unit's zone / endereçamento go in
+  /// [setDeviceIds], never to the unit.
   setDevice(0x12),
 
   /// Board-only: mark a MAC retired (its frames are dropped from now on).
@@ -150,7 +152,21 @@ enum SafrCommand {
   getRollout(0x1C),
 
   /// Board-only: start / pause / resume / abort a rollout (§13.6).
-  otaControl(0x1D);
+  otaControl(0x1D),
+
+  // ── v3.8 labels (spec §14.1 / §14.2) ───────────────────────────────────
+
+  /// Board-only: create / rename a zone or endereçamento label.
+  setLabel(0x20),
+
+  /// Board-only: delete a label (refused while a unit still carries it).
+  delLabel(0x21),
+
+  /// Board-only: reply with LABEL_TABLE pages.
+  getLabels(0x22),
+
+  /// Board-only: a unit's zone and endereçamento ids; never reaches the unit.
+  setDeviceIds(0x26);
 
   const SafrCommand(this.wire);
   final int wire;
@@ -167,7 +183,11 @@ enum SafrCommand {
         SafrCommand.getCode ||
         SafrCommand.otaBaud ||
         SafrCommand.getRollout ||
-        SafrCommand.otaControl =>
+        SafrCommand.otaControl ||
+        SafrCommand.setLabel ||
+        SafrCommand.delLabel ||
+        SafrCommand.getLabels ||
+        SafrCommand.setDeviceIds =>
           true,
         _ => false,
       };
@@ -197,6 +217,12 @@ enum SafrAckDetail {
   badArgs(0x04),
   refused(0x05),
   notInSetupMode(0x06),
+
+  /// v3.8: a zone / endereçamento id the board's table does not hold.
+  unknownId(0x07),
+
+  /// v3.8: a label a unit (or a rule) still references.
+  inUse(0x08),
   unknown(0xFF);
 
   const SafrAckDetail(this.wire);
@@ -215,6 +241,8 @@ enum SafrAckDetail {
         SafrAckDetail.badArgs => 'argumentos inválidos',
         SafrAckDetail.refused => 'recusado pela placa',
         SafrAckDetail.notInSetupMode => 'a placa já está configurada',
+        SafrAckDetail.unknownId => 'zona ou endereçamento desconhecido na placa',
+        SafrAckDetail.inUse => 'ainda usado por um dispositivo',
         SafrAckDetail.unknown => 'motivo desconhecido',
       };
 }
@@ -993,19 +1021,20 @@ class SafrCodePayload extends SafrV2Payload {
   }
 }
 
-/// `SET_DEVICE` ARGS (CMD 0x12): `mac[6] ‖ name ‖ zone`.
+/// `SET_DEVICE` ARGS (CMD 0x12): `mac[6] ‖ name ‖ zone_len = 0`. The zone
+/// slot is reserved since v3.8 (spec §7.6): sent empty, ignored on receive.
 class SafrSetDeviceArgs {
-  const SafrSetDeviceArgs(
-      {required this.mac, required this.name, required this.zone});
+  const SafrSetDeviceArgs({required this.mac, required this.name});
   final String mac;
   final String name;
-  final String zone;
 
   static SafrSetDeviceArgs? parse(Uint8List p) {
     try {
       final r = _Reader(p);
       final mac = safrMacToString(r.bytes(6));
-      return SafrSetDeviceArgs(mac: mac, name: r.str(32), zone: r.str(16));
+      final name = r.str(32);
+      r.str(16); // reserved zone slot
+      return SafrSetDeviceArgs(mac: mac, name: name);
     } on FormatException {
       return null;
     } on RangeError {
@@ -1016,9 +1045,208 @@ class SafrSetDeviceArgs {
   Uint8List build() => Uint8List.fromList([
         ...safrMacToBytes(mac),
         ..._str(name, 32),
-        ..._str(zone, 16),
+        0,
       ]);
 }
+
+/// `SET_DEVICE_IDS` ARGS (CMD 0x26, v3.8 §14.1): `mac[6] ‖ zone_id u16 ‖
+/// address_id u16`, 0 = none. Board-only.
+abstract final class SafrSetDeviceIdsArgs {
+  static Uint8List build(
+          {required String mac, required int zoneId, required int addressId}) =>
+      Uint8List.fromList([
+        ...safrMacToBytes(mac),
+        (zoneId >> 8) & 0xFF,
+        zoneId & 0xFF,
+        (addressId >> 8) & 0xFF,
+        addressId & 0xFF,
+      ]);
+
+  static ({String mac, int zoneId, int addressId})? parse(Uint8List p) =>
+      p.length == 10
+          ? (
+              mac: safrMacToString(p.sublist(0, 6)),
+              zoneId: (p[6] << 8) | p[7],
+              addressId: (p[8] << 8) | p[9],
+            )
+          : null;
+}
+
+// ── v3.8 labels (spec §14.1 / §14.2) ──────────────────────────────────────
+
+/// Which label table: a zone (a group triggered together) or an
+/// endereçamento (where the unit is).
+enum SafrLabelKind {
+  zone(1),
+  address(2);
+
+  const SafrLabelKind(this.wire);
+  final int wire;
+
+  static SafrLabelKind? fromWire(int v) {
+    for (final k in values) {
+      if (k.wire == v) return k;
+    }
+    return null;
+  }
+
+  /// Singular / plural, as the screens name them.
+  String get singular => switch (this) {
+        SafrLabelKind.zone => 'Zona',
+        SafrLabelKind.address => 'Endereçamento',
+      };
+  String get plural => switch (this) {
+        SafrLabelKind.zone => 'Zonas',
+        SafrLabelKind.address => 'Endereçamentos',
+      };
+}
+
+/// Longest label name on the wire, bytes of UTF-8.
+const safrLabelNameMaxLen = 32;
+
+/// Labels of one kind a board may hold (spec §14.1, v1 caps).
+const safrLabelCap = 64;
+
+/// One label: the id the system keys by, the name the user sees.
+class SafrLabel {
+  const SafrLabel({required this.id, required this.name});
+  final int id;
+  final String name;
+
+  @override
+  bool operator ==(Object other) =>
+      other is SafrLabel && other.id == id && other.name == name;
+
+  @override
+  int get hashCode => Object.hash(id, name);
+}
+
+/// `LABEL_TABLE` (0x16): one page of one kind's table (spec §14.2):
+/// `KIND ‖ PAGE ‖ PAGE_COUNT ‖ TOTAL u16 ‖ REV u16 ‖ COUNT ‖ (ID u16 ‖
+/// NAME_LEN ‖ NAME)[COUNT]`.
+class SafrLabelTablePayload extends SafrV2Payload {
+  const SafrLabelTablePayload({
+    required this.kind,
+    required this.page,
+    required this.pageCount,
+    required this.total,
+    required this.rev,
+    required this.labels,
+  });
+
+  final SafrLabelKind kind;
+  final int page; // 1-based
+  final int pageCount;
+  final int total;
+
+  /// The table's revision: bumped by the board on every change.
+  final int rev;
+  final List<SafrLabel> labels;
+
+  bool get isLastPage => page >= pageCount;
+
+  static SafrLabelTablePayload? parse(Uint8List p) {
+    try {
+      final r = _Reader(p);
+      final kind = SafrLabelKind.fromWire(r.u8());
+      if (kind == null) return null;
+      final page = r.u8();
+      final pageCount = r.u8();
+      final total = r.u16();
+      final rev = r.u16();
+      final count = r.u8();
+      final labels = <SafrLabel>[];
+      for (var i = 0; i < count; i++) {
+        final id = r.u16();
+        final name = r.str(safrLabelNameMaxLen);
+        labels.add(SafrLabel(id: id, name: name));
+      }
+      return SafrLabelTablePayload(
+        kind: kind,
+        page: page,
+        pageCount: pageCount,
+        total: total,
+        rev: rev,
+        labels: labels,
+      );
+    } on FormatException {
+      return null;
+    } on RangeError {
+      return null;
+    }
+  }
+
+  static Uint8List build({
+    required SafrLabelKind kind,
+    required int page,
+    required int pageCount,
+    required int total,
+    required int rev,
+    required List<SafrLabel> labels,
+  }) {
+    final out = <int>[
+      kind.wire,
+      page & 0xFF,
+      pageCount & 0xFF,
+      (total >> 8) & 0xFF,
+      total & 0xFF,
+      (rev >> 8) & 0xFF,
+      rev & 0xFF,
+      labels.length & 0xFF,
+    ];
+    for (final l in labels) {
+      out
+        ..add((l.id >> 8) & 0xFF)
+        ..add(l.id & 0xFF)
+        ..addAll(_str(l.name, safrLabelNameMaxLen));
+    }
+    return Uint8List.fromList(out);
+  }
+}
+
+/// `SET_LABEL` ARGS (CMD 0x20): `KIND ‖ ID u16 ‖ NAME_LEN ‖ NAME`. The tablet
+/// chooses the id (next free in its copy); an existing id renames.
+abstract final class SafrSetLabelArgs {
+  static Uint8List build(
+          {required SafrLabelKind kind, required int id, required String name}) =>
+      Uint8List.fromList([
+        kind.wire,
+        (id >> 8) & 0xFF,
+        id & 0xFF,
+        ..._str(name, safrLabelNameMaxLen),
+      ]);
+
+  static ({SafrLabelKind kind, int id, String name})? parse(Uint8List p) {
+    try {
+      final r = _Reader(p);
+      final kind = SafrLabelKind.fromWire(r.u8());
+      if (kind == null) return null;
+      final id = r.u16();
+      final name = r.str(safrLabelNameMaxLen);
+      return r.atEnd && id != 0 && name.isNotEmpty
+          ? (kind: kind, id: id, name: name)
+          : null;
+    } on FormatException {
+      return null;
+    } on RangeError {
+      return null;
+    }
+  }
+}
+
+/// `DEL_LABEL` ARGS (CMD 0x21): `KIND ‖ ID u16`.
+abstract final class SafrDelLabelArgs {
+  static Uint8List build({required SafrLabelKind kind, required int id}) =>
+      Uint8List.fromList([kind.wire, (id >> 8) & 0xFF, id & 0xFF]);
+
+  static ({SafrLabelKind kind, int id})? parse(Uint8List p) {
+    if (p.length != 3) return null;
+    final kind = SafrLabelKind.fromWire(p[0]);
+    final id = (p[1] << 8) | p[2];
+    return kind == null || id == 0 ? null : (kind: kind, id: id);
+  }
+}
+
 
 /// ARGS for the single-MAC board commands: RETIRE (0x13), UNRETIRE (0x14),
 /// DECOMMISSION (0x16), FORGET (0x17).
@@ -1043,8 +1271,9 @@ abstract final class SafrReplaceDeviceArgs {
 }
 
 /// `GET_DEVICE_TABLE` ARGS (CMD 0x18): `page u8 ‖ format u8`. `page` 0 = all
-/// pages. `format` (v3.5) 1 = "send the entries with the product fields"; a
-/// pre-v3.5 board ignores the byte and answers in the v3.2 layout.
+/// pages. `format` (v3.5) 1 = "send the entries with the product fields",
+/// (v3.8) 2 = "and the label ids + link kind, then the label tables"; an
+/// older board answers in the layout it knows.
 abstract final class SafrGetDeviceTableArgs {
   /// v3.2 entry layout.
   static const formatLegacy = 0;
@@ -1052,7 +1281,10 @@ abstract final class SafrGetDeviceTableArgs {
   /// v3.5 entry layout (product, hardware revision, firmware version).
   static const formatProduct = 1;
 
-  static Uint8List build({int page = 0, int format = formatProduct}) =>
+  /// v3.8 entry layout: product fields + zone id, endereçamento id, link.
+  static const formatLabels = 2;
+
+  static Uint8List build({int page = 0, int format = formatLabels}) =>
       Uint8List.fromList([page & 0xFF, format & 0xFF]);
 
   static ({int page, int format})? parse(Uint8List p) => p.isEmpty
@@ -1069,10 +1301,12 @@ class SafrDeviceTableEntry {
     required this.flags,
     required this.lastSeenAgeS,
     required this.name,
-    required this.zone,
     this.productCode = safrProductUnknown,
     this.hwRev = 0,
     this.fwVersion = '',
+    this.zoneId = 0,
+    this.addressId = 0,
+    this.linkKind = safrLinkMesh,
   });
 
   final String mac;
@@ -1083,13 +1317,18 @@ class SafrDeviceTableEntry {
   /// Seconds since the board last heard it; null = never (`0xFFFF`).
   final int? lastSeenAgeS;
   final String name;
-  final String zone;
 
   /// v3.5 product fields, present when the page says so (COUNT bit 7).
   /// 0x0000 / 0 / '' = the board does not know (yet), or a v3.2 page.
   final int productCode;
   final int hwRev;
   final String fwVersion;
+
+  /// v3.8 label ids (spec §14.1), present when the page says so (COUNT
+  /// bit 6); 0 = none. [linkKind]: [safrLinkMesh] or [safrLinkIsland].
+  final int zoneId;
+  final int addressId;
+  final int linkKind;
 
   bool get seenEver => flags & SafrDeviceFlags.seenEver != 0;
   bool get annotated => flags & SafrDeviceFlags.annotated != 0;
@@ -1100,6 +1339,11 @@ class SafrDeviceTableEntry {
       flags & SafrDeviceFlags.pendingDecommission != 0;
 }
 
+/// `DEVICE_TABLE` entry LINK (v3.8, spec §7.12 format 2): how the board
+/// reaches the unit.
+const safrLinkMesh = 0;
+const safrLinkIsland = 1;
+
 /// `DEVICE_TABLE` (0x0B): one page of the board's device table (spec §7.12).
 class SafrDeviceTablePayload extends SafrV2Payload {
   const SafrDeviceTablePayload({
@@ -1108,12 +1352,15 @@ class SafrDeviceTablePayload extends SafrV2Payload {
     required this.total,
     required this.entries,
     this.hasProductFields = false,
+    this.hasLabelFields = false,
   });
 
   /// Bit 7 of the COUNT byte (v3.5): this page's entries carry the product
-  /// fields. The entry count is the low 7 bits.
+  /// fields; bit 6 (v3.8): also the label ids and the link kind. The entry
+  /// count is the low 6 bits.
   static const countProductFlag = 0x80;
-  static const countMask = 0x7F;
+  static const countLabelsFlag = 0x40;
+  static const countMask = 0x3F;
 
   final int page; // 1-based
   final int pageCount;
@@ -1122,6 +1369,9 @@ class SafrDeviceTablePayload extends SafrV2Payload {
 
   /// True for a v3.5 page; false = the v3.2 entry layout (older board).
   final bool hasProductFields;
+
+  /// True for a v3.8 page (format 2): zone / endereçamento ids and link.
+  final bool hasLabelFields;
 
   bool get isLastPage => page >= pageCount;
 
@@ -1133,6 +1383,7 @@ class SafrDeviceTablePayload extends SafrV2Payload {
       final total = r.u16();
       final countByte = r.u8();
       final hasProductFields = countByte & countProductFlag != 0;
+      final hasLabelFields = countByte & countLabelsFlag != 0;
       final count = countByte & countMask;
       final entries = <SafrDeviceTableEntry>[];
       for (var i = 0; i < count; i++) {
@@ -1142,7 +1393,7 @@ class SafrDeviceTablePayload extends SafrV2Payload {
         final flags = r.u8();
         final age = r.u16();
         final name = r.str(32);
-        final zone = r.str(16);
+        r.str(16); // reserved zone slot (v3.8)
         var productCode = safrProductUnknown;
         var hwRev = 0;
         var fwVersion = '';
@@ -1155,6 +1406,14 @@ class SafrDeviceTablePayload extends SafrV2Payload {
           }
           fwVersion = _fwVersion(r.bytes(fwLen));
         }
+        var zoneId = 0;
+        var addressId = 0;
+        var linkKind = safrLinkMesh;
+        if (hasLabelFields) {
+          zoneId = r.u16();
+          addressId = r.u16();
+          linkKind = r.u8();
+        }
         entries.add(SafrDeviceTableEntry(
           mac: mac,
           role: role,
@@ -1162,10 +1421,12 @@ class SafrDeviceTablePayload extends SafrV2Payload {
           flags: flags,
           lastSeenAgeS: age == 0xFFFF ? null : age,
           name: name,
-          zone: zone,
           productCode: productCode,
           hwRev: hwRev,
           fwVersion: fwVersion,
+          zoneId: zoneId,
+          addressId: addressId,
+          linkKind: linkKind,
         ));
       }
       return SafrDeviceTablePayload(
@@ -1174,6 +1435,7 @@ class SafrDeviceTablePayload extends SafrV2Payload {
         total: total,
         entries: entries,
         hasProductFields: hasProductFields,
+        hasLabelFields: hasLabelFields,
       );
     } on FormatException {
       return null;
@@ -1188,16 +1450,22 @@ class SafrDeviceTablePayload extends SafrV2Payload {
     required int total,
     required List<SafrDeviceTableEntry> entries,
     bool productFields = false,
+    bool labelFields = false,
   }) {
     if (entries.length > countMask) {
       throw ArgumentError('more than $countMask entries in one page');
+    }
+    if (labelFields && !productFields) {
+      throw ArgumentError('the label fields imply the product fields');
     }
     final out = <int>[
       page & 0xFF,
       pageCount & 0xFF,
       (total >> 8) & 0xFF,
       total & 0xFF,
-      entries.length | (productFields ? countProductFlag : 0),
+      entries.length |
+          (productFields ? countProductFlag : 0) |
+          (labelFields ? countLabelsFlag : 0),
     ];
     for (final e in entries) {
       final age = e.lastSeenAgeS ?? 0xFFFF;
@@ -1209,9 +1477,17 @@ class SafrDeviceTablePayload extends SafrV2Payload {
         ..add((age >> 8) & 0xFF)
         ..add(age & 0xFF)
         ..addAll(_str(e.name, 32))
-        ..addAll(_str(e.zone, 16));
+        ..add(0); // reserved zone slot (v3.8)
       if (productFields) {
         out.addAll(_productFields(e.productCode, e.hwRev, e.fwVersion));
+      }
+      if (labelFields) {
+        out
+          ..add((e.zoneId >> 8) & 0xFF)
+          ..add(e.zoneId & 0xFF)
+          ..add((e.addressId >> 8) & 0xFF)
+          ..add(e.addressId & 0xFF)
+          ..add(e.linkKind & 0xFF);
       }
     }
     return Uint8List.fromList(out);

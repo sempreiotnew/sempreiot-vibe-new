@@ -14,6 +14,7 @@
 #include "siot_devtab.h"
 #include "siot_evbus.h"
 #include "siot_identity.h"
+#include "siot_labels.h"
 #include "siot_link.h"
 #include "siot_safr.h"
 #include "siot_survey.h"
@@ -137,19 +138,18 @@ static void originate_command(const uint8_t dst[6], uint8_t cmd, const uint8_t *
     siot_safr_send(dst, SAFR_MSG_COMMAND, siot_safr_next_msg_id(), SAFR_F_ACK_REQ, p, 2 + alen);
 }
 
+/* SET_DEVICE ARGS for a unit: mac ‖ name; the zone slot is reserved since v3.8
+ * (length 0 — zone and endereçamento are board-only ids, spec §7.6 / §14.1). */
 static size_t build_set_device_args(const siot_devtab_entry_t *e, uint8_t *out)
 {
     const size_t n_len = strnlen(e->name, SIOT_NAME_MAX_LEN);
-    const size_t z_len = strnlen(e->zone, SIOT_ZONE_MAX_LEN);
     size_t off = 0;
     memcpy(&out[off], e->mac, 6);
     off += 6;
     out[off++] = (uint8_t)n_len;
     memcpy(&out[off], e->name, n_len);
     off += n_len;
-    out[off++] = (uint8_t)z_len;
-    memcpy(&out[off], e->zone, z_len);
-    off += z_len;
+    out[off++] = 0;
     return off;
 }
 
@@ -168,9 +168,9 @@ static void push_pending(const uint8_t mac[6], uint8_t flags, int64_t t)
         return; /* a unit being wiped needs no rename */
     }
     if (flags & SIOT_DEV_F_PENDING_RENAME) {
-        uint8_t args[6 + 1 + SIOT_NAME_MAX_LEN + 1 + SIOT_ZONE_MAX_LEN];
+        uint8_t args[6 + 1 + SIOT_NAME_MAX_LEN + 1];
         const size_t alen = build_set_device_args(&e, args);
-        ESP_LOGI(TAG, "pending SET_DEVICE -> %s (%s / %s)", siot_mac_to_str(mac, mac_s), e.name, e.zone);
+        ESP_LOGI(TAG, "pending SET_DEVICE -> %s (%s)", siot_mac_to_str(mac, mac_s), e.name);
         originate_command(mac, SAFR_CMD_SET_DEVICE, args, alen);
         siot_devtab_clear_flags(mac, SIOT_DEV_F_PENDING_RENAME);
     }
@@ -298,6 +298,38 @@ static bool is_ota_push(const siot_safr_frame_t *f)
     return f->msg_type >= SAFR_MSG_OTA_PUSH_BEGIN && f->msg_type <= SAFR_MSG_OTA_PUSH_END;
 }
 
+/* The endereçamento a unit typed at setup rides its NAME_ANNOUNCE (spec §7.11
+ * ADDRESS, ≤ 16 bytes) and the phone's /enroll list. The board turns the name
+ * into a label id (spec §14.1): an existing endereçamento of that exact name,
+ * else a new one (next free id, when there is room), and gives it to the unit
+ * only while the unit has none — the tablet's SET_DEVICE_IDS always wins.
+ * Returns true when something changed (a label created, or the unit's id set):
+ * the caller tells the tablet. Safe before siot_coordinator_start(). */
+static void send_label_table(uint8_t kind, uint8_t page, const uint8_t dst[6]);
+
+bool siot_coordinator_adopt_address(const uint8_t mac[6], const char *address)
+{
+    if (address == NULL || address[0] == '\0') return false;
+    bool changed = false;
+    uint16_t id = siot_labels_find(SAFR_LABEL_ADDRESS, address);
+    if (id == SAFR_LABEL_ID_NONE) {
+        id = siot_labels_next_id(SAFR_LABEL_ADDRESS);
+        if (siot_labels_set(SAFR_LABEL_ADDRESS, id, address) != ESP_OK) {
+            ESP_LOGW(TAG, "endereçamento \"%s\" not created (table full or bad name)", address);
+            return false;
+        }
+        ESP_LOGI(TAG, "endereçamento \"%s\" created as id %u", address, id);
+        if (s_lock) send_label_table(SAFR_LABEL_ADDRESS, 0, SAFR_CENTRAL_MAC);
+        changed = true;
+    }
+    if (siot_devtab_set_address_if_unset(mac, id) == ESP_OK) {
+        char mac_s[SIOT_MAC_STR_LEN];
+        ESP_LOGI(TAG, "%s -> endereçamento \"%s\" (id %u)", siot_mac_to_str(mac, mac_s), address, id);
+        changed = true;
+    }
+    return changed;
+}
+
 /* The board's own identity (spec §7.11, v3.5): it is not an entry of its own
  * device table, so it tells the tablet what it is and what it runs with the
  * same frame every unit uses. ROLE 0xFF: the board has no mesh role. */
@@ -307,14 +339,12 @@ void siot_coordinator_announce_board(void) { send_board_announce(SAFR_CENTRAL_MA
 static void send_board_announce(const uint8_t dst[6])
 {
     const siot_installation_t *code = siot_config_code();
-    uint8_t p[1 + SIOT_NAME_MAX_LEN + 1 + SIOT_ZONE_MAX_LEN + 1 + SAFR_PRODUCT_MAX_LEN];
+    uint8_t p[1 + SIOT_NAME_MAX_LEN + 1 + 1 + SAFR_PRODUCT_MAX_LEN];
     const uint8_t name_len = (uint8_t)strnlen(code->name, SIOT_NAME_MAX_LEN);
-    const uint8_t zone_len = (uint8_t)strnlen(code->zone, SIOT_ZONE_MAX_LEN);
     size_t off = 0;
     p[off++] = name_len;
     memcpy(&p[off], code->name, name_len); off += name_len;
-    p[off++] = zone_len;
-    memcpy(&p[off], code->zone, zone_len); off += zone_len;
+    p[off++] = 0; /* zone slot reserved since v3.8 (spec §7.11) */
     p[off++] = SIOT_DEV_ROLE_UNKNOWN;
     off += siot_safr_put_product(&p[off], siot_board_def_product(), siot_board_def()->hw_rev,
                                  siot_version_string());
@@ -322,29 +352,56 @@ static void send_board_announce(const uint8_t dst[6])
 }
 
 /* The layout the tablet on the link understands: set by its last
- * GET_DEVICE_TABLE (format byte, v3.5) and used for the unsolicited push too.
+ * GET_DEVICE_TABLE (format byte: 0 = v3.2 entries, 1 = + product (v3.5),
+ * 2 = + label ids and link (v3.8)) and used for the unsolicited push too.
  * A pre-v3.5 tablet never sends the byte and keeps getting the v3.2 entries. */
-static bool s_dt_product;
+static uint8_t s_dt_format;
 
 static void send_device_table(uint8_t page, const uint8_t dst[6], int64_t t)
 {
     uint8_t p[SAFR_MAX_PAYLOAD];
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    const bool wp = s_dt_product;
+    const uint8_t fmt = s_dt_format;
     const size_t n = siot_devtab_snapshot(s_snap, SIOT_DEVTAB_CAP, t);
     uint8_t pages = 0;
     if (page != 0) {
-        const size_t plen = coord_devtable_encode_page(s_snap, n, t, page, wp, &pages, p);
+        const size_t plen = coord_devtable_encode_page(s_snap, n, t, page, fmt, &pages, p);
         xSemaphoreGive(s_lock);
         if (plen) send_to_tablet(SAFR_MSG_DEVICE_TABLE, dst, 0, p, plen);
         return;
     }
-    coord_devtable_encode_page(s_snap, n, t, 1, wp, &pages, p);
+    coord_devtable_encode_page(s_snap, n, t, 1, fmt, &pages, p);
     for (uint8_t i = 1; i <= pages; i++) {
-        const size_t plen = coord_devtable_encode_page(s_snap, n, t, i, wp, NULL, p);
+        const size_t plen = coord_devtable_encode_page(s_snap, n, t, i, fmt, NULL, p);
         if (plen) send_to_tablet(SAFR_MSG_DEVICE_TABLE, dst, 0, p, plen);
     }
     xSemaphoreGive(s_lock);
+}
+
+/* LABEL_TABLE (spec §14.2): the pages of one kind (`page` 0 = all), or of
+ * both kinds when `kind` is 0. */
+static void send_label_table(uint8_t kind, uint8_t page, const uint8_t dst[6])
+{
+    if (kind == 0) {
+        send_label_table(SAFR_LABEL_ZONE, page, dst);
+        send_label_table(SAFR_LABEL_ADDRESS, page, dst);
+        return;
+    }
+    siot_safr_label_t labels[SAFR_LABEL_CAP];
+    uint16_t rev = 0;
+    const size_t n = siot_labels_snapshot(kind, labels, SAFR_LABEL_CAP, &rev);
+    uint8_t p[SAFR_MAX_PAYLOAD];
+    uint8_t pages = 0;
+    if (page != 0) {
+        const size_t plen = siot_safr_label_table_encode(p, kind, rev, labels, n, page, &pages);
+        if (plen) send_to_tablet(SAFR_MSG_LABEL_TABLE, dst, 0, p, plen);
+        return;
+    }
+    siot_safr_label_table_encode(p, kind, rev, labels, n, 1, &pages);
+    for (uint8_t i = 1; i <= pages; i++) {
+        const size_t plen = siot_safr_label_table_encode(p, kind, rev, labels, n, i, NULL);
+        if (plen) send_to_tablet(SAFR_MSG_LABEL_TABLE, dst, 0, p, plen);
+    }
 }
 
 /* ---- uplink (mesh → tablet) ------------------------------------------------ */
@@ -370,12 +427,15 @@ static void adopt_name_announce(const siot_safr_frame_t *f, uint8_t role)
     if (n > SIOT_NAME_MAX_LEN || 1 + n >= f->payload_len) return;
     const size_t z = f->payload[1 + n];
     if (z > SIOT_ZONE_MAX_LEN || 2 + n + z > f->payload_len) return;
-    char name[SIOT_NAME_MAX_LEN + 1], zone[SIOT_ZONE_MAX_LEN + 1];
+    char name[SIOT_NAME_MAX_LEN + 1], address[SIOT_ZONE_MAX_LEN + 1];
     memcpy(name, &f->payload[1], n);
     name[n] = '\0';
-    memcpy(zone, &f->payload[2 + n], z);
-    zone[z] = '\0';
-    siot_devtab_announce(f->src_mac, name, zone, role);
+    memcpy(address, &f->payload[2 + n], z);
+    address[z] = '\0';
+    siot_devtab_announce(f->src_mac, name, role);
+    if (siot_coordinator_adopt_address(f->src_mac, address)) {
+        send_device_table(0, SAFR_BCAST_MAC, now_ms()); /* the tablet sees it now, not at its next sync */
+    }
 
     /* v3.5: PRODUCT ‖ HW_REV ‖ FW after the ROLE byte. Absent on older units. */
     const size_t ext = 2 + n + z + 1;
@@ -487,9 +547,10 @@ static bool handle_lifecycle_command(const siot_safr_frame_t *f, const uint8_t *
         return true;
 
     case SAFR_CMD_GET_DEVICE_TABLE:
-        s_dt_product = alen >= 2 && a[1] == 1; /* v3.5 format byte; absent = v3.2 entries */
+        s_dt_format = alen >= 2 && a[1] <= 2 ? a[1] : 0; /* format byte; absent = v3.2 entries */
         send_device_table(alen >= 1 ? a[0] : 0, f->src_mac, t);
-        if (s_dt_product) send_board_announce(f->src_mac); /* a v3.5 tablet: and this is me */
+        if (s_dt_format >= 1) send_board_announce(f->src_mac); /* a v3.5 tablet: and this is me */
+        if (s_dt_format == 2) send_label_table(0, 0, f->src_mac);  /* v3.8: the names behind the ids */
         return true;
 
     case SAFR_CMD_SET_DEVICE: {
@@ -499,9 +560,10 @@ static bool handle_lifecycle_command(const siot_safr_frame_t *f, const uint8_t *
             send_ack(f->msg_id, SAFR_ACK_ERROR, SAFR_ACK_D_BAD_ARGS, f->src_mac);
             return true;
         }
+        (void)zone; /* reserved slot since v3.8 (spec §7.6) */
         const bool online = is_online(mac, t);
-        const esp_err_t err = dup ? ESP_OK : siot_devtab_set_name_zone(mac, name, zone, online);
-        ESP_LOGI(TAG, "SET_DEVICE %s -> %s / %s (%s)", siot_mac_to_str(mac, mac_s), name, zone,
+        const esp_err_t err = dup ? ESP_OK : siot_devtab_set_name(mac, name, online);
+        ESP_LOGI(TAG, "SET_DEVICE %s -> %s (%s)", siot_mac_to_str(mac, mac_s), name,
                  online ? "online, relayed" : "offline, pending");
         send_ack(f->msg_id, err == ESP_OK ? SAFR_ACK_OK : SAFR_ACK_ERROR, detail_for(err), f->src_mac);
         if (err == ESP_OK && !dup) {
@@ -510,6 +572,67 @@ static bool handle_lifecycle_command(const siot_safr_frame_t *f, const uint8_t *
         }
         return true;
     }
+
+    case SAFR_CMD_SET_DEVICE_IDS: { /* v3.8 §14.1: board-only, never relayed */
+        uint8_t mac[6];
+        uint16_t zone_id, address_id;
+        if (!siot_safr_set_device_ids_decode(a, alen, mac, &zone_id, &address_id) ||
+            siot_mac_is_bcast(mac) || siot_mac_eq(mac, board_mac)) {
+            send_ack(f->msg_id, SAFR_ACK_ERROR, alen != 10 ? SAFR_ACK_D_BAD_ARGS : SAFR_ACK_D_REFUSED, f->src_mac);
+            return true;
+        }
+        if (!siot_labels_exists(SAFR_LABEL_ZONE, zone_id) || !siot_labels_exists(SAFR_LABEL_ADDRESS, address_id)) {
+            send_ack(f->msg_id, SAFR_ACK_ERROR, SAFR_ACK_D_UNKNOWN_ID, f->src_mac);
+            return true;
+        }
+        const esp_err_t err = dup ? ESP_OK : siot_devtab_set_ids(mac, zone_id, address_id);
+        ESP_LOGI(TAG, "SET_DEVICE_IDS %s -> zone %u, address %u", siot_mac_to_str(mac, mac_s), zone_id, address_id);
+        send_ack(f->msg_id, err == ESP_OK ? SAFR_ACK_OK : SAFR_ACK_ERROR, detail_for(err), f->src_mac);
+        return true;
+    }
+
+    case SAFR_CMD_SET_LABEL: { /* v3.8 §14.2: board-only */
+        uint8_t kind;
+        uint16_t id;
+        char name[SAFR_LABEL_NAME_MAX + 1];
+        if (!siot_safr_set_label_decode(a, alen, &kind, &id, name)) {
+            send_ack(f->msg_id, SAFR_ACK_ERROR, SAFR_ACK_D_BAD_ARGS, f->src_mac);
+            return true;
+        }
+        const esp_err_t err = dup ? ESP_OK : siot_labels_set(kind, id, name);
+        ESP_LOGI(TAG, "SET_LABEL kind %u id %u \"%s\": %s", kind, id, name, esp_err_to_name(err));
+        send_ack(f->msg_id, err == ESP_OK ? SAFR_ACK_OK : SAFR_ACK_ERROR,
+                 err == ESP_ERR_NO_MEM ? SAFR_ACK_D_TABLE_FULL : detail_for(err), f->src_mac);
+        if (err == ESP_OK) send_label_table(kind, 0, f->src_mac); /* the table as the board holds it */
+        return true;
+    }
+
+    case SAFR_CMD_DEL_LABEL: { /* v3.8: board-only; refused while referenced */
+        uint8_t kind;
+        uint16_t id;
+        if (!siot_safr_del_label_decode(a, alen, &kind, &id)) {
+            send_ack(f->msg_id, SAFR_ACK_ERROR, SAFR_ACK_D_BAD_ARGS, f->src_mac);
+            return true;
+        }
+        if (siot_devtab_uses_label(kind, id)) {
+            send_ack(f->msg_id, SAFR_ACK_ERROR, SAFR_ACK_D_IN_USE, f->src_mac);
+            return true;
+        }
+        const esp_err_t err = dup ? ESP_OK : siot_labels_del(kind, id);
+        ESP_LOGI(TAG, "DEL_LABEL kind %u id %u: %s", kind, id, esp_err_to_name(err));
+        send_ack(f->msg_id, err == ESP_OK ? SAFR_ACK_OK : SAFR_ACK_ERROR,
+                 err == ESP_ERR_NOT_FOUND ? SAFR_ACK_D_UNKNOWN_ID : detail_for(err), f->src_mac);
+        if (err == ESP_OK) send_label_table(kind, 0, f->src_mac);
+        return true;
+    }
+
+    case SAFR_CMD_GET_LABELS: /* v3.8: board-only; the reply is the confirmation */
+        if (alen >= 1 && a[0] != 0 && a[0] != SAFR_LABEL_ZONE && a[0] != SAFR_LABEL_ADDRESS) {
+            send_ack(f->msg_id, SAFR_ACK_ERROR, SAFR_ACK_D_BAD_ARGS, f->src_mac);
+            return true;
+        }
+        send_label_table(alen >= 1 ? a[0] : 0, alen >= 2 ? a[1] : 0, f->src_mac);
+        return true;
 
     case SAFR_CMD_RETIRE_DEVICE:
     case SAFR_CMD_UNRETIRE_DEVICE:
@@ -549,7 +672,7 @@ static bool handle_lifecycle_command(const siot_safr_frame_t *f, const uint8_t *
             if (is_online(&a[6], t)) {
                 siot_devtab_entry_t e;
                 if (siot_devtab_get(&a[6], t, &e)) {
-                    uint8_t args[6 + 1 + SIOT_NAME_MAX_LEN + 1 + SIOT_ZONE_MAX_LEN];
+                    uint8_t args[6 + 1 + SIOT_NAME_MAX_LEN + 1];
                     originate_command(&a[6], SAFR_CMD_SET_DEVICE, args, build_set_device_args(&e, args));
                     siot_devtab_clear_flags(&a[6], SIOT_DEV_F_PENDING_RENAME);
                 }

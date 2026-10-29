@@ -16,7 +16,8 @@ class ProvisioningWizardState {
   final DeviceQrPayload? sticker;
   final DeviceApInfo? deviceInfo;
   final String? deviceName;
-  final String? deviceZone;
+  /// Endereçamento typed at setup; '' when skipped. Never reaches the unit.
+  final String? deviceAddress;
   final String? error;
 
   /// Non-fatal note shown on the result screen (e.g. the board did not take
@@ -28,7 +29,7 @@ class ProvisioningWizardState {
     this.sticker,
     this.deviceInfo,
     this.deviceName,
-    this.deviceZone,
+    this.deviceAddress,
     this.error,
     this.warning,
   });
@@ -38,7 +39,7 @@ class ProvisioningWizardState {
     DeviceQrPayload? sticker,
     DeviceApInfo? deviceInfo,
     String? deviceName,
-    String? deviceZone,
+    String? deviceAddress,
     String? error,
     String? warning,
     bool clearError = false,
@@ -48,7 +49,7 @@ class ProvisioningWizardState {
         sticker: sticker ?? this.sticker,
         deviceInfo: deviceInfo ?? this.deviceInfo,
         deviceName: deviceName ?? this.deviceName,
-        deviceZone: deviceZone ?? this.deviceZone,
+        deviceAddress: deviceAddress ?? this.deviceAddress,
         error: clearError ? null : (error ?? this.error),
         warning: warning ?? this.warning,
       );
@@ -102,7 +103,7 @@ class ProvisioningWizardNotifier
   void setSticker(DeviceQrPayload payload) {
     state = ProvisioningWizardState(
       sticker: payload,
-      step: ProvisioningStep.nameZone,
+      step: ProvisioningStep.nameAddress,
     );
   }
 
@@ -112,21 +113,22 @@ class ProvisioningWizardNotifier
     state = const ProvisioningWizardState();
   }
 
-  // ── Step 2: name + zone ─────────────────────────────────────────────────
+  // ── Step 2: name + endereçamento ────────────────────────────────────────
 
-  void submitNameZone({required String name, required String zone}) {
+  void submitNameAddress({required String name, required String address}) {
     state = state.copyWith(
       deviceName: name,
-      deviceZone: zone,
+      deviceAddress: address,
       step: ProvisioningStep.connecting,
       clearError: true,
     );
     _joinAndPoll();
   }
 
-  void backToNameZone() {
+  void backToNameAddress() {
     _cancelTimers();
-    state = state.copyWith(step: ProvisioningStep.nameZone, clearError: true);
+    state =
+        state.copyWith(step: ProvisioningStep.nameAddress, clearError: true);
   }
 
   // ── Step 3: connect to the SoftAP + find the device ────────────────────
@@ -268,10 +270,8 @@ class ProvisioningWizardNotifier
     final sticker = state.sticker;
     final info = state.deviceInfo;
     final name = state.deviceName;
-    final zone = state.deviceZone;
-    if (sticker == null || info == null || name == null || zone == null) {
-      return;
-    }
+    final address = state.deviceAddress ?? '';
+    if (sticker == null || info == null || name == null) return;
     if (state.step == ProvisioningStep.provisioning) return;
 
     state = state.copyWith(
@@ -299,7 +299,7 @@ class ProvisioningWizardNotifier
         nonceHex: info.nonceHex,
         codeJson: installation.toCodeJson(),
         name: name,
-        zone: zone,
+        address: address,
       );
 
       // Board sticker: also hand it this phone's work log as "expected"
@@ -309,7 +309,7 @@ class ProvisioningWizardNotifier
           installation.devices.isNotEmpty) {
         final hints = [
           for (final d in installation.devices)
-            (mac: d.mac, id: d.id, name: d.name, zone: d.zone),
+            (mac: d.mac, id: d.id, name: d.name, address: d.address),
         ];
         var enrolled = false;
         for (var attempt = 0; attempt < 2 && !enrolled; attempt++) {
@@ -336,15 +336,16 @@ class ProvisioningWizardNotifier
           mac: sticker.mac,
           id: sticker.id,
           name: name,
-          zone: zone,
+          address: address,
           provisionedAt: DateTime.now().toUtc(),
           model: info.model,
           productCode: info.product?.code,
           fw: info.fw,
         ),
       );
-      // A zone typed in the wizard becomes a suggestion for the next unit.
-      await list.addZone(installationId, zone);
+      // An endereçamento typed in the wizard becomes a suggestion for the
+      // next unit.
+      if (address.isNotEmpty) await list.addAddress(installationId, address);
     } catch (e) {
       if (!mounted) return;
       debugPrint('[Provisioning] provision error: $e');

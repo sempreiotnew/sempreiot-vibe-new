@@ -64,7 +64,7 @@ void main() {
         mac: 'AA:BB:CC:DD:EE:FF',
         id: 'dev-1',
         name: 'Sirene hall',
-        zone: 'Térreo',
+        address: 'Térreo',
         model: 'SIOT-SIREN-01',
         productCode: 0x0201,
         fw: '0.1.0-dev',

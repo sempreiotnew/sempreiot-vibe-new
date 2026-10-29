@@ -52,7 +52,7 @@ void main() {
       ingest.handleFrame(frame, deviceId: 't');
 
   group('DEVICE_TABLE ingest (spec §7.12, lifecycle §3)', () {
-    test('mirrors state, flags, name and zone into MeshDevices', () async {
+    test('mirrors state, flags and name into MeshDevices', () async {
       final frame = boardEnc.encode(
         msgType: SafrMsgType.deviceTable,
         payload: _tablePage(page: 1, pageCount: 1, entries: const [
@@ -63,7 +63,6 @@ void main() {
             flags: SafrDeviceFlags.seenEver | SafrDeviceFlags.annotated,
             lastSeenAgeS: 5,
             name: 'Sirene 1',
-            zone: 'Térreo',
           ),
           SafrDeviceTableEntry(
             mac: _unitB,
@@ -72,7 +71,6 @@ void main() {
             flags: 0,
             lastSeenAgeS: null,
             name: 'Detector 2',
-            zone: '1º andar',
           ),
         ]),
       );
@@ -83,7 +81,6 @@ void main() {
       expect(a.boardState, SafrDeviceState.online.wire);
       expect(a.boardFlags & SafrDeviceFlags.annotated, isNot(0));
       expect(a.name, 'Sirene 1');
-      expect(a.zone, 'Térreo');
       expect(a.registryState, 'enrolled'); // never heard live by this tablet
       final b = rows.firstWhere((r) => r.mac == _unitB);
       expect(b.boardState, SafrDeviceState.expected.wire);
@@ -108,16 +105,14 @@ void main() {
               state: SafrDeviceState.online,
               flags: 1,
               lastSeenAgeS: 1,
-              name: 'Sirene 1',
-              zone: 'T'),
+              name: 'Sirene 1'),
           SafrDeviceTableEntry(
               mac: _unitB,
               role: SafrNodeRole.unknown,
               state: SafrDeviceState.expected,
               flags: 0,
               lastSeenAgeS: null,
-              name: 'Velho',
-              zone: ''),
+              name: 'Velho'),
         ]),
       ));
       expect((await db.select(db.meshDevices).get()).length, 2);
@@ -132,14 +127,95 @@ void main() {
               state: SafrDeviceState.missing,
               flags: 1,
               lastSeenAgeS: 90,
-              name: 'Sirene 1',
-              zone: 'T'),
+              name: 'Sirene 1'),
         ]),
       ));
       final rows = await db.select(db.meshDevices).get();
       expect(rows.map((r) => r.mac), [_unitA]);
       expect(rows.single.registryState, isNull); // still live
       expect(rows.single.boardState, SafrDeviceState.missing.wire);
+    });
+  });
+
+  group('v3.8 labels (protocol §14.1 / §14.2)', () {
+    test('LABEL_TABLE pages replace the kind\'s copy; format 2 ids reach the row',
+        () async {
+      Uint8List labels(SafrLabelKind kind, int page, int pageCount,
+              List<SafrLabel> rows) =>
+          boardEnc.encode(
+            msgType: SafrMsgType.labelTable,
+            payload: SafrLabelTablePayload.build(
+                kind: kind,
+                page: page,
+                pageCount: pageCount,
+                total: rows.length,
+                rev: 3,
+                labels: rows),
+          );
+      await feed(labels(SafrLabelKind.zone, 1, 2,
+          const [SafrLabel(id: 1, name: 'Portões')]));
+      await feed(labels(SafrLabelKind.zone, 2, 2,
+          const [SafrLabel(id: 2, name: 'Térreo')]));
+      await feed(labels(SafrLabelKind.address, 1, 1,
+          const [SafrLabel(id: 7, name: '1º andar')]));
+      var rows = await db.select(db.deviceLabels).get();
+      expect(
+          {for (final r in rows) (r.kind, r.labelId): r.name},
+          {(1, 1): 'Portões', (1, 2): 'Térreo', (2, 7): '1º andar'});
+
+      // The board renamed one and dropped one: the copy follows exactly.
+      await feed(labels(SafrLabelKind.zone, 1, 1,
+          const [SafrLabel(id: 2, name: 'Garagem')]));
+      rows = await db.select(db.deviceLabels).get();
+      expect({for (final r in rows) (r.kind, r.labelId): r.name},
+          {(1, 2): 'Garagem', (2, 7): '1º andar'});
+
+      // Format 2 entry: ids and link land on the unit's row.
+      await feed(boardEnc.encode(
+        msgType: SafrMsgType.deviceTable,
+        payload: SafrDeviceTablePayload.build(
+          page: 1,
+          pageCount: 1,
+          total: 1,
+          productFields: true,
+          labelFields: true,
+          entries: const [
+            SafrDeviceTableEntry(
+                mac: _unitA,
+                role: SafrNodeRole.node,
+                state: SafrDeviceState.online,
+                flags: 1,
+                lastSeenAgeS: 1,
+                name: 'Sirene 1',
+                zoneId: 2,
+                addressId: 7,
+                linkKind: safrLinkIsland),
+          ],
+        ),
+      ));
+      final a = (await db.select(db.meshDevices).get()).single;
+      expect(a.zoneId, 2);
+      expect(a.addressId, 7);
+      expect(a.linkKind, safrLinkIsland);
+      expect(await db.countUnitsWithLabel(1, 2), 1);
+      expect(await db.countUnitsWithLabel(2, 1), 0);
+
+      // A v3.5 page (no label fields) leaves the ids alone.
+      await feed(boardEnc.encode(
+        msgType: SafrMsgType.deviceTable,
+        payload: _tablePage(page: 1, pageCount: 1, total: 1, entries: const [
+          SafrDeviceTableEntry(
+              mac: _unitA,
+              role: SafrNodeRole.node,
+              state: SafrDeviceState.online,
+              flags: 1,
+              lastSeenAgeS: 1,
+              name: 'Sirene 1'),
+        ]),
+      ));
+      final again = (await db.select(db.meshDevices).get()).single;
+      expect(again.zoneId, 2);
+      expect(again.addressId, 7);
     });
   });
 
@@ -161,8 +237,7 @@ void main() {
               state: SafrDeviceState.online,
               flags: 1,
               lastSeenAgeS: 1,
-              name: 'Sirene Hall',
-              zone: 'T'),
+              name: 'Sirene Hall'),
         ]),
       ));
       // The board was erased (or never heard it): an empty table. The old
@@ -186,8 +261,7 @@ void main() {
               state: SafrDeviceState.online,
               flags: 1,
               lastSeenAgeS: 1,
-              name: '',
-              zone: ''),
+              name: ''),
         ]),
       ));
       expect(

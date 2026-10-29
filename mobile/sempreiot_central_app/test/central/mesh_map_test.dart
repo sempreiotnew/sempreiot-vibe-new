@@ -86,7 +86,7 @@ void main() {
             body: MeshMap(
               nodes: nodes,
               board: withBoard ? boardNode : null,
-              election: const RootElectionState(rootMac: root),
+              election: const RootElectionState(roots: {root}),
               onNodeTap: (_, __) {},
               showOta: showOta,
             ),

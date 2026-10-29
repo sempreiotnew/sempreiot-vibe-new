@@ -17,6 +17,8 @@ import '../../../../features/central/presentation/screens/device_access_screen.d
 import '../../../../features/central/presentation/screens/central_installation_screen.dart';
 import '../../../../features/central/presentation/screens/device_info_screen.dart';
 import '../../../../features/central/presentation/screens/device_update_screen.dart';
+import '../../../../features/central/domain/safr/safr_v2_payloads.dart';
+import '../../../../features/central/presentation/screens/labels_screen.dart';
 import '../../../../features/central/presentation/screens/serial_logs_screen.dart';
 import '../../../../features/installation/presentation/screens/installations_screen.dart';
 import '../../../../features/storage/presentation/screens/storage_screen.dart';
@@ -156,6 +158,34 @@ class MainDrawer extends ConsumerWidget {
                           Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => const CentralInstallationScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                      // The board's zone / endereçamento tables (protocol
+                      // §14.1): the names behind every unit's ids.
+                      _DrawerItem(
+                        icon: Icons.account_tree_outlined,
+                        label: 'Zonas',
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  const LabelsScreen(kind: SafrLabelKind.zone),
+                            ),
+                          );
+                        },
+                      ),
+                      _DrawerItem(
+                        icon: Icons.place_outlined,
+                        label: 'Endereçamentos',
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const LabelsScreen(
+                                  kind: SafrLabelKind.address),
                             ),
                           );
                         },

@@ -26,7 +26,7 @@ class InstallationGenerator {
 
   static Installation generate({
     required String displayName,
-    List<String> zones = const [],
+    List<String> addresses = const [],
   }) {
     final rng = Random.secure();
 
@@ -56,7 +56,7 @@ class InstallationGenerator {
       safrPskHex: safrPskHex,
       channel: _channels[rng.nextInt(_channels.length)],
       meshId: meshId,
-      zones: zones,
+      addresses: addresses,
       createdAt: DateTime.now().toUtc(),
     );
   }

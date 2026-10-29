@@ -17,7 +17,6 @@ import '../screens/device_settings_screen.dart';
 import 'device_avatar.dart';
 import '../../application/system_test_provider.dart';
 import 'device_command_widgets.dart';
-import 'heartbeat_widgets.dart';
 import 'system_test_sheets.dart';
 import 'ota_rede_widgets.dart' show firmwareTagText;
 
@@ -373,7 +372,7 @@ class _DevicePopover extends ConsumerWidget {
     final command = ref.watch(deviceCommandProvider)[mac];
     final silenced =
         !viewOnly && ref.watch(deviceSoundProvider).contains(node.mac);
-    final isRoot = node.online && node.mac == election.rootMac;
+    final isRoot = node.online && election.isRoot(node.mac);
     final isCandidate =
         election.electing && election.candidates.contains(node.mac);
 
@@ -694,8 +693,21 @@ class _Facts extends StatelessWidget {
   Widget build(BuildContext context) {
     final parent = _parentLabel();
     final wake = node.nextWakeInSeconds;
-    final boardMac = all.where((n) => n.layer == 0).firstOrNull?.mac;
     final tiles = <Widget>[
+      // Where it is and which group it fires with (protocol §14.1): the
+      // names behind the board's ids, set on the Dispositivo screen.
+      _FactTile(
+        icon: Icons.place_rounded,
+        label: 'ENDEREÇAMENTO',
+        value: node.address ?? '—',
+        valueColor: node.address == null ? context.textSecondary : null,
+      ),
+      _FactTile(
+        icon: Icons.account_tree_outlined,
+        label: 'ZONA',
+        value: node.zone ?? '—',
+        valueColor: node.zone == null ? context.textSecondary : null,
+      ),
       _SignalTile(rssi: node.rssi, sleeping: node.sleeping),
       _FactTile(
         icon: Icons.schedule_rounded,
@@ -747,15 +759,6 @@ class _Facts extends StatelessWidget {
         runSpacing: gap,
         children: [
           for (final t in tiles) SizedBox(width: w, child: t),
-          // The board's beats as the unit heard them, as a bedside monitor
-          // (heartbeat_widgets.dart): a spike per beat heard, a flat gap
-          // per beat lost. A battery leaf sleeps between the board's beats
-          // and has no such count (protocol §12).
-          if (!node.isLeaf)
-            SizedBox(
-              width: c.maxWidth,
-              child: HeartbeatMonitor(node: node, boardMac: boardMac),
-            ),
         ],
       );
     });

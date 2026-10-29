@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../domain/safr/safr_product.dart';
 import '../domain/safr/safr_v2_payloads.dart';
 import 'central_mirror_viewer.dart';
+import 'device_labels_provider.dart';
 import 'ota_rollout_controller.dart';
 import 'ota_rollout_report.dart';
 import 'serial_link_provider.dart';
@@ -25,6 +26,9 @@ class TopologyNode {
     this.alarmLatchedAt,
     this.name,
     this.zone,
+    this.address,
+    this.zoneId,
+    this.addressId,
     this.boardState,
     this.boardFlags = 0,
     this.parentCandidates = const [],
@@ -69,7 +73,13 @@ class TopologyNode {
   final bool alarmLatched;
   final DateTime? alarmLatchedAt;
   final String? name;
+
+  /// The unit's zone and endereçamento (protocol §14.1): the names the
+  /// board's label tables give the ids; null = none or not reported.
   final String? zone;
+  final String? address;
+  final int? zoneId;
+  final int? addressId;
 
   /// The board's own view of this MAC (spec §7.12 DEVICE_TABLE), null until
   /// the first table sync.
@@ -213,6 +223,7 @@ final topologyProvider = Provider<List<TopologyNode>>((ref) {
   // updated is read from it, the grace from the clock.
   final updatingUnits = ref.watch(otaUpdatingUnitsProvider);
   final grace = ref.watch(otaRolloutTimingsProvider).updatingGrace;
+  final labels = ref.watch(labelIndexProvider);
   final now = DateTime.now();
 
   final parents =
@@ -238,7 +249,10 @@ final topologyProvider = Provider<List<TopologyNode>>((ref) {
         alarmLatched: s.device.alarmLatched == 1,
         alarmLatchedAt: s.device.alarmLatchedAt,
         name: s.device.name,
-        zone: s.device.zone,
+        zone: labels.name(SafrLabelKind.zone, s.device.zoneId),
+        address: labels.name(SafrLabelKind.address, s.device.addressId),
+        zoneId: s.device.zoneId,
+        addressId: s.device.addressId,
         boardState: s.device.boardState == null
             ? null
             : SafrDeviceState.fromWire(s.device.boardState!),

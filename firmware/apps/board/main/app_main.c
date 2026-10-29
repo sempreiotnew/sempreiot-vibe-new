@@ -15,6 +15,7 @@
 #include "siot_config.h"
 #include "siot_coordinator.h"
 #include "siot_devtab.h"
+#include "siot_labels.h"
 #include "siot_evbus.h"
 #include "siot_identity.h"
 #include "siot_link.h"
@@ -53,9 +54,11 @@ static void set_state(siot_state_t prev, siot_state_t next)
 
 /* /enroll during setup: the phone's work log becomes "expected" hints in the
  * device table (lifecycle §3.2), no cap of 8. */
-static esp_err_t enroll_hint(const uint8_t mac[6], const char *name, const char *zone)
+static esp_err_t enroll_hint(const uint8_t mac[6], const char *name, const char *address)
 {
-    return siot_devtab_hint(mac, name, zone);
+    const esp_err_t err = siot_devtab_hint(mac, name);
+    if (err == ESP_OK) siot_coordinator_adopt_address(mac, address); /* spec §7.11 ADDRESS / §14.8 */
+    return err;
 }
 
 void app_main(void)
@@ -77,6 +80,7 @@ void app_main(void)
     ESP_ERROR_CHECK(siot_ui_button_init());                         /* 5: factory-reset hold armed */
     ESP_ERROR_CHECK(siot_config_init());                            /* 7 */
     ESP_ERROR_CHECK(siot_devtab_init());                            /* 7b: the device table (lifecycle §3) */
+    ESP_ERROR_CHECK(siot_labels_init());                            /* 7c: zones / endereçamentos (spec §14.1) */
 
     if (!has_identity) {
         set_state(SIOT_STATE_SETUP, SIOT_STATE_UNPROVISIONED_FACTORY);

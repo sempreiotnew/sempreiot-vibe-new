@@ -174,7 +174,8 @@ Setup channel (spec §3.1): header `SYSTEM_ID 0x0000`, key derived from the boar
 |---|---|---|
 | `nvs_factory` / `siot_fact` | `id`, `pop` (16..63 chars) — read-only in firmware, survives a full erase of `nvs` | Factory station only |
 | `nvs` / `siot_inst` | `code` blob (`system_id`, `net_ssid`, `net_psk`, `safr_psk[16]`, `channel`, `mesh_id`, `name`, `zone`), `boot_ctr`, `dev_seq` | Provisioning, `SET_INSTALLATION`; erased by factory reset |
-| `nvs` device table (`siot_devtab`) | Per MAC: `role`, stored state (`expected` / `retired`), `flags`, `first_seen`, `name[33]`, `zone[17]`; `online` / `missing` derived from `last_seen` in RAM; 3 NVS entries per unit, cap `CONFIG_SIOT_DEVTAB_CAP` = 120 | First sighting and operator actions only |
+| `nvs` device table (`siot_devtab`) | Per MAC, **record v3** (protocol v3.8, 2026-10-28; a record of another version is dropped on load, never migrated): `ver`, `role`, stored state (`expected` / `retired`), `flags`, `first_seen`, `name[33]`, `product`, `hw_rev`, `fw[25]`, `zone_id`, `address_id`, `link`; `online` / `missing` derived from `last_seen` in RAM; 3 NVS entries per unit, cap `CONFIG_SIOT_DEVTAB_CAP` = 120 | First sighting and operator actions only |
+| `nvs` labels (`siot_labels`) | Two blobs, `zone` and `addr` (protocol §14.1): `VER ‖ REV ‖ COUNT ‖ (ID ‖ NAME_LEN ‖ NAME)[COUNT]`, ≤ 64 labels each; the names behind the zone / endereçamento ids of the device table | `SET_LABEL` / `DEL_LABEL` from the tablet |
 | Journal | `{jrn_seq, mac, payload[17]}` per uplink `EVENT`; 64-entry RAM ring today | Every uplink EVENT; flash-persisted in Phase 1 step 4 |
 | `fw_store` (3 MB FAT, wear-levelled, 8.3 names) | `/fw/node.bin`, `/fw/leaf.bin`, each with `/fw/<family>.inf` (version, size, SHA-256, written last); `<family>.tmp` while a push runs; `rollout.json` with step 2 | `siot_ota_board` (2026-09-29). The 4 MB bench table has no `fw_store`: that board updates itself only |
 

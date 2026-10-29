@@ -13,6 +13,7 @@ import '../../../provisioning/domain/entities/device_qr_payload.dart';
 import '../../../provisioning/domain/services/provisioning_crypto.dart';
 import '../../application/central_installation_provider.dart';
 import '../../application/credentials_admin_provider.dart';
+import '../../application/device_labels_provider.dart';
 import '../../application/safr_downlink_provider.dart';
 import '../../domain/safr/safr_identity.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
@@ -251,7 +252,7 @@ class _CentralInstallationScreenState
       safrPskHex: code.safrPsk.map((b) => b.toRadixString(16).padLeft(2, '0')).join(),
       channel: code.channel,
       meshId: code.meshId,
-      zones: const [],
+      addresses: const [],
       createdAt: DateTime.now().toUtc(),
     );
     await ref.read(centralInstallationProvider.notifier).adopt(installation);
@@ -337,23 +338,37 @@ class _CentralInstallationScreenState
     ));
   }
 
-  /// Lifecycle §5 J: after a board swap, push every name this tablet knows.
+  /// Lifecycle §5 J: after a board swap, push everything this tablet knows
+  /// — the zone / endereçamento tables first (protocol §14.1: the board
+  /// refuses an id it does not hold), then every name, then every unit's
+  /// ids.
   Future<void> _resendNames() async {
     final db = ref.read(appDatabaseProvider);
-    final rows = await db.select(db.meshDevices).get();
     final downlink = ref.read(safrDownlinkProvider);
+    final labels = ref.read(labelIndexProvider);
     var sent = 0, ok = 0;
+    for (final kind in SafrLabelKind.values) {
+      for (final l in labels.of(kind)) {
+        sent++;
+        if ((await downlink.sendSetLabel(kind, l.id, l.name)).ok) ok++;
+      }
+    }
+    final rows = await db.select(db.meshDevices).get();
     for (final r in rows) {
       final name = r.name;
       if (name == null || name.isEmpty || r.layer == 0) continue;
       sent++;
-      final res = await downlink.sendSetDevice(r.mac, name, r.zone ?? '');
-      if (res.ok) ok++;
+      if ((await downlink.sendSetDevice(r.mac, name)).ok) ok++;
+      final zoneId = r.zoneId ?? 0;
+      final addressId = r.addressId ?? 0;
+      if (zoneId == 0 && addressId == 0) continue;
+      sent++;
+      if ((await downlink.sendSetDeviceIds(r.mac, zoneId, addressId)).ok) ok++;
     }
     await _audit('installation_resend_names', {'sent': sent, 'ok': ok});
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('Nomes reenviados: $ok de $sent confirmados pela placa.'),
+      content: Text('Reenviado: $ok de $sent confirmados pela placa.'),
     ));
     downlink.sendGetDeviceTable();
   }
@@ -447,8 +462,8 @@ class _CentralInstallationScreenState
                           const InfoRowDivider(),
                           InfoActionRow(
                             label: 'Reenviar nomes à placa',
-                            hint: 'Depois de trocar a placa: nomes e zonas '
-                                'que esta central conhece',
+                            hint: 'Depois de trocar a placa: nomes, zonas e '
+                                'endereçamentos que esta central conhece',
                             icon: Icons.send_rounded,
                             onTap: _resendNames,
                           ),
@@ -642,7 +657,9 @@ class _InstallationCard extends StatelessWidget {
           _Row(label: 'CHANNEL', value: '${installation.channel}'),
           _Row(label: 'MESH_ID', value: '${installation.meshId}'),
           const _Row(label: 'CHAVE SAFR', value: 'presente (16 bytes)'),
-          _Row(label: 'ZONAS', value: '${installation.zones.length}'),
+          _Row(
+              label: 'ENDEREÇAMENTOS',
+              value: '${installation.addresses.length}'),
         ],
       ),
     );

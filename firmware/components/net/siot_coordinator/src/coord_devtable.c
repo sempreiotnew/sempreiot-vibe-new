@@ -9,15 +9,18 @@
 
 #define DT_HDR_LEN 5 /* page, page_count, total u16, count */
 
-static size_t entry_len(const siot_devtab_entry_t *e, bool with_product)
+/* format: 0 = v3.2 entry · 1 = + PRODUCT ‖ HW_REV ‖ FW (v3.5) · 2 = + ZONE_ID ‖
+ * ADDRESS_ID ‖ LINK (v3.8). The zone slot is reserved since v3.8: always length 0. */
+static size_t entry_len(const siot_devtab_entry_t *e, uint8_t format)
 {
-    const size_t base = 6 + 1 + 1 + 1 + 2 + 1 + strnlen(e->name, SIOT_NAME_MAX_LEN) + 1 +
-                        strnlen(e->zone, SIOT_ZONE_MAX_LEN);
-    return with_product ? base + 4 + strnlen(e->fw, SAFR_FW_MAX_LEN) : base;
+    size_t len = 6 + 1 + 1 + 1 + 2 + 1 + strnlen(e->name, SIOT_NAME_MAX_LEN) + 1;
+    if (format >= 1) len += 4 + strnlen(e->fw, SAFR_FW_MAX_LEN);
+    if (format >= 2) len += 2 + 2 + 1;
+    return len;
 }
 
 /* First entry index of each page; returns page count. */
-static uint8_t layout(const siot_devtab_entry_t *entries, size_t n, bool with_product, size_t *starts,
+static uint8_t layout(const siot_devtab_entry_t *entries, size_t n, uint8_t format, size_t *starts,
                       size_t max_pages)
 {
     uint8_t pages = 0;
@@ -26,8 +29,8 @@ static uint8_t layout(const siot_devtab_entry_t *entries, size_t n, bool with_pr
         if (pages >= max_pages) break;
         starts[pages++] = i;
         size_t used = DT_HDR_LEN;
-        while (i < n && used + entry_len(&entries[i], with_product) <= SAFR_MAX_PAYLOAD) {
-            used += entry_len(&entries[i], with_product);
+        while (i < n && used + entry_len(&entries[i], format) <= SAFR_MAX_PAYLOAD) {
+            used += entry_len(&entries[i], format);
             i++;
         }
     } while (i < n);
@@ -35,10 +38,10 @@ static uint8_t layout(const siot_devtab_entry_t *entries, size_t n, bool with_pr
 }
 
 size_t coord_devtable_encode_page(const siot_devtab_entry_t *entries, size_t n, int64_t now_ms,
-                                  uint8_t page, bool with_product, uint8_t *page_count_out, uint8_t *out)
+                                  uint8_t page, uint8_t format, uint8_t *page_count_out, uint8_t *out)
 {
     size_t starts[256];
-    const uint8_t pages = layout(entries, n, with_product, starts, 255);
+    const uint8_t pages = layout(entries, n, format, starts, 255);
     if (page_count_out) *page_count_out = pages;
     if (page == 0 || page > pages) return 0;
 
@@ -55,7 +58,6 @@ size_t coord_devtable_encode_page(const siot_devtab_entry_t *entries, size_t n, 
     for (size_t i = first; i < end; i++) {
         const siot_devtab_entry_t *e = &entries[i];
         const size_t n_len = strnlen(e->name, SIOT_NAME_MAX_LEN);
-        const size_t z_len = strnlen(e->zone, SIOT_ZONE_MAX_LEN);
         memcpy(&out[off], e->mac, 6);
         off += 6;
         out[off++] = e->role;
@@ -71,12 +73,20 @@ size_t coord_devtable_encode_page(const siot_devtab_entry_t *entries, size_t n, 
         out[off++] = (uint8_t)n_len;
         memcpy(&out[off], e->name, n_len);
         off += n_len;
-        out[off++] = (uint8_t)z_len;
-        memcpy(&out[off], e->zone, z_len);
-        off += z_len;
-        if (with_product) off += siot_safr_put_product(&out[off], e->product, e->hw_rev, e->fw);
+        out[off++] = 0; /* ZONE_LEN: reserved since v3.8 */
+        if (format >= 1) off += siot_safr_put_product(&out[off], e->product, e->hw_rev, e->fw);
+        if (format >= 2) {
+            siot_put_u16(&out[off], e->zone_id);
+            off += 2;
+            siot_put_u16(&out[off], e->address_id);
+            off += 2;
+            out[off++] = e->link;
+        }
         count++;
     }
-    out[count_off] = with_product ? (uint8_t)(count | COORD_DT_F_PRODUCT) : count;
+    uint8_t count_byte = count;
+    if (format >= 1) count_byte |= COORD_DT_F_PRODUCT;
+    if (format >= 2) count_byte |= COORD_DT_F_LABELS;
+    out[count_off] = count_byte;
     return off;
 }

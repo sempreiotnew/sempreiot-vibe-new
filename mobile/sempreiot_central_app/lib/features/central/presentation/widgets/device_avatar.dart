@@ -18,6 +18,16 @@ import 'network_3d/device_model_sprites.dart';
 const deviceStaleOpacity = 0.32;
 
 /// The device's name when set, otherwise its full MAC — never a fragment.
+/// What the Rede map writes under a unit (decided 2026-10-28): where it is
+/// — its endereçamento — before what it is called; the MAC only when it has
+/// neither. The name stays on the popover and everywhere else.
+String deviceMapLabel(TopologyNode node) =>
+    node.address?.isNotEmpty == true ? node.address! : deviceDisplayName(node);
+
+/// True when the map label is a word, not the MAC.
+bool deviceMapLabelled(TopologyNode node) =>
+    node.address?.isNotEmpty == true || node.name?.isNotEmpty == true;
+
 String deviceDisplayName(TopologyNode node) =>
     node.name?.isNotEmpty == true ? node.name! : node.mac;
 

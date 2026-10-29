@@ -68,7 +68,6 @@ void main() {
         flags: SafrDeviceFlags.seenEver | SafrDeviceFlags.annotated,
         lastSeenAgeS: 12,
         name: 'Sirene 1',
-        zone: 'Terreo',
       ),
       SafrDeviceTableEntry(
         mac: '5A:46:52:00:00:03',
@@ -77,7 +76,6 @@ void main() {
         flags: 0,
         lastSeenAgeS: null,
         name: 'Detector corredor',
-        zone: '1 andar',
       ),
     ],
   );

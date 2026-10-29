@@ -14,23 +14,27 @@
 
 static const char *TAG = "siot_devtab";
 
-/* What goes to NVS (never last_seen / derived state). Fields are only ever
- * appended: a blob written by an older firmware is shorter and loads with the
- * rest zeroed (DEVTAB_REC_V1_LEN = the record before the product fields). */
+/* What goes to NVS (never last_seen / derived state). The first byte is the
+ * record version: a blob of another version or another length is dropped on
+ * load (no migration code, ever — brief phase 4 §2.2 item 6); the entry comes
+ * back from the unit's next frame and the tablet's "Reenviar nomes à placa".
+ * Bump DEVTAB_REC_VER on any change of this struct. */
+#define DEVTAB_REC_VER 3 /* 1 = v3.2 fields, 2 = + product (v3.5), 3 = ids, no zone string (v3.8) */
 typedef struct __attribute__((packed)) {
+    uint8_t  ver;          /* DEVTAB_REC_VER */
     uint8_t  role;
     uint8_t  stored_state; /* SIOT_DEV_EXPECTED or SIOT_DEV_RETIRED */
     uint8_t  flags;
     uint32_t first_seen;
     char     name[SIOT_NAME_MAX_LEN + 1];
-    char     zone[SIOT_ZONE_MAX_LEN + 1];
-    /* v2 (protocol v3.5) */
     uint16_t product;
     uint8_t  hw_rev;
     char     fw[SIOT_DEVTAB_FW_MAX_LEN + 1];
+    uint16_t zone_id;      /* label ids (spec §14.1), 0 = none */
+    uint16_t address_id;
+    uint8_t  link;         /* SAFR_DT_LINK_* */
 } devtab_rec_t;
 
-#define DEVTAB_REC_V1_LEN offsetof(devtab_rec_t, product)
 _Static_assert(SIOT_DEVTAB_FW_MAX_LEN == SAFR_FW_MAX_LEN, "devtab fw length follows the wire");
 
 typedef struct {
@@ -70,6 +74,7 @@ static slot_t *alloc(const uint8_t mac[6])
         memset(&s_tab[i], 0, sizeof(s_tab[i]));
         s_tab[i].used = true;
         memcpy(s_tab[i].mac, mac, 6);
+        s_tab[i].rec.ver = DEVTAB_REC_VER;
         s_tab[i].rec.role = SIOT_DEV_ROLE_UNKNOWN;
         s_tab[i].rec.stored_state = SIOT_DEV_EXPECTED;
         s_tab[i].last_seen_ms = -1;
@@ -120,13 +125,14 @@ esp_err_t siot_devtab_init(void)
     s_count = 0;
 
     nvs_handle_t h;
-    esp_err_t err = nvs_open(SIOT_DEVTAB_NS, NVS_READONLY, &h);
+    esp_err_t err = nvs_open(SIOT_DEVTAB_NS, NVS_READWRITE, &h);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
         ESP_LOGI(TAG, "empty table");
         return ESP_OK;
     }
     if (err != ESP_OK) return err;
 
+    unsigned dropped = 0;
     nvs_iterator_t it = NULL;
     err = nvs_entry_find_in_handle(h, NVS_TYPE_BLOB, &it);
     while (err == ESP_OK) {
@@ -136,24 +142,34 @@ esp_err_t siot_devtab_init(void)
         devtab_rec_t rec;
         memset(&rec, 0, sizeof(rec));
         size_t len = sizeof(rec);
-        if (mac_from_key(info.key, mac) &&
-            nvs_get_blob(h, info.key, &rec, &len) == ESP_OK &&
-            (len == sizeof(rec) || len == DEVTAB_REC_V1_LEN)) { /* V1: rewritten at its next change */
-            slot_t *s = alloc(mac);
-            if (s == NULL) {
-                ESP_LOGW(TAG, "table full while loading (%s dropped)", info.key);
+        if (mac_from_key(info.key, mac)) {
+            const esp_err_t got = nvs_get_blob(h, info.key, &rec, &len);
+            if (got == ESP_OK && len == sizeof(rec) && rec.ver == DEVTAB_REC_VER) {
+                slot_t *s = alloc(mac);
+                if (s == NULL) {
+                    ESP_LOGW(TAG, "table full while loading (%s dropped)", info.key);
+                } else {
+                    s->rec = rec;
+                    s->rec.name[SIOT_NAME_MAX_LEN] = '\0';
+                    s->rec.fw[SIOT_DEVTAB_FW_MAX_LEN] = '\0';
+                }
             } else {
-                s->rec = rec;
-                s->rec.name[SIOT_NAME_MAX_LEN] = '\0';
-                s->rec.zone[SIOT_ZONE_MAX_LEN] = '\0';
-                s->rec.fw[SIOT_DEVTAB_FW_MAX_LEN] = '\0';
+                /* Another record version (or a short / corrupt blob): dropped,
+                 * never migrated. Erased so it is not re-read every boot. */
+                dropped++;
+                nvs_erase_key(h, info.key);
             }
         }
         err = nvs_entry_next(&it);
     }
     nvs_release_iterator(it);
+    if (dropped) {
+        nvs_commit(h);
+        ESP_LOGW(TAG, "%u record(s) of another version dropped: the table rebuilds from traffic "
+                      "and the tablet's \"Reenviar nomes à placa\"", dropped);
+    }
     nvs_close(h);
-    ESP_LOGI(TAG, "loaded %u device(s), cap %d", (unsigned)s_count, SIOT_DEVTAB_CAP);
+    ESP_LOGI(TAG, "loaded %u device(s), cap %d, record v%d", (unsigned)s_count, SIOT_DEVTAB_CAP, DEVTAB_REC_VER);
     return ESP_OK;
 }
 
@@ -187,10 +203,12 @@ static void fill(const slot_t *s, int64_t now_ms, siot_devtab_entry_t *out)
     out->first_seen = s->rec.first_seen;
     out->last_seen_ms = s->last_seen_ms;
     memcpy(out->name, s->rec.name, sizeof(out->name));
-    memcpy(out->zone, s->rec.zone, sizeof(out->zone));
     out->product = s->rec.product;
     out->hw_rev = s->rec.hw_rev;
     memcpy(out->fw, s->rec.fw, sizeof(out->fw));
+    out->zone_id = s->rec.zone_id;
+    out->address_id = s->rec.address_id;
+    out->link = s->rec.link;
     out->layer = s->layer;
 }
 
@@ -291,13 +309,12 @@ esp_err_t siot_devtab_set_product(const uint8_t mac[6], uint16_t product, uint8_
     return err;
 }
 
-static void copy_name_zone(devtab_rec_t *rec, const char *name, const char *zone)
+static void copy_name(devtab_rec_t *rec, const char *name)
 {
-    if (name) strlcpy(rec->name, name, sizeof(rec->name));
-    if (zone) strlcpy(rec->zone, zone, sizeof(rec->zone));
+    strlcpy(rec->name, name ? name : "", sizeof(rec->name));
 }
 
-esp_err_t siot_devtab_announce(const uint8_t mac[6], const char *name, const char *zone, uint8_t role)
+esp_err_t siot_devtab_announce(const uint8_t mac[6], const char *name, uint8_t role)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
     slot_t *s = find(mac);
@@ -306,14 +323,13 @@ esp_err_t siot_devtab_announce(const uint8_t mac[6], const char *name, const cha
     bool dirty = false;
     if (role != SIOT_DEV_ROLE_UNKNOWN && s->rec.role != role) { s->rec.role = role; dirty = true; }
     const bool matches_pending = (s->rec.flags & SIOT_DEV_F_PENDING_RENAME) &&
-                                 strcmp(s->rec.name, name ? name : "") == 0 &&
-                                 strcmp(s->rec.zone, zone ? zone : "") == 0;
+                                 strcmp(s->rec.name, name ? name : "") == 0;
     if (matches_pending) {
         s->rec.flags &= (uint8_t)~SIOT_DEV_F_PENDING_RENAME;
         dirty = true;
     } else if (!(s->rec.flags & SIOT_DEV_F_ANNOTATED)) {
-        if (strcmp(s->rec.name, name ? name : "") != 0 || strcmp(s->rec.zone, zone ? zone : "") != 0) {
-            copy_name_zone(&s->rec, name, zone);
+        if (strcmp(s->rec.name, name ? name : "") != 0) {
+            copy_name(&s->rec, name);
             dirty = true;
         }
     }
@@ -322,32 +338,74 @@ esp_err_t siot_devtab_announce(const uint8_t mac[6], const char *name, const cha
     return ESP_OK;
 }
 
-esp_err_t siot_devtab_hint(const uint8_t mac[6], const char *name, const char *zone)
+esp_err_t siot_devtab_hint(const uint8_t mac[6], const char *name)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (find(mac) != NULL) { xSemaphoreGive(s_lock); return ESP_OK; }
     slot_t *s = alloc(mac);
     if (s == NULL) { xSemaphoreGive(s_lock); return ESP_ERR_NO_MEM; }
-    copy_name_zone(&s->rec, name, zone);
+    copy_name(&s->rec, name);
     const esp_err_t err = persist(s);
     xSemaphoreGive(s_lock);
     return err;
 }
 
-esp_err_t siot_devtab_set_name_zone(const uint8_t mac[6], const char *name, const char *zone,
-                                    bool online_now)
+esp_err_t siot_devtab_set_name(const uint8_t mac[6], const char *name, bool online_now)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
     slot_t *s = find(mac);
     if (s == NULL) s = alloc(mac);
     if (s == NULL) { xSemaphoreGive(s_lock); return ESP_ERR_NO_MEM; }
-    copy_name_zone(&s->rec, name, zone);
+    copy_name(&s->rec, name);
     s->rec.flags |= SIOT_DEV_F_ANNOTATED;
     if (online_now) s->rec.flags &= (uint8_t)~SIOT_DEV_F_PENDING_RENAME;
     else s->rec.flags |= SIOT_DEV_F_PENDING_RENAME;
     const esp_err_t err = persist(s);
     xSemaphoreGive(s_lock);
     return err;
+}
+
+esp_err_t siot_devtab_set_ids(const uint8_t mac[6], uint16_t zone_id, uint16_t address_id)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    slot_t *s = find(mac);
+    if (s == NULL) s = alloc(mac);
+    if (s == NULL) { xSemaphoreGive(s_lock); return ESP_ERR_NO_MEM; }
+    esp_err_t err = ESP_OK;
+    if (s->rec.zone_id != zone_id || s->rec.address_id != address_id) {
+        s->rec.zone_id = zone_id;
+        s->rec.address_id = address_id;
+        err = persist(s);
+    }
+    xSemaphoreGive(s_lock);
+    return err;
+}
+
+esp_err_t siot_devtab_set_address_if_unset(const uint8_t mac[6], uint16_t address_id)
+{
+    if (address_id == SAFR_LABEL_ID_NONE) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    slot_t *s = find(mac);
+    if (s == NULL) { xSemaphoreGive(s_lock); return ESP_ERR_NOT_FOUND; }
+    if (s->rec.address_id != SAFR_LABEL_ID_NONE) { xSemaphoreGive(s_lock); return ESP_ERR_INVALID_STATE; }
+    s->rec.address_id = address_id;
+    const esp_err_t err = persist(s);
+    xSemaphoreGive(s_lock);
+    return err;
+}
+
+bool siot_devtab_uses_label(uint8_t kind, uint16_t id)
+{
+    if (id == SAFR_LABEL_ID_NONE) return false;
+    bool used = false;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (size_t i = 0; i < SIOT_DEVTAB_CAP && !used; i++) {
+        if (!s_tab[i].used) continue;
+        const uint16_t have = kind == SAFR_LABEL_ZONE ? s_tab[i].rec.zone_id : s_tab[i].rec.address_id;
+        used = have == id;
+    }
+    xSemaphoreGive(s_lock);
+    return used;
 }
 
 esp_err_t siot_devtab_retire(const uint8_t mac[6], bool pending_decommission)
@@ -400,7 +458,9 @@ esp_err_t siot_devtab_replace(const uint8_t old_mac[6], const uint8_t new_mac[6]
     if (n == NULL) { xSemaphoreGive(s_lock); return ESP_ERR_NO_MEM; }
     const bool old_online = derive_state(o, now_ms) == SIOT_DEV_ONLINE;
 
-    copy_name_zone(&n->rec, o->rec.name, o->rec.zone);
+    copy_name(&n->rec, o->rec.name);
+    n->rec.zone_id = o->rec.zone_id;
+    n->rec.address_id = o->rec.address_id;
     n->rec.flags |= SIOT_DEV_F_ANNOTATED | SIOT_DEV_F_PENDING_RENAME;
     if (derive_state(n, now_ms) == SIOT_DEV_ONLINE) {
         /* Heard recently: push the rename right away (coordinator does it). */

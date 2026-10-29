@@ -299,6 +299,7 @@ Map<String, dynamic> _unitToJson(TopologyNode n, {bool volatile = true}) => {
         'alarmAt': n.alarmLatchedAt!.toUtc().toIso8601String(),
       if (n.name != null) 'name': n.name,
       if (n.zone != null) 'zone': n.zone,
+      if (n.address != null) 'addr': n.address,
       if (n.productCode != null) 'product': n.productCode,
       if (n.hwRev != null) 'hw': n.hwRev,
       if (n.fwVersion != null) 'fw': n.fwVersion,
@@ -382,6 +383,7 @@ TopologyNode? _unitFromJson(Object? raw, DateTime fallbackSeen) {
     alarmLatchedAt: time(raw['alarmAt']),
     name: raw['name'] as String?,
     zone: raw['zone'] as String?,
+    address: raw['addr'] as String?,
     productCode: (raw['product'] as num?)?.toInt(),
     hwRev: (raw['hw'] as num?)?.toInt(),
     fwVersion: raw['fw'] as String?,
@@ -505,8 +507,6 @@ String encodeMirrorFrames({
             t.tick.msgType?.wire,
             t.tick.eventCode?.wire,
             t.tick.uptimeS,
-            t.tick.dlHeard,
-            t.tick.dlMap,
           ],
       ],
     });
@@ -535,8 +535,6 @@ MirrorFrames? decodeMirrorFrames(String payload) {
           msgType: type is num ? SafrMsgType.fromWire(type.toInt()) : null,
           eventCode: code is num ? SafrEventCode.fromWire(code.toInt()) : null,
           uptimeS: (t[8] as num?)?.toInt(),
-          dlHeard: t.length > 9 ? (t[9] as num?)?.toInt() : null,
-          dlMap: t.length > 10 ? (t[10] as num?)?.toInt() : null,
         ),
       ));
     }

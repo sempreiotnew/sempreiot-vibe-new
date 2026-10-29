@@ -10,6 +10,7 @@ import '../../../../core/theme/theme_ext.dart';
 import '../../../../core/utils/relative_time.dart';
 import '../../application/central_mirror_viewer.dart';
 import '../../application/credentials_admin_provider.dart';
+import '../../application/device_labels_provider.dart';
 import '../../application/safr_downlink_provider.dart';
 import '../../application/topology_provider.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
@@ -117,11 +118,19 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
           ),
           const InfoRowDivider(),
           _Fact(
-            icon: Icons.place_rounded,
+            icon: Icons.account_tree_outlined,
             label: 'Zona',
             value: node.zone ?? '',
             trailing:
-                viewOnly ? null : _EditButton(onTap: () => _rename(node)),
+                viewOnly ? null : _EditButton(onTap: () => _assign(node)),
+          ),
+          const InfoRowDivider(),
+          _Fact(
+            icon: Icons.place_rounded,
+            label: 'Endereçamento',
+            value: node.address ?? '',
+            trailing:
+                viewOnly ? null : _EditButton(onTap: () => _assign(node)),
           ),
           const InfoRowDivider(),
           _Fact(
@@ -307,10 +316,17 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
           const SizedBox(height: 10),
           InfoCard(children: [
             InfoActionRow(
-              label: 'Nome e zona',
+              label: 'Nome',
               hint: 'Renomeia na placa e no dispositivo',
               icon: Icons.edit_rounded,
               onTap: () => _rename(node),
+            ),
+            const InfoRowDivider(),
+            InfoActionRow(
+              label: 'Zona e endereçamento',
+              hint: 'Só na placa: nada vai para o dispositivo',
+              icon: Icons.account_tree_outlined,
+              onTap: () => _assign(node),
             ),
             const InfoRowDivider(),
             if (!node.retired)
@@ -397,36 +413,21 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
     final role = await _gate('renomear este dispositivo');
     if (role == null || !mounted) return;
     final nameCtrl = TextEditingController(text: node.name ?? '');
-    final zoneCtrl = TextEditingController(text: node.zone ?? '');
     final ok = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: dialogContext.surfaceColor,
-        title: const Text('Nome e zona'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameCtrl,
-                autofocus: true,
-                maxLength: 32,
-                textInputAction: TextInputAction.next,
-                decoration: InputDecoration(
-                  labelText: 'Nome',
-                  hintText: 'ex.: Sala de máquinas',
-                  helperText: node.mac,
-                ),
-              ),
-              TextField(
-                controller: zoneCtrl,
-                maxLength: 16,
-                decoration: const InputDecoration(
-                    labelText: 'Zona', hintText: 'ex.: Térreo'),
-                onSubmitted: (_) => Navigator.pop(dialogContext, true),
-              ),
-            ],
+        title: const Text('Nome'),
+        content: TextField(
+          controller: nameCtrl,
+          autofocus: true,
+          maxLength: 32,
+          decoration: InputDecoration(
+            labelText: 'Nome',
+            hintText: 'ex.: Sala de máquinas',
+            helperText: node.mac,
           ),
+          onSubmitted: (_) => Navigator.pop(dialogContext, true),
         ),
         actions: [
           TextButton(
@@ -442,23 +443,102 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
     );
     if (ok != true) return;
     final name = nameCtrl.text.trim();
-    final zone = zoneCtrl.text.trim();
     if (name.isEmpty) return;
     final db = ref.read(appDatabaseProvider);
-    final result = await ref
-        .read(safrDownlinkProvider)
-        .sendSetDevice(node.mac, name, zone);
+    final result =
+        await ref.read(safrDownlinkProvider).sendSetDevice(node.mac, name);
     await (db.update(db.meshDevices)..where((t) => t.mac.equals(node.mac)))
-        .write(MeshDevicesCompanion(name: Value(name), zone: Value(zone)));
+        .write(MeshDevicesCompanion(name: Value(name)));
     await db.addAudit(
         role.auditName,
         result.ok ? 'device_rename' : 'device_rename_local',
-        {'mac': node.mac, 'name': name, 'zone': zone, 'board_ok': result.ok});
+        {'mac': node.mac, 'name': name, 'board_ok': result.ok});
     _show(
         result.ok
             ? 'Nome enviado à placa.'
             : 'Salvo só neste tablet — ${result.message}',
         result.ok);
+  }
+
+  /// Protocol §14.1: the unit's zone and endereçamento are ids in the
+  /// board's table (SET_DEVICE_IDS, board-only) — nothing reaches the
+  /// unit, no detector wakes. The names come from the board's label tables.
+  Future<void> _assign(TopologyNode node) async {
+    final role = await _gate('definir zona e endereçamento');
+    if (role == null || !mounted) return;
+    final labels = ref.read(labelIndexProvider);
+    final zones = labels.of(SafrLabelKind.zone);
+    final addresses = labels.of(SafrLabelKind.address);
+    var zoneId = node.zoneId ?? 0;
+    var addressId = node.addressId ?? 0;
+    if (!zones.any((l) => l.id == zoneId)) zoneId = 0;
+    if (!addresses.any((l) => l.id == addressId)) addressId = 0;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setState) => AlertDialog(
+          backgroundColor: dialogContext.surfaceColor,
+          title: const Text('Zona e endereçamento'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _LabelPicker(
+                  label: 'Zona',
+                  none: 'Sem zona',
+                  options: zones,
+                  value: zoneId,
+                  onChanged: (v) => setState(() => zoneId = v),
+                ),
+                const SizedBox(height: 12),
+                _LabelPicker(
+                  label: 'Endereçamento',
+                  none: 'Sem endereçamento',
+                  options: addresses,
+                  value: addressId,
+                  onChanged: (v) => setState(() => addressId = v),
+                ),
+                if (zones.isEmpty || addresses.isEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    'As listas são criadas no menu: Zonas e Endereçamentos.',
+                    style: TextStyle(
+                        color: dialogContext.textSecondary, fontSize: 12.5),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Salvar'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final db = ref.read(appDatabaseProvider);
+    final result = await ref
+        .read(safrDownlinkProvider)
+        .sendSetDeviceIds(node.mac, zoneId, addressId);
+    if (result.ok) {
+      await (db.update(db.meshDevices)..where((t) => t.mac.equals(node.mac)))
+          .write(MeshDevicesCompanion(
+              zoneId: Value(zoneId), addressId: Value(addressId)));
+    }
+    await db.addAudit(role.auditName, 'device_labels', {
+      'mac': node.mac,
+      'zone_id': zoneId,
+      'address_id': addressId,
+      'board_ok': result.ok,
+    });
+    _show(result.ok ? 'Confirmado pela placa.' : result.message, result.ok);
   }
 
   Future<void> _retire(TopologyNode node) async {
@@ -552,6 +632,38 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
 
 // ── Pieces ───────────────────────────────────────────────────────────────────
 
+/// One label table as a dropdown; 0 = none.
+class _LabelPicker extends StatelessWidget {
+  const _LabelPicker({
+    required this.label,
+    required this.none,
+    required this.options,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String none;
+  final List<SafrLabel> options;
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<int>(
+      initialValue: value,
+      isExpanded: true,
+      decoration: InputDecoration(labelText: label),
+      items: [
+        DropdownMenuItem(value: 0, child: Text(none)),
+        for (final l in options)
+          DropdownMenuItem(value: l.id, child: Text(l.name)),
+      ],
+      onChanged: (v) => onChanged(v ?? 0),
+    );
+  }
+}
+
 class _Hero extends StatelessWidget {
   const _Hero({required this.node, required this.onRename});
 
@@ -596,9 +708,9 @@ class _Hero extends StatelessWidget {
                   fontFamily: hasName ? null : 'monospace',
                 ),
               ),
-              if (node.zone?.isNotEmpty == true)
+              if (node.zone != null || node.address != null)
                 Text(
-                  node.zone!,
+                  [node.address, node.zone].whereType<String>().join(' · '),
                   style: TextStyle(color: context.textSecondary, fontSize: 13),
                 ),
               const SizedBox(height: 8),

@@ -1,13 +1,13 @@
 /// A device this phone provisioned into an installation — a **work log**
 /// entry (lifecycle §1 principle 3), never the roster. Used for the board's
-/// `/enroll` hints (`[{mac, id, name, zone}]`, POC-BRIEF §5) and for the
+/// `/enroll` hints (`[{mac, id, name}]`, POC-BRIEF §5) and for the
 /// installer's own list on the detail screen.
 class ProvisionedDevice {
   const ProvisionedDevice({
     required this.mac,
     required this.id,
     required this.name,
-    required this.zone,
+    required this.address,
     this.provisionedAt,
     this.model,
     this.productCode,
@@ -17,7 +17,11 @@ class ProvisionedDevice {
   final String mac;
   final String id;
   final String name;
-  final String zone;
+
+  /// The endereçamento typed at setup (protocol §14.8) — where the unit
+  /// is; '' when the installer skipped it. Never sent to the unit: it is
+  /// set on the tablet, which keeps it on the board.
+  final String address;
 
   /// When this phone provisioned it (UTC). Null for entries written before
   /// lifecycle Phase 1.
@@ -34,7 +38,7 @@ class ProvisionedDevice {
         'mac': mac,
         'id': id,
         'name': name,
-        'zone': zone,
+        'address': address,
         if (provisionedAt != null)
           'provisionedAt': provisionedAt!.toIso8601String(),
         if (model != null && model!.isNotEmpty) 'model': model,
@@ -47,7 +51,8 @@ class ProvisionedDevice {
         mac: json['mac'] as String,
         id: json['id'] as String,
         name: json['name'] as String,
-        zone: json['zone'] as String,
+        // 'zone' = entries written before 2026-10-28 (the same meaning).
+        address: (json['address'] ?? json['zone'] ?? '') as String,
         provisionedAt: json['provisionedAt'] is String
             ? DateTime.tryParse(json['provisionedAt'] as String)
             : null,
@@ -70,7 +75,7 @@ class Installation {
     required this.safrPskHex,
     required this.channel,
     required this.meshId,
-    required this.zones,
+    required this.addresses,
     required this.createdAt,
     this.devices = const [],
     this.formatVersion = currentFormatVersion,
@@ -96,7 +101,10 @@ class Installation {
 
   final int channel;
   final int meshId;
-  final List<String> zones;
+
+  /// Endereçamentos the installer uses at setup (suggestions for the next
+  /// unit); the board's own table is managed on the tablet (protocol §14.1).
+  final List<String> addresses;
   final DateTime createdAt;
 
   /// Devices this phone provisioned into this installation (work log).
@@ -107,7 +115,7 @@ class Installation {
   Installation copyWith({
     String? localId,
     String? displayName,
-    List<String>? zones,
+    List<String>? addresses,
     List<ProvisionedDevice>? devices,
   }) =>
       Installation(
@@ -119,7 +127,7 @@ class Installation {
         safrPskHex: safrPskHex,
         channel: channel,
         meshId: meshId,
-        zones: zones ?? this.zones,
+        addresses: addresses ?? this.addresses,
         createdAt: createdAt,
         devices: devices ?? this.devices,
       );
@@ -146,13 +154,13 @@ class Installation {
         'safrPskHex': safrPskHex,
         'channel': channel,
         'meshId': meshId,
-        'zones': zones,
+        'addresses': addresses,
         'createdAt': createdAt.toIso8601String(),
         'devices': devices.map((d) => d.toJson()).toList(),
       };
 
   /// What another phone or the tablet receives when the installation is
-  /// shared: the code, the name and the zones — never this phone's work log.
+  /// shared: the code, the name and the endereçamentos — never this phone's work log.
   Map<String, dynamic> toShareJson() => {
         'v': currentFormatVersion,
         'localId': localId,
@@ -163,7 +171,7 @@ class Installation {
         'safrPskHex': safrPskHex,
         'channel': channel,
         'meshId': meshId,
-        'zones': zones,
+        'addresses': addresses,
         'createdAt': createdAt.toIso8601String(),
         'devices': const <Map<String, dynamic>>[],
       };
@@ -178,7 +186,10 @@ class Installation {
         safrPskHex: json['safrPskHex'] as String,
         channel: json['channel'] as int,
         meshId: json['meshId'] as int,
-        zones: (json['zones'] as List<dynamic>).cast<String>(),
+        // 'zones' = records written before 2026-10-28 (the same meaning).
+        addresses: ((json['addresses'] ?? json['zones'] ?? const <dynamic>[])
+                as List<dynamic>)
+            .cast<String>(),
         createdAt: DateTime.parse(json['createdAt'] as String),
         devices: (json['devices'] as List<dynamic>? ?? [])
             .cast<Map<String, dynamic>>()

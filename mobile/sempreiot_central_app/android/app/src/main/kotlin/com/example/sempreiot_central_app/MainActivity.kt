@@ -22,7 +22,9 @@ import io.flutter.plugin.common.MethodChannel
  *
  * "connectToSoftAp" result is a bool (true = connected+bound). Errors:
  * UNSUPPORTED_API (< Android 10, caller should fall back to manual Wi-Fi
- * settings via app_settings), TIMEOUT, UNAVAILABLE.
+ * settings via app_settings), UNAVAILABLE (dialog dismissed, SSID not found,
+ * passphrase rejected, or the 30 s request timed out), PERMISSION (the manifest
+ * lost CHANGE_NETWORK_STATE — a build problem, not something the operator can fix).
  */
 class MainActivity : FlutterActivity() {
     companion object {
@@ -117,7 +119,17 @@ class MainActivity : FlutterActivity() {
             }
         }
         wifiNetworkCallback = callback
-        connectivityManager.requestNetwork(request, callback, 30_000)
+        try {
+            connectivityManager.requestNetwork(request, callback, 30_000)
+        } catch (e: SecurityException) {
+            // requestNetwork() needs CHANGE_NETWORK_STATE (AndroidManifest.xml). Without a
+            // clear code the Dart side only sees Flutter's generic "error" envelope.
+            wifiNetworkCallback = null
+            if (!finished) {
+                finished = true
+                result.error("PERMISSION", "requestNetwork refused: ${e.message}", null)
+            }
+        }
     }
 
     private fun unbindSoftAp() {

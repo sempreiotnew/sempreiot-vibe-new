@@ -9,7 +9,7 @@ import '../../domain/entities/provisioning_step.dart';
 import '../widgets/confirm_step.dart';
 import '../widgets/connect_wifi_step.dart';
 import '../widgets/identify_steps.dart';
-import '../widgets/name_zone_step.dart';
+import '../widgets/name_address_step.dart';
 import '../widgets/provisioning_progress_step.dart';
 import '../widgets/result_step.dart';
 import '../widgets/scan_step.dart';
@@ -114,8 +114,8 @@ class ProvisioningWizardScreen extends ConsumerWidget {
 
   Widget _stepWidget(ProvisioningStep step) => switch (step) {
         ProvisioningStep.scan => ScanStep(installationId: installationId),
-        ProvisioningStep.nameZone =>
-          NameZoneStep(installationId: installationId),
+        ProvisioningStep.nameAddress =>
+          NameAddressStep(installationId: installationId),
         ProvisioningStep.connecting =>
           ConnectingStep(installationId: installationId),
         ProvisioningStep.identifying =>

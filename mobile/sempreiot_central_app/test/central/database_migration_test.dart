@@ -66,7 +66,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 14);
+    expect(version, 15);
   });
 
   test('schema v10 -> v11 adds the firmware update history, rows kept',
@@ -117,7 +117,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 14);
+    expect(version, 15);
   });
 
   test('schema v11 -> v12 adds where the image came from, rows kept', () async {
@@ -162,7 +162,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 14);
+    expect(version, 15);
   });
 
   test('schema v12 -> v13 adds the system tests, rows kept', () async {
@@ -210,7 +210,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 14);
+    expect(version, 15);
   });
 
   test('schema v13 -> v14 adds the downlink-loss columns, rows kept',
@@ -243,6 +243,52 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 14);
+    expect(version, 15);
+  });
+
+  test('schema v14 -> v15 adds the label ids and tables, drops the zone string',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('siot_migr_');
+    addTearDown(() => dir.delete(recursive: true));
+    final file = File('${dir.path}/sempreiot.sqlite');
+
+    final fresh = AppDatabase.forTesting(NativeDatabase(file));
+    await fresh.into(fresh.meshDevices).insert(MeshDevicesCompanion.insert(
+          mac: _unitA,
+          firstSeenAt: DateTime.utc(2026, 10, 1),
+          lastSeenAt: DateTime.utc(2026, 10, 2),
+          name: const Value('Sirene 1'),
+        ));
+    await fresh.close();
+
+    final upgraded = AppDatabase.forTesting(NativeDatabase(file, setup: (raw) {
+      raw.execute('ALTER TABLE mesh_devices DROP COLUMN zone_id');
+      raw.execute('ALTER TABLE mesh_devices DROP COLUMN address_id');
+      raw.execute('ALTER TABLE mesh_devices DROP COLUMN link_kind');
+      raw.execute('ALTER TABLE mesh_devices ADD COLUMN zone TEXT');
+      raw.execute("UPDATE mesh_devices SET zone = 'Térreo'");
+      raw.execute('DROP TABLE device_labels');
+      raw.execute('PRAGMA user_version = 14');
+    }));
+    addTearDown(upgraded.close);
+
+    final r = await (upgraded.select(upgraded.meshDevices)
+          ..where((t) => t.mac.equals(_unitA)))
+        .getSingle();
+    expect(r.name, 'Sirene 1');
+    expect(r.zoneId, isNull);
+    expect(r.addressId, isNull);
+    expect(r.linkKind, 0);
+    expect(await upgraded.select(upgraded.deviceLabels).get(), isEmpty);
+    final columns = await upgraded
+        .customSelect('PRAGMA table_info(mesh_devices)')
+        .map((row) => row.read<String>('name'))
+        .get();
+    expect(columns, isNot(contains('zone')));
+    final version = await upgraded
+        .customSelect('PRAGMA user_version')
+        .map((row) => row.read<int>('user_version'))
+        .getSingle();
+    expect(version, 15);
   });
 }

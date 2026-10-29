@@ -184,6 +184,7 @@ size_t siot_ota_control_encode(uint8_t *p, const siot_ota_control_t *c)
     case SIOT_OTA_FILTER_PRODUCT: siot_put_u16(&p[off], c->product); off += 2; break;
     case SIOT_OTA_FILTER_ZONE:    off += put_str(&p[off], c->zone, SIOT_OTA_ZONE_MAX); break;
     case SIOT_OTA_FILTER_UNIT:    memcpy(&p[off], c->mac, 6); off += 6; break;
+    case SIOT_OTA_FILTER_ZONE_ID: siot_put_u16(&p[off], c->zone_id); off += 2; break;
     default: break;
     }
     return off;
@@ -213,6 +214,11 @@ bool siot_ota_control_decode(const uint8_t *p, size_t len, siot_ota_control_t *c
         if (off + 6 > len) return false;
         memcpy(c->mac, &p[off], 6); off += 6;
         if (siot_mac_is_bcast(c->mac)) return false;
+        break;
+    case SIOT_OTA_FILTER_ZONE_ID:
+        if (off + 2 > len) return false;
+        c->zone_id = siot_get_u16(&p[off]); off += 2;
+        if (c->zone_id == SAFR_LABEL_ID_NONE) return false;
         break;
     default:
         return false;

@@ -5,12 +5,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/config/app_config.dart';
 import '../../../core/database/app_database.dart';
 import '../../../core/utils/mqtt_log.dart';
+import '../domain/safr/safr_v2_payloads.dart';
 import '../../iot/domain/entities/mqtt_message_entity.dart';
 import 'alarm_latch_provider.dart';
 import 'central_iot_provider.dart';
 import '../domain/ota/firmware_release.dart';
 import 'central_mirror_codec.dart';
 import 'device_command_provider.dart';
+import 'device_labels_provider.dart';
 import 'device_led_provider.dart';
 import 'device_update_controller.dart';
 import 'device_update_history.dart';
@@ -555,10 +557,10 @@ class CentralMirrorPublisher {
   }
 }
 
-MirrorAlarm _alarmOf(MeshDevice d) => MirrorAlarm(
+MirrorAlarm _alarmOf(MeshDevice d, LabelIndex labels) => MirrorAlarm(
       mac: d.mac,
       name: d.name,
-      zone: d.zone,
+      zone: labels.name(SafrLabelKind.zone, d.zoneId),
       since: d.alarmLatchedAt,
     );
 
@@ -664,7 +666,10 @@ final centralMirrorPublisherProvider = Provider<void>((ref) {
   }, fireImmediately: true);
   ref.listen(latchedAlarmsProvider, (_, next) {
     final latched = next.valueOrNull;
-    if (latched != null) publisher.onAlarms(latched.map(_alarmOf).toList());
+    if (latched != null) {
+      final labels = ref.read(labelIndexProvider);
+      publisher.onAlarms([for (final d in latched) _alarmOf(d, labels)]);
+    }
   }, fireImmediately: true);
   ref.listen(centralIotConnectionProvider, (prev, next) {
     if (next.valueOrNull == true && prev?.valueOrNull != true) {

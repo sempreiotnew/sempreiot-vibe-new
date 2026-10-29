@@ -605,6 +605,7 @@ TopologyNode _copy(
       alarmLatchedAt: n.alarmLatchedAt,
       name: n.name,
       zone: n.zone,
+      address: n.address,
       boardState: n.boardState,
       boardFlags: n.boardFlags,
       parentCandidates: n.parentCandidates,

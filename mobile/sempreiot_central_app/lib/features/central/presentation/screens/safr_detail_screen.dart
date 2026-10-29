@@ -1098,6 +1098,9 @@ class _WireDetailScaffold extends ConsumerWidget {
           'Resultado final da atualização de uma unidade (§13.4).',
         v2.SafrMsgType.otaRollout =>
           'Tabela da atualização mantida pela placa (§13.6).',
+        v2.SafrMsgType.labelTable =>
+          'Zonas ou endereçamentos da placa: os nomes por trás dos ids de '
+              'cada dispositivo (§14.2).',
         v2.SafrMsgType.unknown => null,
       };
 
@@ -1331,7 +1334,7 @@ class _WireDetailScaffold extends ConsumerWidget {
               v2p.SafrCommand.setInstallation =>
                 'Grava o código numa placa nova (canal de setup).',
               v2p.SafrCommand.setDevice =>
-                'Nome e zona de um dispositivo; a placa repassa a ele.',
+                'Nome de um dispositivo; a placa repassa a ele.',
               v2p.SafrCommand.retireDevice =>
                 'A placa passa a ignorar este dispositivo.',
               v2p.SafrCommand.unretireDevice =>
@@ -1356,6 +1359,14 @@ class _WireDetailScaffold extends ConsumerWidget {
                 'Pede a tabela da atualização (resposta: ROLL).',
               v2p.SafrCommand.otaControl =>
                 'Inicia, pausa, retoma ou cancela uma atualização.',
+              v2p.SafrCommand.setLabel =>
+                'Cria ou renomeia uma zona / endereçamento na placa (§14.2).',
+              v2p.SafrCommand.delLabel =>
+                'Apaga uma zona / endereçamento da placa (recusado em uso).',
+              v2p.SafrCommand.getLabels =>
+                'Pede as tabelas de zonas / endereçamentos (resposta: LABELS).',
+              v2p.SafrCommand.setDeviceIds =>
+                'Zona e endereçamento de um dispositivo, só na placa (§14.1).',
               null => 'Código que este app não conhece.',
             },
           ),
@@ -1423,7 +1434,8 @@ class _WireDetailScaffold extends ConsumerWidget {
       case v2p.SafrNameAnnouncePayload p:
         return [
           ('Nome', p.name, null),
-          ('Zona', p.zone.isEmpty ? '—' : p.zone, null),
+          if (p.zone.isNotEmpty)
+            ('Zona (reservado)', p.zone, 'Campo reservado desde v3.8: a placa ignora.'),
           ('Papel', p.role.name, null),
           if (p.productCode != null)
             ('Produto', '0x${p.productCode!.toRadixString(16).padLeft(4, '0').toUpperCase()}', null),
@@ -1440,7 +1452,9 @@ class _WireDetailScaffold extends ConsumerWidget {
               [
                 e.state.name,
                 if (e.name.isNotEmpty) e.name,
-                if (e.zone.isNotEmpty) e.zone,
+                if (e.zoneId != 0) 'zona #${e.zoneId}',
+                if (e.addressId != 0) 'end. #${e.addressId}',
+                if (e.linkKind == v2p.safrLinkIsland) 'ilha',
               ].join(' · '),
               null,
             ),

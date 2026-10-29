@@ -37,7 +37,6 @@ SafrDeviceTableEntry _entry(
       flags: SafrDeviceFlags.seenEver,
       lastSeenAgeS: 3,
       name: 'Sirene 1',
-      zone: 'T',
       productCode: productCode,
       hwRev: hwRev,
       fwVersion: fwVersion,

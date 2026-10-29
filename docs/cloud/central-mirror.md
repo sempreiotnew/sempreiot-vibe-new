@@ -62,6 +62,9 @@ alarms held on the panel, always** (decided 2026-10-03).
 | `sempreiot/releases/{channel}` | cloud → every central | **yes** | when `ota_release.sh` publishes | the catalog of published firmware (§4.4) |
 | `{id}/release` | cloud → this central | **yes** | when `ota_release.sh --central` publishes | this central's own catalog (§4.4) |
 | `{id}/cmd/{user}` | phone → central | no | an Administrador taps Atualizar / Cancelar | `ota_start` / `ota_cancel` (§4.6); `{user}` = the phone's Identity ID, which AWS lets only that user publish under |
+| `{id}/cmd/{user}` *(planned 2026-10-28)* | phone → central | no | an Administrador edits Causa e efeito | `label_set` / `label_del` / `rule_set` / `rule_del` (§4.8) |
+| `{id}/rules` *(planned)* | central → cloud | no | watched: on hello, then on change | the label tables and the rule table **as the board confirmed them** (§4.8) |
+| `{id}/mesh/up` · `{id}/mesh/down` *(planned, names to settle — Phase C)* | island root ↔ central | no | always while an island exists | SAFR frames, end-to-end authenticated, tunnelled over MQTT (`phase4-cause-and-effect-brief.md` §2.4) |
 
 Why the ping rides the bare `{id}` topic: a user's `Access_…` policy already allows publishing
 there and nowhere else under the central, so no lambda and no per-user policy changes.
@@ -333,6 +336,22 @@ alone (the popover's "Cancelar teste"); a phone only looks.
 
 Size: about 90 bytes per unit per run — 11 runs × 50 units ≈ 50 KB (AWS limit 128 KB; the tablet
 keeps every run in its database, the message carries the last 10).
+
+### 4.8 Causa e efeito from a phone (`{id}/cmd/{user}`) — planned 2026-10-28
+
+The third exception to rule 2 (after Identificar and the Internet update), decided 2026-10-28:
+an **Administrador** may create, change and delete zones, endereçamentos and rules from the phone
+(protocol §14). Same path and same proof as §4.6: the phone publishes on its own `{id}/cmd/{user}`
+topic, the central reads who asked from the topic, checks Nível 4 in its access relations, applies the
+change to the board over USB and publishes the tables the board sent back on `{id}/rules`.
+
+- **The central must be online.** A change with the central offline is refused with a message on the
+  phone, never queued: nobody may believe a rule is active that the board never received.
+- **The phone shows the tables as the board confirmed them** (`RULE_TABLE` / `LABEL_TABLE` pages),
+  never as submitted; the ✓ on the matrix waits for the page.
+- The tablet shows who changed what; every change goes in the audit trail (`actor = remote:<name>`).
+- Payload: `{cmd: 'rule_set', rule: {...}}` etc. — one record per message, the same fields as the
+  protocol record; the central encodes the SAFR COMMAND.
 
 ### 4.5 `alarm` — the alarms held on the panel
 

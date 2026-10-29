@@ -69,7 +69,8 @@ typedef enum {
 
 typedef enum { SIOT_OTA_PUSH_RECEIVING = 0, SIOT_OTA_PUSH_OK = 1, SIOT_OTA_PUSH_FAILED = 2 } siot_ota_push_phase_t;
 typedef enum { SIOT_OTA_ACT_START = 1, SIOT_OTA_ACT_PAUSE, SIOT_OTA_ACT_RESUME, SIOT_OTA_ACT_ABORT } siot_ota_action_t;
-typedef enum { SIOT_OTA_FILTER_ALL = 0, SIOT_OTA_FILTER_PRODUCT, SIOT_OTA_FILTER_ZONE, SIOT_OTA_FILTER_UNIT } siot_ota_filter_t;
+typedef enum { SIOT_OTA_FILTER_ALL = 0, SIOT_OTA_FILTER_PRODUCT, SIOT_OTA_FILTER_ZONE, SIOT_OTA_FILTER_UNIT,
+               SIOT_OTA_FILTER_ZONE_ID /* v3.8: ZONE_ID u16 (§13.6 / §14.1) */ } siot_ota_filter_t;
 
 /* ---- the image an OTA_PUSH_BEGIN announces and an OTA_OFFER offers ---------- */
 
@@ -137,8 +138,9 @@ typedef struct {
     uint8_t  family;                 /* which staged image */
     uint8_t  filter;                 /* siot_ota_filter_t */
     uint16_t product;                /* FILTER_PRODUCT */
-    char     zone[SIOT_OTA_ZONE_MAX + 1]; /* FILTER_ZONE */
+    char     zone[SIOT_OTA_ZONE_MAX + 1]; /* FILTER_ZONE (string, pre-v3.8 boards) */
     uint8_t  mac[6];                 /* FILTER_UNIT */
+    uint16_t zone_id;                /* FILTER_ZONE_ID (v3.8) */
 } siot_ota_control_t;
 
 size_t siot_ota_control_encode(uint8_t *p, const siot_ota_control_t *c);

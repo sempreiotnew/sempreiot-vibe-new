@@ -25,7 +25,16 @@ here. Do **not** keep divergent layout comments in code — cite this file inste
   with the weak-link / degraded-link rules of §9.4 — additive, `VER` unchanged. Revision **3.7**
   (2026-10-27) adds `DL_MAP` beside it (§7.3: *which* of the last 8 board heartbeats were heard, a
   bitmap placed by the board's `UPTIME_S`), so the central can draw every lost downlink beat where it
-  happened — additive, `VER` unchanged.
+  happened — additive, `VER` unchanged. Revision **3.8** (2026-10-28, **specified, nothing
+  implemented** — `docs/phases-development/phase4-cause-and-effect-brief.md`) adds **labels and
+  cause-and-effect** (§14): zone and endereçamento **ids** behind names kept on the board (`SET_LABEL`
+  / `DEL_LABEL` / `GET_LABELS`, `LABEL_TABLE`), the ids and the link kind on every `DEVICE_TABLE`
+  entry (`format = 2`) and in `SET_DEVICE`, the rules (`SET_RULE` / `DEL_RULE` / `GET_RULES`,
+  `RULE_TABLE`), `COMMAND SOUND`, the unit's own cause list (`SET_LINKS`), `SET_DEVICE_IDS` (a unit's
+  zone and endereçamento, board-only) and OTA filter `4` (one zone id). The 16-byte zone **string** of
+  `NAME_ANNOUNCE` / `SET_DEVICE` / `DEVICE_TABLE` becomes *reserved* (sent with length 0, ignored). All
+  additive, `VER` unchanged. **Board side implemented 2026-10-28** (labels, `DEVICE_TABLE` format 2,
+  `SET_DEVICE_IDS`, filter 4; host tests `test_labels.c`); rules, `SOUND`, `SET_LINKS` are Phase B.
 - Status: implemented (uplink + downlink + journal backfill); v3.2 additions: implemented, bench pending;
   v3.3: implemented; **v3.4: specified, firmware Phase 2 (`docs/phases-development/phase2-leaf-brief.md`)**
 - Supersedes: SAFR v2 (`VER = 0x02` — decode-only for stored packets) and
@@ -338,6 +347,8 @@ Sentinels for "not available": `0xFF` (uint8), `0xFFFF` (uint16), `0x7FFF` (int1
 | 0x13 | OTA_STATUS *(v3.5)* | uplink | 2 bytes, §13.4 |
 | 0x14 | OTA_RESULT *(v3.5)* | uplink | §13.4 |
 | 0x15 | OTA_ROLLOUT *(v3.5)* | uplink (board → central, serial only) | paged, §13.6 |
+| 0x16 | LABEL_TABLE *(v3.8)* | uplink (board → central, serial only) | paged, §14.2 |
+| 0x17 | RULE_TABLE *(v3.8)* | uplink (board → central, serial only) | paged, §14.4 |
 
 ### 7.1 EVENT — `MSG_TYPE 0x01` (uplink) — payload 17 bytes
 
@@ -518,7 +529,7 @@ The board still sends its own to the tablet every 60 s (serial only, never on th
 |----|------|-------|---|
 | 0 | 2 | ACKED_MSG_ID | which transmission is being confirmed |
 | 2 | 1 | STATUS: 0x00 OK, 0x01 ERROR, 0x02 UNKNOWN_DST | OK = processed; ERROR = received but rejected; UNKNOWN_DST = no such device |
-| 3 | 1 | DETAIL *(v3.2; was RESERVED, always 0 before)* | With STATUS ERROR on the v3.2 commands: `0x01` unknown MAC · `0x02` table full · `0x03` not retired · `0x04` bad ARGS · `0x05` refused (own MAC / broadcast) · `0x06` not in setup mode · `0x00` no detail. Pre-v3.2 receivers ignore the byte. |
+| 3 | 1 | DETAIL *(v3.2; was RESERVED, always 0 before)* | With STATUS ERROR on the v3.2 commands: `0x01` unknown MAC · `0x02` table full · `0x03` not retired · `0x04` bad ARGS · `0x05` refused (own MAC / broadcast) · `0x06` not in setup mode · *(v3.8)* `0x07` unknown label / rule id · `0x08` label in use · `0x09` no sounder on this unit · `0x00` no detail. Pre-v3.2 receivers ignore the byte. |
 
 *(v3.4)* **STATUS is a code in its low two bits plus flags above them:** bits 0–1 =
 `0x00 OK` / `0x01 ERROR` / `0x02 UNKNOWN_DST`; bit 2 = **`PENDING` (0x04)** "frames
@@ -554,16 +565,25 @@ Sets `F_ACK_REQ`. `DST_MAC` selects the target device (broadcast allowed).
 | 0x03 | RELAY_SET | 1 byte: 0/1 (GPIO12) | Output control. |
 | 0x04 | IDENTIFY (blink RGB) | 1 byte: seconds | Physically locate a device during commissioning. |
 | 0x05 | **RESET** | — | Operator alarm reset (§7.1.4): device leaves alarm state (if the sensed condition has cleared), stops re-announcing, and the central clears its latch **after the root ACKs**. Broadcast = system reset. ⛑ UL 864 / NFPA 72: alarms clear only by manual reset. |
+| 0x06 | **SOUND** *(v3.8, §14.5)* | `MODE u8 ‖ DURATION_S u16` | Drive the unit's sounder: `MODE` `0` off (behaves as `SILENCE` addressed to this unit) · `1` evacuate (temporal-3) · `2` alert (continuous) · `3` chirp (test). `DURATION_S` `0` = until `SILENCE` / `RESET`. Sent by the **board** as the effect of a rule (§14.6) and by the tablet for the real test (§14.7). A unit without a sounder ACKs ERROR/`DETAIL 0x09`. ⛑ pattern per NFPA 72 / ISO 8201 temporal-3, EN 54-3 — verify editions. |
 | 0x10 | GET_INSTALLATION *(v3.1, POC round 1 — pocs/POC-BRIEF.md §4.2)* | — | Sent by the central to the board over the serial link only (never relayed into the mesh). The board replies with INSTALLATION (§7.10). |
 | 0x11 | SET_INSTALLATION *(v3.2, Case B)* | `system_id u16 ‖ channel u8 ‖ mesh_id u8 ‖ ssid_len u8 ‖ ssid (≤ 31) ‖ psk_len u8 ‖ psk (≤ 31) ‖ safr_psk[16] ‖ name_len u8 ‖ name (≤ 32)` | Tablet writes the code into a board that has none (blueprint §3.2 B1). **Setup channel only** (§3.1: header SYSTEM_ID `0x0000`, pop-derived key, `SRC_MAC` = central, `DST_MAC` = board). The board validates (`system_id ≠ 0`, `channel ∈ {1,6,11}`, lengths), stores the code, ACKs OK and reboots ≈ 1 s later. A provisioned board answers ERROR/`DETAIL 0x06`. Never relayed. |
-| 0x12 | SET_DEVICE *(v3.2)* | `mac[6] ‖ name_len u8 ‖ name (≤ 32) ‖ zone_len u8 ‖ zone (≤ 16)` | Rename / re-zone a unit (lifecycle §5 H). The board updates its device table (`ANNOTATED`; `PENDING_RENAME` if the unit is not online), ACKs at once, then relays with `DST_MAC = mac`. The unit stores name/zone in NVS, ACKs, and sends `NAME_ANNOUNCE`. Unknown MAC → the board creates an `expected` entry. |
+| 0x12 | SET_DEVICE *(v3.2)* | `mac[6] ‖ name_len u8 ‖ name (≤ 32) ‖ zone_len u8 ‖ zone (≤ 16)` | Rename a unit (lifecycle §5 H). The board updates its device table (`ANNOTATED`; `PENDING_RENAME` if the unit is not online), ACKs at once, then relays with `DST_MAC = mac`. The unit stores its name in NVS, ACKs, and sends `NAME_ANNOUNCE`. Unknown MAC → the board creates an `expected` entry. *(v3.8)* The zone **string** slot is *reserved*: a v3.8 tablet and the board send `zone_len = 0`, the board ignores what it receives there; a unit's zone and endereçamento are set with `SET_DEVICE_IDS` (`0x26`), which never reaches the unit — so assigning a zone to 100 units sends nothing into the mesh and wakes no detector. |
 | 0x13 | RETIRE_DEVICE *(v3.2)* | `mac[6]` | Board-only (serial, never relayed): entry → `retired`; the board drops that MAC's frames from now on (lifecycle §3.2). ERROR/`0x01` unknown MAC. |
 | 0x14 | UNRETIRE_DEVICE *(v3.2)* | `mac[6]` | Board-only: `retired` → `expected` (never heard) or `missing` (heard before); clears `HEARD_WHILE_RETIRED`. ERROR/`0x03` if not retired. |
 | 0x15 | REPLACE_DEVICE *(v3.2)* | `old_mac[6] ‖ new_mac[6]` | Board-only: copies name/zone from old to new (`ANNOTATED` + `PENDING_RENAME` on new), retires old, and — if old is `online` — originates a `DECOMMISSION` to it. ERROR/`0x01` if old unknown; `0x05` if either MAC is the board's or broadcast. |
 | 0x16 | DECOMMISSION *(v3.2)* | `mac[6]` | Remote factory reset. `DST_MAC` **must equal** `ARGS.mac` and must not be broadcast; the board refuses otherwise (`0x05`) and refuses its own MAC. The board marks the entry `retired` (`PENDING_DECOMMISSION` if not online), ACKs, relays. The node accepts only if `DST_MAC == own MAC == ARGS.mac`: it ACKs, waits ≈ 300 ms, erases `siot_inst`, and reboots into setup mode (white blink). Leafs: delivered through the parent mailbox when it exists (lifecycle §5.2). |
 | 0x17 | FORGET_DEVICE *(v3.2)* | `mac[6]` | Board-only: deletes a `retired` entry. ERROR/`0x03` if not retired, `0x01` unknown. |
-| 0x18 | GET_DEVICE_TABLE *(v3.2)* | `page u8` (`0` = all pages) ‖ `format u8` *(v3.5, optional: `1` = entries with the product fields, §7.12; absent or `0` = v3.2 entries)* | Board-only: the board answers with one `DEVICE_TABLE` frame per page (§7.12). Sent by the tablet on link-up after `GET_INSTALLATION`, and on "Ressincronizar". |
+| 0x18 | GET_DEVICE_TABLE *(v3.2)* | `page u8` (`0` = all pages) ‖ `format u8` *(v3.5, optional: `1` = entries with the product fields, §7.12; absent or `0` = v3.2 entries; **v3.8: `2` = product fields + label ids + link kind**)* | Board-only: the board answers with one `DEVICE_TABLE` frame per page (§7.12). Sent by the tablet on link-up after `GET_INSTALLATION`, and on "Ressincronizar". |
 | 0x19 | GET_CODE *(v3.2)* | — | **Setup channel only**, accepted by a **provisioned** board: the tablet proves the board's `pop` (the operator typed or scanned the board sticker; the key is derived from it) and the board answers `CODE` (§7.13). This is how a tablet — camera or not — gets the code after the board was provisioned from a phone, and the only way the code ever leaves the board over USB (blueprint rule 5, lifecycle §4.1). |
+| 0x26 | SET_DEVICE_IDS *(v3.8, §14.1)* | `mac[6] ‖ zone_id u16 ‖ address_id u16` | Board-only (serial, never relayed): the unit's zone and endereçamento, `0` = none. The board stores them in its device table (an unknown MAC → a new `expected` entry) and ACKs; the tablet applies them on the ACK. An id that is not in the board's label table → ERROR/`DETAIL 0x07`; the board's own MAC or broadcast → `0x05`. |
+| 0x1E | SET_LINKS *(v3.8, §14.5)* | `REV u16 ‖ FLAGS u8 ‖ COUNT u8 ‖ MAC[6] × COUNT` (≤ 32) | Board → one unit (`DST_MAC` = the unit, `F_ACK_REQ`): the unit's **own cause list** — the units whose authenticated ALARM it acts on at once, without waiting for the board. `FLAGS` bit 0 **ANY** = act on every alarm (the floor, §14.6). Replaces the stored list entirely (NVS); the unit ACKs. Leafs: never (they have no effects). |
+| 0x20 | SET_LABEL *(v3.8, §14.2)* | `KIND u8 ‖ ID u16 ‖ NAME_LEN u8 ‖ NAME (≤ 32)` | Board-only (serial, never relayed): create or rename a label. `KIND` `1` zone · `2` endereçamento. The **tablet chooses the id** (next free in its copy; `0` refused, `DETAIL 0x04`). Existing id = rename. Table full → `DETAIL 0x02`. The board answers with the changed `LABEL_TABLE` page. |
+| 0x21 | DEL_LABEL *(v3.8)* | `KIND u8 ‖ ID u16` | Board-only: delete a label. Refused with `DETAIL 0x08` **while any device-table entry or any rule references it**; `0x07` unknown id. |
+| 0x22 | GET_LABELS *(v3.8)* | `KIND u8` (`0` = both) ‖ `PAGE u8` (`0` = all) | Board-only: the board answers with `LABEL_TABLE` pages (§14.2). Sent by the tablet on link-up after `GET_DEVICE_TABLE`. |
+| 0x23 | SET_RULE *(v3.8, §14.4)* | one `RULE` record (30 bytes, §14.3) | Board-only: create (new `RULE_ID`, chosen by the tablet, `0` refused) or replace a rule. Unknown label in a selector → `DETAIL 0x07`; unknown unit MAC → the board creates an `expected` entry as `SET_DEVICE` does; table full → `0x02`; bad selector → `0x04`. The board answers with the changed `RULE_TABLE` page and re-sends `SET_LINKS` to every unit whose cause list changed. |
+| 0x24 | DEL_RULE *(v3.8)* | `RULE_ID u16` | Board-only: delete a rule; `0x07` unknown. Same `RULE_TABLE` / `SET_LINKS` follow-up. |
+| 0x25 | GET_RULES *(v3.8)* | `PAGE u8` (`0` = all) | Board-only: the board answers with `RULE_TABLE` pages (§14.4). Sent on link-up after `GET_LABELS`. |
 
 ### 7.7 TIME_SYNC — `MSG_TYPE 0x06` (downlink, central → root) — payload 5 bytes
 
@@ -654,8 +674,8 @@ enrolled list. `SRC_MAC` (header) identifies which device this is.
 |----|------|-------|
 | 0 | 1 | NAME_LEN (n1, ≤ 32) |
 | 1 | n1 | NAME |
-| 1+n1 | 1 | ZONE_LEN (n2, ≤ 16) |
-| 2+n1 | n2 | ZONE |
+| 1+n1 | 1 | ADDRESS_LEN (n2, ≤ 16) — *(v3.8, was ZONE_LEN)*: the **endereçamento** typed at setup, `0` = none |
+| 2+n1 | n2 | ADDRESS *(v3.8, was ZONE)*: a **hint by name**, UTF-8. The board resolves it to an endereçamento label id (§14.1): an existing label of that exact name, else a new one (next free id, while there is room), and gives the id to the unit **only while the unit has none** — an id set from the tablet (`SET_DEVICE_IDS`) is never overridden. The string itself is never shown or stored on the board. Zones never travel here. |
 | 2+n1+n2 | 1 | ROLE *(v3.2, optional)*: `SAFR_ROLE_*` (0 root-capable AC unit currently root, 1 AC unit, 2 battery leaf). Receivers MUST accept the frame without it (treat as `0xFF` unknown). |
 | 3+n1+n2 | 2 | PRODUCT *(v3.5, optional, only after ROLE)*: what the unit **is** — family byte ‖ product byte, table below. `0x0000` = unknown. |
 | 5+n1+n2 | 1 | HW_REV *(v3.5)*: PCB revision, `0` = not stated. |
@@ -714,7 +734,7 @@ the legacy view for pre-v3.2 tablets.
 | 0 | 1 | PAGE (1-based) |
 | 1 | 1 | PAGE_COUNT |
 | 2 | 2 | TOTAL entries in the table |
-| 4 | 1 | COUNT: bits 0–6 = m, entries in this page; **bit 7 *(v3.5)*** = every entry of this page carries the product fields |
+| 4 | 1 | COUNT: bits 0–5 = m, entries in this page; **bit 7 *(v3.5)*** = every entry of this page carries the product fields; **bit 6 *(v3.8)*** = every entry also carries the v3.8 fields (`format = 2`; implies bit 7) |
 | 5 | ... | ENTRY[m] |
 
 Each `ENTRY[i]`:
@@ -734,6 +754,13 @@ Each `ENTRY[i]`:
 | 1 | HW_REV *(v3.5)* |
 | 1 | FW_LEN *(v3.5)* (≤ 24) |
 | FW_LEN | FW *(v3.5)*: the version the unit last announced |
+| 2 | ZONE_ID *(v3.8, only when COUNT bit 6 is set)*: §14.1, `0` = none |
+| 2 | ADDRESS_ID *(v3.8)*: `0` = none |
+| 1 | LINK *(v3.8)*: `0` mesh / ESP-NOW · `1` island (reached through the tablet's tunnel, brief §2.4) — the board never looks for an island unit down the mesh |
+
+*(v3.8)* `ZONE_LEN` / `ZONE` in the entry are *reserved*: a v3.8 board sends `ZONE_LEN = 0`.
+A tablet reads the ids with `format = 2`; a board that does not know v3.8 answers with bit 6
+clear and the tablet shows every unit "sem zona" / "sem endereçamento".
 
 *(v3.5)* The board sends the product fields only to a tablet that asked for
 them: `GET_DEVICE_TABLE` with `format = 1`. It remembers the last format asked
@@ -834,7 +861,10 @@ sender (needs ACK)                      confirmer
   COMMAND before relaying it (§7.5), and that ACK used to end the central's retries. Now, for a
   COMMAND addressed to a powered unit, the central keeps retransmitting (same MSG_ID, fresh
   MSG_CTR, 2 s apart, 3 transmissions in all) until the **unit's own** ACK comes up; for a
-  broadcast, until every online powered unit has ACKed. A battery unit's command is not retried —
+  broadcast, until every online powered unit has ACKed — and *(2026-10-28)* **once the board took
+  the broadcast, each retry is addressed to the units still missing, one frame per unit, same
+  MSG_ID** (never the broadcast again): a unit that confirmed is not sent the command twice, and
+  the board's ACKs of those unit-addressed copies count as nobody's confirmation. A battery unit's command is not retried —
   it waits in the parent's mailbox (§12.5) for the unit's next wake. The board's ACK still lights
   the first check on the map; the unit's the second. Three transmissions turn a link that loses
   half its frames from a coin toss into ≈ 88 % delivery; a link that loses more still reads
@@ -1575,8 +1605,10 @@ leaf acts.
 
 `ACTION`: `1` start · `2` pause · `3` resume · `4` abort.
 `FILTER`: `0` all units of the family (no data) · `1` one product
-(`PRODUCT u16`, which must belong to `FAMILY`) · `2` one zone
-(`ZONE_LEN u8 ‖ ZONE`) · `3` one unit (`MAC[6]`, never broadcast).
+(`PRODUCT u16`, which must belong to `FAMILY`) · `2` one zone by its **string**
+(`ZONE_LEN u8 ‖ ZONE`; kept for pre-v3.8 boards, which a v3.8 board matches
+against nothing) · `3` one unit (`MAC[6]`, never broadcast) · *(v3.8)* `4` one
+**zone id** (`ZONE_ID u16`, §14.1).
 "Update only the sirens" = `{start, 0x02, 1, 0x0201}`: a push-button station
 runs the same node image and is left alone.
 
@@ -1641,6 +1673,150 @@ An ACK `ERROR` to any message of this section carries the `REASON` in its
 `DETAIL` byte — never one of the general `DETAIL` codes of §7.5, whose numbers
 mean something else here. A board that cannot take an update at all answers
 `BUSY`. A reason is never renumbered.
+
+---
+
+## 14. Labels and cause-and-effect *(v3.8, 2026-10-28 — specified, not implemented)*
+
+Plan and decisions: `docs/phases-development/phase4-cause-and-effect-brief.md` §2.2 / §2.3.
+Reference rows 5.10 / 5.11. Everything in this section is **board ↔ tablet on the serial link**
+except `SOUND` and `SET_LINKS`, which the board sends into the mesh.
+
+### 14.1 Model
+
+- Every unit has a **name** (in the unit and in the board's table, §7.11), a **zone** and an
+  **endereçamento**. Zone and endereçamento are **labels**: `{kind, id u16, name ≤ 32}` kept in two
+  tables **on the board** and shown by name on the tablet; the id never reaches a user and **never
+  reaches a unit**. A unit belongs to at most one zone and one endereçamento (`0` = none), set with
+  `SET_DEVICE_IDS` (§7.6 `0x26`, board-only) and read back in every `DEVICE_TABLE` entry (`format = 2`).
+- **The board's device-table record carries a version byte** (`siot_devtab`, record v3 since v3.8):
+  a record of another version is dropped on load, never migrated; the table rebuilds from traffic and
+  from the tablet's "Reenviar nomes à placa" (brief phase 4 §2.2 item 6).
+- A **rule** is one **cause** and one **effect** (§14.3). The board evaluates rules on every
+  authenticated ALARM (§14.6). Rules live on the board — the control unit must behave with the tablet
+  unplugged ⛑ UL 864 / EN 54-2 — and are edited from the tablet (Nível 4) or by a remote Administrador
+  through the tablet (`docs/cloud/central-mirror.md` §4.8).
+- **The floor** (decided 2026-10-28, brief §6 D1): with **no rule at all**, or with **the board
+  unreachable** (§9.3: no board HEARTBEAT for 3 intervals), **every unit with a sounder sounds on every
+  authenticated ALARM it overhears**. Rules refine the floor; nothing can remove it.
+- Caps (v1): 64 zones, 64 endereçamentos, 64 rules, 32 MACs per `SET_LINKS`. The board stores the
+  three tables in NVS beside the device table; each table carries a **revision** `REV u16` that
+  increments on every change, so a tablet or phone can tell a stale copy.
+
+### 14.2 LABEL_TABLE — `MSG_TYPE 0x16` (uplink, board → central, serial only) — ≤ 202 bytes, paged
+
+Sent in reply to `GET_LABELS`, after every `SET_LABEL` / `DEL_LABEL` (the page that changed), and
+once after the `DEVICE_TABLE` pages of a `format = 2` request.
+
+| Off | Size | Field |
+|----|------|-------|
+| 0 | 1 | KIND: `1` zone · `2` endereçamento |
+| 1 | 1 | PAGE (1-based) |
+| 2 | 1 | PAGE_COUNT |
+| 3 | 2 | TOTAL labels of this kind |
+| 5 | 2 | REV: revision of this kind's table |
+| 7 | 1 | COUNT (m) |
+| 8 | … | ENTRY[m]: `ID u16 ‖ NAME_LEN u8 ‖ NAME` (≤ 35 bytes each, ≥ 5 per page) |
+
+An empty table is one page, `TOTAL = 0`, `COUNT = 0` — silence means a board that does not know
+this section.
+
+### 14.3 Selector and RULE record
+
+**SELECTOR** (13 bytes) — a cause or an effect:
+
+| Off | Size | Field |
+|----|------|-------|
+| 0 | 6 | CENTRAL: `00:00:00:00:00:00` = this central; otherwise the **board MAC** of another central (multi-central, brief §2.5 — a v1 board refuses a non-zero value with `DETAIL 0x04`) |
+| 6 | 1 | KIND: `0` all · `1` one unit · `2` one zone |
+| 7 | 6 | REF: KIND 1 → the unit's MAC; KIND 2 → `ZONE_ID u16` then 4 zero bytes; KIND 0 → zeros |
+
+**RULE** (30 bytes):
+
+| Off | Size | Field |
+|----|------|-------|
+| 0 | 2 | RULE_ID (≠ 0, chosen by the tablet) |
+| 2 | 1 | FLAGS: bit 0 ENABLED |
+| 3 | 1 | ACTION: `1` SOUND (v1). Reserved: `2` RELAY, `3` NOTIFY, `4` FORWARD to another central |
+| 4 | 13 | CAUSE selector — an ALARM from … |
+| 17 | 13 | EFFECT selector — … acts on … |
+
+"This detector sounds these three sirens" is three rules with the same cause, or one rule whose
+effect is the sirens' zone. The tablet's matrix and map group them; the wire does not.
+
+### 14.4 RULE_TABLE — `MSG_TYPE 0x17` (uplink, board → central, serial only) — ≤ 202 bytes, paged
+
+Sent in reply to `GET_RULES`, after every `SET_RULE` / `DEL_RULE`, and once after the
+`LABEL_TABLE` pages of a `format = 2` request.
+
+| Off | Size | Field |
+|----|------|-------|
+| 0 | 1 | PAGE (1-based) |
+| 1 | 1 | PAGE_COUNT |
+| 2 | 2 | TOTAL rules |
+| 4 | 2 | REV: revision of the rule table |
+| 6 | 1 | COUNT (m, ≤ 6) |
+| 7 | 30·m | RULE[m] (§14.3) |
+
+What the tablet and every phone show is **this table as the board sent it**, never a rule as
+submitted: a `SET_RULE` is confirmed by the page that comes back, and the ✓ on the matrix waits for it.
+
+### 14.5 Effects on the unit: `SOUND` and `SET_LINKS`
+
+- **`SOUND`** (`COMMAND 0x06`, §7.6) is the only effect of v1. The unit starts the pattern, ACKs, and
+  keeps sounding until `DURATION_S` elapses, or `SILENCE` / `RESET` / `SOUND 0` arrives. A unit sounding
+  because of the floor or of its own cause list is also stopped by `SILENCE`. `SILENCE` never clears the
+  latch (§7.1.4); a silenced unit sounds again on a **new** alarm (new `DEV_SEQ`).
+- **`SET_LINKS`** (`COMMAND 0x1E`) gives each effect unit its **own cause list**, expanded by the board
+  to MACs (a zone cause becomes its units' MACs; a KIND 0 cause becomes `FLAGS.ANY`). The unit acts
+  on an authenticated ALARM from a listed MAC **the moment it overhears it**, without waiting for the
+  board's `SOUND` — the fast and redundant path. The board re-sends it to every affected unit after any
+  change of a rule, a zone membership, or a unit's retirement; with **no rules at all** it sends
+  `FLAGS.ANY` to every sounder. More than 32 MACs → the board sends `ANY` instead (fail-safe side).
+  The list is stored in the unit's NVS and survives reboots; a unit that never received one behaves as
+  `ANY` (the floor).
+
+### 14.6 Evaluation on the board
+
+On every authenticated ALARM EVENT (§7.1, severity 3) from unit U — zone Z, central = this — the
+board, **after** latching and journaling (§7.1.4, §8) and before anything else:
+
+1. Dedupes by `(SRC_MAC, DEV_SEQ)`: a re-announcement (§7.2) never fires the rules again.
+2. Collects every ENABLED rule whose cause matches: KIND 0; KIND 1 with `REF = U`; KIND 2 with
+   `REF = Z` (a unit with `ZONE_ID = 0` matches no zone rule).
+3. Resolves the effects to units: KIND 1 → that unit; KIND 2 → every unit of the zone; KIND 0 →
+   every unit. Keeps only units whose **PRODUCT has a sounder** (catalogue §2.1: `0x0201`, and the
+   bench devkit `0x02FF`), not retired.
+4. Sends `SOUND {1, 0}` to each, `F_ACK_REQ`, with the downlink retry of §9.1, **ALARM priority in
+   the TX queue** (§0). The tablet draws each as a command (✓ board, ✓✓ unit) so a siren that did not
+   answer is visible.
+5. **No rule matched and the rule table is not empty** → nothing is sent by the board; the units'
+   cause lists and the floor decide. **Rule table empty** → the floor (every sounder already holds
+   `ANY`).
+6. Island units (`LINK = 1`, §7.12) are reached through the tablet's tunnel like any other command
+   (brief §2.4 / R3); the board never expects a mesh path to them.
+
+A rule whose cause or effect names a unit that is `retired` / forgotten or a label that no longer
+exists is **kept and reported** (`RULE_TABLE` unchanged; the tablet shows it as a fault, reference row
+5.11) — never dropped by the board.
+
+### 14.7 Dry run and real test (tablet)
+
+- **Dry run** ("o que acontece se este detector alarmar?"): the tablet resolves the rules itself from
+  its copies of the tables (§14.2 / §14.4), lights the effects on the map and sends `IDENTIFY` to the
+  real effect units. Nothing sounds. No new message.
+- **Real test**: the tablet sends `SOUND {3, 5}` (chirp, 5 s) to the resolved effect units and logs
+  the run like a system test (`SystemTests`-style row, mirror `test` message).
+
+### 14.8 Setup and announce
+
+The unit announces its name and, when the installer typed one, its endereçamento **by name** (§7.11
+ADDRESS, ≤ 16 bytes); the phone's `/enroll` list carries the same string per unit. The board turns the
+name into a label id — creating the endereçamento when it is new — and sets it on the unit only while
+the unit has none, then pushes its `DEVICE_TABLE` so the tablet shows it at once. Zona is set on the
+tablet. Everything can be changed later; nothing in this section is required for a unit to count as
+installed (brief §6 D3). Zone is set on the tablet. Everything can be changed later; nothing in this section is
+required for a unit to count as installed (brief §6 D3).
 
 ---
 

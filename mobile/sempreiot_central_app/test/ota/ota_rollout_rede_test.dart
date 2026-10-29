@@ -56,7 +56,7 @@ class _Rollout extends OtaRolloutController {
 class _Root extends RootElectionNotifier {
   _Root(super.db, String? root) {
     state =
-        RootElectionState(rootMac: root, candidates: {if (root != null) root});
+        RootElectionState(roots: {if (root != null) root}, candidates: {if (root != null) root});
   }
 
   @override

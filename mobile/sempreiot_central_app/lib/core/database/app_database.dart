@@ -63,8 +63,13 @@ class MeshDevices extends Table {
   // the trouble isn't re-raised on every app restart.
   IntColumn get supervisionState => integer().withDefault(const Constant(0))();
   TextColumn get name => text().nullable()(); // future friendly names
-  TextColumn get zone =>
-      text().nullable()(); // from NAME_ANNOUNCE/INSTALLATION (spec §7.10/§7.11)
+  // v3.8 labels (spec §14.1): the unit's zone / endereçamento ids as the
+  // board's table holds them (DEVICE_TABLE format 2) or as this tablet set
+  // them; null = never reported, 0 = none. The names are in DeviceLabels.
+  // linkKind: safrLinkMesh (0) / safrLinkIsland (1), spec §7.12.
+  IntColumn get zoneId => integer().nullable()();
+  IntColumn get addressId => integer().nullable()();
+  IntColumn get linkKind => integer().withDefault(const Constant(0))();
   // 'enrolled' = known only from the board's INSTALLATION reply (spec §7.10),
   // never yet heard from directly over the mesh; null once any live frame
   // arrives (supervisionState/alarmLatched then carry online/missing).
@@ -197,6 +202,18 @@ class SystemTests extends Table {
   Set<Column> get primaryKey => {testId};
 }
 
+/// The board's zone / endereçamento tables (spec §14.2), mirrored page by
+/// page from LABEL_TABLE: the names behind the ids in [MeshDevices]. `kind`
+/// is the SafrLabelKind wire value (1 zone · 2 endereçamento).
+class DeviceLabels extends Table {
+  IntColumn get kind => integer()();
+  IntColumn get labelId => integer()();
+  TextColumn get name => text()();
+
+  @override
+  Set<Column> get primaryKey => {kind, labelId};
+}
+
 @DriftDatabase(tables: [
   SerialPackets,
   DeviceMetadata,
@@ -206,6 +223,7 @@ class SystemTests extends Table {
   OtaRuns,
   OtaRunUnits,
   SystemTests,
+  DeviceLabels,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(driftDatabase(name: 'sempreiot'));
@@ -214,7 +232,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 14;
+  int get schemaVersion => 15;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -251,7 +269,7 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 7) {
             // SAFR v3.1 (POC-BRIEF.md §4.2/§6.3): NAME_ANNOUNCE/INSTALLATION.
-            await m.addColumn(meshDevices, meshDevices.zone);
+            // (The zone string column of that revision is gone since v15.)
             await m.addColumn(meshDevices, meshDevices.registryState);
           }
           if (from < 8) {
@@ -297,8 +315,38 @@ class AppDatabase extends _$AppDatabase {
               await m.addColumn(meshDevices, meshDevices.linkDegraded);
             }
           }
+          if (from < 15) {
+            // SAFR v3.8 labels (protocol §14.1): zone / endereçamento ids
+            // and the link kind per unit, the label tables, and the zone
+            // string column gone (the board no longer sends it).
+            // Each step only when absent: a file created by this version
+            // and taken back to an older one (the migration tests) has them.
+            if (!await _hasTable('device_labels')) {
+              await m.createTable(deviceLabels);
+            }
+            if (!await _hasColumn('mesh_devices', 'zone_id')) {
+              await m.addColumn(meshDevices, meshDevices.zoneId);
+            }
+            if (!await _hasColumn('mesh_devices', 'address_id')) {
+              await m.addColumn(meshDevices, meshDevices.addressId);
+            }
+            if (!await _hasColumn('mesh_devices', 'link_kind')) {
+              await m.addColumn(meshDevices, meshDevices.linkKind);
+            }
+            if (await _hasColumn('mesh_devices', 'zone')) {
+              await customStatement('ALTER TABLE mesh_devices DROP COLUMN zone');
+            }
+          }
         },
       );
+
+  Future<bool> _hasTable(String table) async {
+    final rows = await customSelect(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+      variables: [Variable.withString(table)],
+    ).get();
+    return rows.isNotEmpty;
+  }
 
   Future<bool> _hasColumn(String table, String column) async {
     final rows = await customSelect('PRAGMA table_info($table)').get();
@@ -434,6 +482,31 @@ class AppDatabase extends _$AppDatabase {
       for (final r in rows)
         if (SystemTestRun.fromJson(jsonDecode(r.runJson)) case final run?) run,
     ];
+  }
+
+  /// Every label of every kind, live (the board's tables as last mirrored).
+  Stream<List<DeviceLabel>> watchLabels() => select(deviceLabels).watch();
+
+  /// The board sent a kind's complete table (protocol §14.2): this copy
+  /// becomes exactly that.
+  Future<void> replaceLabels(int kind, Map<int, String> labels) =>
+      transaction(() async {
+        await (delete(deviceLabels)..where((t) => t.kind.equals(kind))).go();
+        for (final e in labels.entries) {
+          await into(deviceLabels).insert(DeviceLabelsCompanion.insert(
+              kind: kind, labelId: e.key, name: e.value));
+        }
+      });
+
+  /// How many units carry this label (DEL_LABEL is refused while any does).
+  Future<int> countUnitsWithLabel(int kind, int labelId) async {
+    final column = kind == 1 ? meshDevices.zoneId : meshDevices.addressId;
+    final n = meshDevices.mac.count();
+    final row = await (selectOnly(meshDevices)
+          ..addColumns([n])
+          ..where(column.equals(labelId)))
+        .getSingle();
+    return row.read(n) ?? 0;
   }
 
   Future<void> addAudit(

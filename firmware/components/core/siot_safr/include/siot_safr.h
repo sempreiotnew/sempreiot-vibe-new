@@ -64,6 +64,9 @@ extern "C" {
 #define SAFR_MSG_OTA_STATUS      0x13 /* unit → board */
 #define SAFR_MSG_OTA_RESULT      0x14 /* unit → board, F_ACK_REQ */
 #define SAFR_MSG_OTA_ROLLOUT     0x15 /* board → tablet, paged */
+/* v3.8, spec §14: labels and cause-and-effect (board → tablet, paged) */
+#define SAFR_MSG_LABEL_TABLE     0x16 /* §14.2 */
+#define SAFR_MSG_RULE_TABLE      0x17 /* §14.4 (Phase B) */
 
 /* FLAGS */
 #define SAFR_F_ENC      0x01
@@ -135,6 +138,7 @@ extern "C" {
 #define SAFR_CMD_RELAY_SET  0x03
 #define SAFR_CMD_IDENTIFY   0x04
 #define SAFR_CMD_RESET      0x05 /* operator reset — only alarm-latch clear */
+#define SAFR_CMD_SOUND      0x06 /* v3.8 §14.5 -- MODE u8 ‖ DURATION_S u16 (Phase B) */
 #define SAFR_CMD_GET_INSTALLATION 0x10 /* v3.1, POC round 1 -- spec §7.6 */
 #define SAFR_CMD_SET_INSTALLATION 0x11 /* v3.2, Case B: setup channel only -- spec §7.6 */
 #define SAFR_CMD_SET_DEVICE       0x12 /* v3.2 -- mac ‖ name ‖ zone */
@@ -149,6 +153,14 @@ extern "C" {
 #define SAFR_CMD_OTA_OFFER        0x1B /* v3.5 -- board → one unit (§13.4) */
 #define SAFR_CMD_GET_ROLLOUT      0x1C /* v3.5 -- board only: page u8 (0 = all) */
 #define SAFR_CMD_OTA_CONTROL      0x1D /* v3.5 -- board only: start / pause / resume / abort */
+#define SAFR_CMD_SET_LINKS        0x1E /* v3.8 §14.5 -- board → one unit: its own cause list (Phase B) */
+#define SAFR_CMD_SET_LABEL        0x20 /* v3.8 §14.2 -- board only: kind ‖ id ‖ name_len ‖ name */
+#define SAFR_CMD_DEL_LABEL        0x21 /* v3.8 -- board only: kind ‖ id */
+#define SAFR_CMD_GET_LABELS       0x22 /* v3.8 -- board only: kind (0 = both) ‖ page (0 = all) */
+#define SAFR_CMD_SET_RULE         0x23 /* v3.8 §14.4 -- board only (Phase B) */
+#define SAFR_CMD_DEL_RULE         0x24 /* v3.8 -- board only (Phase B) */
+#define SAFR_CMD_GET_RULES        0x25 /* v3.8 -- board only (Phase B) */
+#define SAFR_CMD_SET_DEVICE_IDS   0x26 /* v3.8 §14.1 -- board only: mac ‖ zone_id ‖ address_id */
 
 /* PARENT_PROBE / PARENT_OFFER purpose (spec §7.14) */
 #define SAFR_PROBE_PARENT 0x00
@@ -167,6 +179,20 @@ extern "C" {
 #define SAFR_ACK_D_BAD_ARGS       0x04
 #define SAFR_ACK_D_REFUSED        0x05
 #define SAFR_ACK_D_NOT_SETUP_MODE 0x06
+#define SAFR_ACK_D_UNKNOWN_ID     0x07 /* v3.8: label / rule id not in the board's table */
+#define SAFR_ACK_D_IN_USE         0x08 /* v3.8: a label a unit or a rule still references */
+#define SAFR_ACK_D_NO_SOUNDER     0x09 /* v3.8: SOUND to a unit without a sounder */
+
+/* Labels (v3.8, §14.1 / §14.2): zone and endereçamento ids behind names, board only. */
+#define SAFR_LABEL_ZONE     1
+#define SAFR_LABEL_ADDRESS  2
+#define SAFR_LABEL_NAME_MAX 32
+#define SAFR_LABEL_CAP      64   /* per kind (§14.1 v1 caps) */
+#define SAFR_LABEL_ID_NONE  0
+
+/* DEVICE_TABLE entry LINK (v3.8, §7.12 format 2). */
+#define SAFR_DT_LINK_MESH   0
+#define SAFR_DT_LINK_ISLAND 1
 
 /* Sentinels */
 #define SAFR_NA_U8   0xFF
@@ -291,6 +317,32 @@ uint16_t siot_safr_next_msg_id(void);
 size_t siot_safr_put_product(uint8_t *p, uint16_t product, uint8_t hw_rev, const char *fw);
 size_t siot_safr_get_product(const uint8_t *p, size_t len, uint16_t *product, uint8_t *hw_rev,
                              char fw[SAFR_FW_MAX_LEN + 1]);
+
+/* ---- labels (v3.8, §14.2) — pure codecs, host-tested (safr_labels.c) ------ */
+typedef struct {
+    uint16_t id;                            /* never SAFR_LABEL_ID_NONE */
+    char     name[SAFR_LABEL_NAME_MAX + 1]; /* UTF-8, ≤ 32 bytes */
+} siot_safr_label_t;
+
+/* LABEL_TABLE page `page` (1-based) of `labels` for `kind`: KIND ‖ PAGE ‖ PAGE_COUNT ‖
+ * TOTAL u16 ‖ REV u16 ‖ COUNT ‖ (ID u16 ‖ NAME_LEN ‖ NAME)[COUNT], pages cut at
+ * SAFR_MAX_PAYLOAD. `out` >= SAFR_MAX_PAYLOAD. `*page_count_out` (may be NULL) =
+ * pages needed (1 for an empty table). Returns the payload length, 0 when `page`
+ * is 0 or past the end. */
+size_t siot_safr_label_table_encode(uint8_t *out, uint8_t kind, uint16_t rev,
+                                    const siot_safr_label_t *labels, size_t n, uint8_t page,
+                                    uint8_t *page_count_out);
+
+/* SET_LABEL ARGS: KIND ‖ ID u16 ‖ NAME_LEN ‖ NAME. False on a bad kind, id 0, an
+ * empty or over-long name, or a length that does not match. `name` holds
+ * SAFR_LABEL_NAME_MAX + 1. */
+bool siot_safr_set_label_decode(const uint8_t *a, size_t alen, uint8_t *kind, uint16_t *id,
+                                char name[SAFR_LABEL_NAME_MAX + 1]);
+/* DEL_LABEL ARGS: KIND ‖ ID u16 (id ≠ 0). */
+bool siot_safr_del_label_decode(const uint8_t *a, size_t alen, uint8_t *kind, uint16_t *id);
+/* SET_DEVICE_IDS ARGS: MAC[6] ‖ ZONE_ID u16 ‖ ADDRESS_ID u16 (0 = none). */
+bool siot_safr_set_device_ids_decode(const uint8_t *a, size_t alen, uint8_t mac[6],
+                                     uint16_t *zone_id, uint16_t *address_id);
 
 /* The last MSG_ID handed out, and a way to continue from one. For a unit whose
  * every wake is a boot (battery leaf, spec §12.2): siot_safr_init() restarts

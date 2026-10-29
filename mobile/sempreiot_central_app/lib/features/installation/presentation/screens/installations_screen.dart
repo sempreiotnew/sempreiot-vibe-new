@@ -141,7 +141,7 @@ class _InstallationTile extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       '${installation.netSsid} · canal ${installation.channel} · '
-                      '${installation.zones.length} zona(s)',
+                      '${installation.addresses.length} endereçamento(s)',
                       style: TextStyle(color: context.textSecondary, fontSize: 12),
                     ),
                   ],

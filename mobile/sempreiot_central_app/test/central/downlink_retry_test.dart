@@ -111,6 +111,43 @@ void main() {
     expect(identifies(), 1, reason: 'confirmed before the first retry was due');
   });
 
+  test("a broadcast's retries go only to the units still missing (2026-10-28)",
+      () async {
+    const other = '5A:46:52:00:00:07';
+    await registered(unit, SafrNodeRole.node);
+    await registered(other, SafrNodeRole.node);
+    final downlink = container.read(safrDownlinkProvider);
+    await downlink.sendCommand(safrBroadcastMac, SafrCommand.test);
+    List<SafrWireFrame> tests() => board.heard
+        .where((f) =>
+            f.payload is SafrCommandPayload &&
+            (f.payload as SafrCommandPayload).cmdRaw == SafrCommand.test.wire)
+        .toList();
+    expect(tests(), hasLength(1));
+    expect(tests().single.dstMac, safrBroadcastMac);
+    // `unit` confirms; `other` never does.
+    final unitEnc = SafrEncoder(
+      srcMac: safrMacToBytes(unit),
+      bootCtr: 9,
+      systemId: identity.systemId,
+      key: identity.key,
+    );
+    board.relayUp(unitEnc.encode(
+      msgType: SafrMsgType.ack,
+      payload: SafrAckPayload.build(ackedMsgId: tests().single.msgId),
+      dstMac: safrCentralMacBytes,
+    ));
+    await _until(() => tests().length == 3,
+        what: 'the two retries', within: const Duration(seconds: 7));
+    final retries = tests().sublist(1);
+    expect(retries.map((f) => f.dstMac), everyElement(other),
+        reason: 'addressed to the unit still missing, never broadcast again');
+    expect(retries.map((f) => f.msgId).toSet(), {tests().first.msgId},
+        reason: 'the same MSG_ID: the unit dedupes, the tablet matches');
+    await Future<void>.delayed(const Duration(milliseconds: 2500));
+    expect(tests(), hasLength(3), reason: 'no fourth: the retries are spent');
+  });
+
   test("a battery unit's command is not retried: the mailbox has it", () async {
     await registered(leaf, SafrNodeRole.leaf);
     final downlink = container.read(safrDownlinkProvider);

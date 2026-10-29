@@ -11,6 +11,7 @@ idf_component_register(SRCS "test_main.c"
                             "test_leaf_proto.c"
                             "test_ota_proto.c"
                             "test_hbwin.c"
+                            "test_labels.c"
                             "test_support.c"
                        INCLUDE_DIRS "."
                        PRIV_REQUIRES unity mbedtls siot_safr siot_util siot_evbus siot_version siot_provisioning siot_link siot_leaf_proto siot_ota_proto

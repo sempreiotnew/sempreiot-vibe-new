@@ -56,7 +56,13 @@ class ConfirmStep extends ConsumerWidget {
                 ),
               ],
               (Icons.badge_rounded, 'Nome', state.deviceName ?? '—'),
-              (Icons.place_rounded, 'Zona', state.deviceZone ?? '—'),
+              (
+                Icons.place_rounded,
+                'Endereçamento',
+                state.deviceAddress?.isNotEmpty == true
+                    ? state.deviceAddress!
+                    : '— (defina na central)'
+              ),
               (Icons.hub_rounded, 'Instalação', installationName),
             ],
           ),
@@ -87,7 +93,7 @@ class ConfirmStep extends ConsumerWidget {
           const SizedBox(height: 12),
           WizardSecondaryButton(
             label: 'Voltar',
-            onTap: notifier.backToNameZone,
+            onTap: notifier.backToNameAddress,
           ),
           const SizedBox(height: 16),
         ],

@@ -828,7 +828,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
                                       repaint: _ticker,
                                       isDark: context.isDark,
                                       boardMac: boardMac,
-                                      rootMac: election.rootMac,
+                                      roots: election.roots,
                                       candidates: election.electing
                                           ? election.candidates
                                           : const {},
@@ -864,7 +864,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
                                         node: node,
                                         position: layout.positions[node.mac]!,
                                         isRoot: node.online &&
-                                            node.mac == election.rootMac,
+                                            election.isRoot(node.mac),
                                         isCandidate: election.electing &&
                                             election.candidates
                                                 .contains(node.mac),
@@ -880,7 +880,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
                                         node: node,
                                         position: layout.positions[node.mac]!,
                                         isRoot: node.online &&
-                                            node.mac == election.rootMac,
+                                            election.isRoot(node.mac),
                                         isCandidate: election.electing &&
                                             election.candidates
                                                 .contains(node.mac),
@@ -1168,7 +1168,7 @@ class _MeshGraphPainter extends CustomPainter {
     required Listenable repaint,
     required this.isDark,
     this.boardMac,
-    this.rootMac,
+    this.roots = const {},
     this.candidates = const {},
     this.otaLink = false,
     this.faded = const {},
@@ -1213,7 +1213,7 @@ class _MeshGraphPainter extends CustomPainter {
 
   /// The settled root (pulse ring) and, while electing, the contenders
   /// (faster, fainter pulse; dashed link to the central).
-  final String? rootMac;
+  final Set<String> roots;
   final Set<String> candidates;
 
   @override
@@ -1371,7 +1371,7 @@ class _MeshGraphPainter extends CustomPainter {
     final fast = (nowMs % 1100) / 1100.0;
     for (final n in nodes) {
       if (!n.online || n.layer == 0) continue;
-      if (n.mac == rootMac) {
+      if (roots.contains(n.mac)) {
         _pulse(canvas, layout.positions[n.mac], AppColors.warning,
             (phase + 0.5) % 1.0, layout.radial ? 38 : 26);
       } else if (candidates.contains(n.mac)) {
@@ -2501,23 +2501,23 @@ class _NodeChip extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 6),
-                  // Identification: the device's name when set, otherwise the
-                  // full MAC address — never a truncated fragment. The name
-                  // is the only line under the unit.
+                  // Identification: where the unit is (its endereçamento),
+                  // else its name, else the full MAC address — never a
+                  // truncated fragment. It is the only line under the unit.
                   Text(
-                    node.name?.isNotEmpty == true ? node.name! : node.mac,
+                    deviceMapLabel(node),
                     maxLines: 1,
                     textAlign: TextAlign.center,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: node.name?.isNotEmpty == true
+                      color: deviceMapLabelled(node)
                           ? context.textPrimary
                           : context.textSecondary,
-                      fontSize: node.name?.isNotEmpty == true ? 11 : 8.5,
+                      fontSize: deviceMapLabelled(node) ? 11 : 8.5,
                       fontWeight: FontWeight.w700,
                       fontFamily:
-                          node.name?.isNotEmpty == true ? null : 'monospace',
-                      letterSpacing: node.name?.isNotEmpty == true ? 0 : -0.2,
+                          deviceMapLabelled(node) ? null : 'monospace',
+                      letterSpacing: deviceMapLabelled(node) ? 0 : -0.2,
                     ),
                   ),
                   // In a rollout: where the unit is in it. Chosen for one:
@@ -2594,7 +2594,7 @@ class _RadialChip extends StatelessWidget {
     final offline = status == RadialStatus.offline;
     final loud = status == RadialStatus.alarm;
     const label = 96.0;
-    final name = deviceDisplayName(node);
+    final name = deviceMapLabel(node);
     return Positioned(
       left: position.dx - halo / 2,
       top: position.dy - halo / 2,
@@ -2682,14 +2682,13 @@ class _RadialChip extends StatelessWidget {
                           textAlign: TextAlign.center,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: node.name?.isNotEmpty == true
+                            color: deviceMapLabelled(node)
                                 ? context.textPrimary
                                 : context.textSecondary,
                             fontSize: 9,
                             fontWeight: FontWeight.w700,
-                            fontFamily: node.name?.isNotEmpty == true
-                                ? null
-                                : 'monospace',
+                            fontFamily:
+                                deviceMapLabelled(node) ? null : 'monospace',
                           ),
                         );
                       },

@@ -5,6 +5,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/signal_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../../../core/utils/relative_time.dart';
+import '../../application/device_labels_provider.dart';
 import '../../application/root_election_provider.dart';
 import '../../application/topology_provider.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
@@ -16,7 +17,8 @@ import 'device_settings_screen.dart';
 enum _Filter { all, alarm, offline, sleeping }
 
 /// Dispositivos — every device of this central as a gallery of cards, with
-/// search (name, zone, MAC) and quick filters. A tap opens the device's
+/// search (name, zona, endereçamento, MAC), quick filters and a zona /
+/// endereçamento filter (protocol §14.1). A tap opens the device's
 /// Dispositivo screen. Hosted inside the main tab (no own Scaffold).
 class DevicesScreen extends ConsumerStatefulWidget {
   const DevicesScreen({super.key});
@@ -29,6 +31,10 @@ class _DevicesScreenState extends ConsumerState<DevicesScreen> {
   final _search = TextEditingController();
   String _query = '';
   _Filter _filter = _Filter.all;
+
+  /// 0 = every zone / endereçamento.
+  int _zoneId = 0;
+  int _addressId = 0;
 
   @override
   void dispose() {
@@ -48,8 +54,13 @@ class _DevicesScreenState extends ConsumerState<DevicesScreen> {
     final q = _query.toLowerCase();
     return (n.name ?? '').toLowerCase().contains(q) ||
         (n.zone ?? '').toLowerCase().contains(q) ||
+        (n.address ?? '').toLowerCase().contains(q) ||
         n.mac.toLowerCase().contains(q);
   }
+
+  bool _matchesLabels(TopologyNode n) =>
+      (_zoneId == 0 || n.zoneId == _zoneId) &&
+      (_addressId == 0 || n.addressId == _addressId);
 
   /// Alarm first, then silent devices, then by name — what needs a look
   /// comes to the top.
@@ -59,13 +70,15 @@ class _DevicesScreenState extends ConsumerState<DevicesScreen> {
   Widget build(BuildContext context) {
     final all = ref.watch(topologyProvider);
     final election = ref.watch(rootElectionProvider);
+    final labels = ref.watch(labelIndexProvider);
 
     final counts = {
       for (final f in _Filter.values)
-        f: all.where((n) => _matchesFilter(n, f)).length,
+        f: all.where((n) => _matchesFilter(n, f) && _matchesLabels(n)).length,
     };
     final shown = all
-        .where((n) => _matchesFilter(n, _filter) && _matchesQuery(n))
+        .where((n) =>
+            _matchesFilter(n, _filter) && _matchesLabels(n) && _matchesQuery(n))
         .toList()
       ..sort((a, b) {
         final r = _rank(a).compareTo(_rank(b));
@@ -87,6 +100,12 @@ class _DevicesScreenState extends ConsumerState<DevicesScreen> {
           filter: _filter,
           counts: counts,
           onFilter: (f) => setState(() => _filter = f),
+          zones: labels.of(SafrLabelKind.zone),
+          addresses: labels.of(SafrLabelKind.address),
+          zoneId: _zoneId,
+          addressId: _addressId,
+          onZone: (id) => setState(() => _zoneId = id),
+          onAddress: (id) => setState(() => _addressId = id),
         ),
         Expanded(
           child: all.isEmpty
@@ -120,7 +139,7 @@ class _DevicesScreenState extends ConsumerState<DevicesScreen> {
                         final n = shown[i];
                         return _DeviceCard(
                           node: n,
-                          isRoot: n.online && n.mac == election.rootMac,
+                          isRoot: n.online && election.isRoot(n.mac),
                           isCandidate: election.electing &&
                               election.candidates.contains(n.mac),
                           onTap: () => Navigator.of(context).push(
@@ -147,6 +166,12 @@ class _SearchHeader extends StatelessWidget {
     required this.filter,
     required this.counts,
     required this.onFilter,
+    required this.zones,
+    required this.addresses,
+    required this.zoneId,
+    required this.addressId,
+    required this.onZone,
+    required this.onAddress,
   });
 
   final TextEditingController controller;
@@ -155,6 +180,12 @@ class _SearchHeader extends StatelessWidget {
   final _Filter filter;
   final Map<_Filter, int> counts;
   final ValueChanged<_Filter> onFilter;
+  final List<SafrLabel> zones;
+  final List<SafrLabel> addresses;
+  final int zoneId;
+  final int addressId;
+  final ValueChanged<int> onZone;
+  final ValueChanged<int> onAddress;
 
   @override
   Widget build(BuildContext context) {
@@ -168,7 +199,7 @@ class _SearchHeader extends StatelessWidget {
             textInputAction: TextInputAction.search,
             style: TextStyle(color: context.textPrimary, fontSize: 14),
             decoration: InputDecoration(
-              hintText: 'Buscar por nome, zona ou MAC',
+              hintText: 'Buscar por nome, zona, endereçamento ou MAC',
               hintStyle: TextStyle(color: context.textSecondary, fontSize: 14),
               prefixIcon: Icon(Icons.search_rounded,
                   size: 20, color: context.textSecondary),
@@ -233,10 +264,90 @@ class _SearchHeader extends StatelessWidget {
                       onTap: () => onFilter(f),
                     ),
                   ),
+                if (zones.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: _LabelFilter(
+                      all: 'Todas as zonas',
+                      options: zones,
+                      value: zoneId,
+                      onChanged: onZone,
+                    ),
+                  ),
+                if (addresses.isNotEmpty)
+                  _LabelFilter(
+                    all: 'Todos os endereçamentos',
+                    options: addresses,
+                    value: addressId,
+                    onChanged: onAddress,
+                  ),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// One label table as a filter chip with a menu; 0 = all.
+class _LabelFilter extends StatelessWidget {
+  const _LabelFilter({
+    required this.all,
+    required this.options,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String all;
+  final List<SafrLabel> options;
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = value != 0;
+    const color = AppColors.secondary;
+    String name = all;
+    for (final l in options) {
+      if (l.id == value) name = l.name;
+    }
+    return PopupMenuButton<int>(
+      tooltip: all,
+      initialValue: value,
+      onSelected: onChanged,
+      itemBuilder: (_) => [
+        PopupMenuItem(value: 0, child: Text(all)),
+        for (final l in options) PopupMenuItem(value: l.id, child: Text(l.name)),
+      ],
+      child: Material(
+        color: selected ? color.withValues(alpha: 0.16) : context.surfaceColor,
+        shape: StadiumBorder(
+          side: BorderSide(
+            color: selected
+                ? color.withValues(alpha: 0.7)
+                : context.borderColor.withValues(alpha: 0.6),
+            width: selected ? 1 : 0.5,
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 6, 0),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                name,
+                style: TextStyle(
+                  color: selected ? color : context.textPrimary,
+                  fontSize: 12.5,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                ),
+              ),
+              Icon(Icons.arrow_drop_down_rounded,
+                  size: 20, color: selected ? color : context.textSecondary),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -411,9 +522,9 @@ class _DeviceCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    node.zone?.isNotEmpty == true
-                        ? '$_kind · ${node.zone}'
-                        : _kind,
+                    [_kind, node.address, node.zone]
+                        .whereType<String>()
+                        .join(' · '),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style:

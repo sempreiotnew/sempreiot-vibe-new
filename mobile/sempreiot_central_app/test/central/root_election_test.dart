@@ -29,17 +29,60 @@ void main() {
       expect(s.rootMac, isNull);
     });
 
-    test('root lost -> electing; two candidates stay electing', () {
+    test('root lost -> electing; two candidates are two roots once they hold',
+        () {
       var s = run(RootElectionState.none, [(0, {a}), (3, {a})]);
       expect(s.rootMac, a);
       s = stepRootElection(s, {}, at(10)); // dead root gone from the map
       expect(s.electing, isTrue);
       expect(s.electingSince, at(10));
       expect(s.rootMac, isNull);
+      expect(s.lostRoots, {a});
       s = stepRootElection(s, {a, b}, at(16)); // both survivors at level 1
       expect(s.electing, isTrue);
       expect(s.candidates, {a, b});
       expect(s.electingSince, at(10), reason: 'one election, one start time');
+      s = stepRootElection(s, {a, b}, at(18));
+      expect(s.electing, isTrue, reason: 'only 2 s unchanged');
+      // Mesh-Lite left both attached to the board (2026-10-28): that is
+      // the mesh, not an election that never ends.
+      s = stepRootElection(s, {a, b}, at(19));
+      expect(s.electing, isFalse);
+      expect(s.roots, {a, b});
+      expect(s.isRoot(a), isTrue);
+      expect(s.isRoot(b), isTrue);
+      expect(s.rootMac, isNull, reason: 'no single root to name');
+      expect(s.electedMac, isNull);
+      expect(s.electedAfter, const Duration(seconds: 9));
+      s = stepRootElection(s, {a, b}, at(60));
+      expect(s.electing, isFalse);
+      expect(s.roots, {a, b});
+    });
+
+    test('a fresh start with two units settles silently on two roots', () {
+      var s = run(RootElectionState.none, [(0, {a, b}), (2, {a, b})]);
+      expect(s.electing, isFalse);
+      expect(s.roots, isEmpty);
+      s = stepRootElection(s, {a, b}, at(3));
+      expect(s.roots, {a, b});
+      expect(s.electedMac, isNull, reason: 'a quiet start is no election');
+    });
+
+    test('a unit joining at level 1 beside a known root is no election', () {
+      var s = run(RootElectionState.none, [(0, {a}), (3, {a})]);
+      s = stepRootElection(s, {a, b}, at(10));
+      expect(s.electing, isFalse);
+      expect(s.roots, {a}, reason: 'the known root keeps its badge');
+      s = stepRootElection(s, {a, b}, at(13));
+      expect(s.roots, {a, b});
+      // b leaves again (it went under a): a stays root, no election.
+      s = stepRootElection(s, {a}, at(20));
+      expect(s.electing, isTrue, reason: 'a settled root (b) vanished');
+      expect(s.lostRoots, {b});
+      s = stepRootElection(s, {a}, at(23));
+      expect(s.electing, isFalse);
+      expect(s.roots, {a});
+      expect(s.electedMac, a);
     });
 
     test('the sole survivor earns the badge only after 3 s alone', () {

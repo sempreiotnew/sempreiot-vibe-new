@@ -217,7 +217,6 @@ void main() {
       flags: SafrDeviceFlags.seenEver,
       lastSeenAgeS: 5,
       name: 'Sirene 1',
-      zone: 'Térreo',
       productCode: 0x0201,
       hwRev: 3,
       fwVersion: '0.1.0-dev',
@@ -229,7 +228,6 @@ void main() {
       flags: 0,
       lastSeenAgeS: null,
       name: 'Detector 2',
-      zone: '1º andar',
       // the board does not know yet
     );
 
@@ -251,7 +249,6 @@ void main() {
       final ea = back.entries[0];
       expect(ea.mac, a.mac);
       expect(ea.name, 'Sirene 1');
-      expect(ea.zone, 'Térreo');
       expect(ea.productCode, 0x0201);
       expect(ea.hwRev, 3);
       expect(ea.fwVersion, '0.1.0-dev');
@@ -284,7 +281,7 @@ void main() {
       expect(back.entries[0].name, 'Sirene 1');
       expect(back.entries[0].productCode, 0);
       expect(back.entries[0].fwVersion, '');
-      expect(back.entries[1].zone, '1º andar');
+      expect(back.entries[1].name, 'Detector 2');
     });
 
     test('an empty v3.5 page (COUNT = 0x80)', () {
@@ -312,13 +309,17 @@ void main() {
   });
 
   group('GET_DEVICE_TABLE args (CMD 0x18)', () {
-    test('always page + format 1', () {
-      expect(SafrGetDeviceTableArgs.build(), [0, 1]);
-      expect(SafrGetDeviceTableArgs.build(page: 3), [3, 1]);
+    test('always page + format (2 since v3.8; 1 on request)', () {
+      expect(SafrGetDeviceTableArgs.build(), [0, 2]);
+      expect(SafrGetDeviceTableArgs.build(page: 3), [3, 2]);
+      expect(
+          SafrGetDeviceTableArgs.build(
+              format: SafrGetDeviceTableArgs.formatProduct),
+          [0, 1]);
       final cmd = SafrCommandPayload.build(
           cmd: SafrCommand.getDeviceTable,
           args: SafrGetDeviceTableArgs.build());
-      expect(cmd, [0x18, 2, 0, 1]);
+      expect(cmd, [0x18, 2, 0, 2]);
     });
 
     test('a request without the format byte reads as the v3.2 layout', () {

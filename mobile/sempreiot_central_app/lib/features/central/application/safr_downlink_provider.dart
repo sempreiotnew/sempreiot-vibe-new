@@ -139,8 +139,9 @@ class SafrDownlink {
 
   /// v3.2 (spec §7.6 0x18): asks the board for its device table; the pages
   /// come back as DEVICE_TABLE frames routed by ingest. No ACK expected.
-  /// v3.5: always asks for the entries with the product fields (format 1);
-  /// an older board ignores that byte and answers in the v3.2 layout.
+  /// v3.8: always asks for format 2 (product fields, label ids, link; the
+  /// board then also sends its label tables); an older board answers in
+  /// the layout it knows.
   Future<void> sendGetDeviceTable({int page = 0}) async {
     final frame = _encoder.encode(
       msgType: SafrMsgType.command,
@@ -174,13 +175,47 @@ class SafrDownlink {
     return LifecycleResult(ack.status == SafrAckStatus.ok, ack.detail);
   }
 
-  Future<LifecycleResult> sendSetDevice(String mac, String name, String zone) =>
-      _lifecycle(
+  Future<LifecycleResult> sendSetDevice(String mac, String name) => _lifecycle(
         cmd: SafrCommand.setDevice,
-        args: SafrSetDeviceArgs(mac: mac, name: name, zone: zone).build(),
+        args: SafrSetDeviceArgs(mac: mac, name: name).build(),
         dstMac: safrMacToBytes(mac),
         description: 'renomear dispositivo',
         targetMac: mac,
+      );
+
+  // ── v3.8 labels (spec §14.1 / §14.2) — board-only, never relayed ──
+
+  /// A unit's zone and endereçamento (0 = none). Board-only: nothing goes
+  /// into the mesh, no detector wakes for it.
+  Future<LifecycleResult> sendSetDeviceIds(
+          String mac, int zoneId, int addressId) =>
+      _lifecycle(
+        cmd: SafrCommand.setDeviceIds,
+        args: SafrSetDeviceIdsArgs.build(
+            mac: mac, zoneId: zoneId, addressId: addressId),
+        dstMac: safrBroadcastMacBytes,
+        description: 'zona e endereçamento do dispositivo',
+        targetMac: mac,
+      );
+
+  /// Create (a new id) or rename (a known id) a label. The board answers
+  /// with the kind's LABEL_TABLE pages, which ingest mirrors.
+  Future<LifecycleResult> sendSetLabel(
+          SafrLabelKind kind, int id, String name) =>
+      _lifecycle(
+        cmd: SafrCommand.setLabel,
+        args: SafrSetLabelArgs.build(kind: kind, id: id, name: name),
+        dstMac: safrBroadcastMacBytes,
+        description: '${kind.singular.toLowerCase()} "$name"',
+      );
+
+  /// Delete a label; refused (`inUse`) while a unit still carries it.
+  Future<LifecycleResult> sendDelLabel(SafrLabelKind kind, int id) =>
+      _lifecycle(
+        cmd: SafrCommand.delLabel,
+        args: SafrDelLabelArgs.build(kind: kind, id: id),
+        dstMac: safrBroadcastMacBytes,
+        description: 'apagar ${kind.singular.toLowerCase()}',
       );
 
   Future<LifecycleResult> sendRetireDevice(String mac) => _lifecycle(
@@ -344,11 +379,13 @@ class SafrDownlink {
     String? unit;
     if (awaiting != null && srcMac != null && ack.status == SafrAckStatus.ok) {
       if (awaiting.mac == safrBroadcastMac) {
-        if (awaiting.boardAcked) {
+        if (!awaiting.boardAcked) {
+          awaiting.boardAcked = true;
+        } else if (srcMac != awaiting.boardMac) {
+          // A unit's own ACK. (The board ACKs the unit-addressed retries
+          // of a broadcast too: not a unit, not a delivery.)
           unit = srcMac;
           awaiting.expected.remove(srcMac);
-        } else {
-          awaiting.boardAcked = true;
         }
       } else if (srcMac == awaiting.mac) {
         _awaitingUnit.remove(ack.ackedMsgId);
@@ -405,6 +442,8 @@ class SafrDownlink {
         until: now.add(_broadcastAckWindow),
         retryUntilUnit: expected.isNotEmpty,
         expected: expected,
+        boardMac:
+            units.where((s) => s.device.layer == 0).firstOrNull?.device.mac,
       );
     }
     final known = units.where((s) => s.device.mac == targetMac).firstOrNull;
@@ -734,16 +773,32 @@ class SafrDownlink {
         return;
       }
       p.attempts++;
-      // Same MSG_ID (receiver dedupes), fresh MSG_CTR (nonce never reused).
-      final frame = p.encoder.encode(
-        msgType: p.msgType,
-        payload: p.payload,
-        dstMac: p.dstMac,
-        ackRequired: true,
-        msgId: msgId,
-      );
-      await _write(frame, p.raw);
-      _emitTick(p.targetMac);
+      // A broadcast the board already took is retried only to the units
+      // still missing, each addressed by its MAC (2026-10-28): a unit that
+      // confirmed is not sent the command again, and the map shows the
+      // retry going where it goes. Before the board's ACK, or for a unit's
+      // own command, the frame is resent as it was.
+      final awaiting = _awaitingUnit[msgId];
+      final targets = awaiting != null &&
+              awaiting.mac == safrBroadcastMac &&
+              awaiting.boardAcked &&
+              awaiting.expected.isNotEmpty
+          ? awaiting.expected.toList()
+          : <String?>[p.targetMac];
+      for (final target in targets) {
+        // Same MSG_ID (receiver dedupes), fresh MSG_CTR (nonce never reused).
+        final frame = p.encoder.encode(
+          msgType: p.msgType,
+          payload: p.payload,
+          dstMac: target == null || target == p.targetMac
+              ? p.dstMac
+              : safrMacToBytes(target),
+          ackRequired: true,
+          msgId: msgId,
+        );
+        await _write(frame, p.raw);
+        _emitTick(target);
+      }
       _scheduleRetry(msgId);
     });
   }
@@ -835,9 +890,14 @@ class _AwaitingUnit {
     required this.until,
     this.retryUntilUnit = false,
     Set<String>? expected,
+    this.boardMac,
   }) : expected = expected ?? <String>{};
   final String mac;
   final DateTime until;
+
+  /// Broadcast only: the board (layer 0), whose ACKs of the unit-addressed
+  /// retries are not a unit's confirmation. Null when not known yet.
+  final String? boardMac;
 
   /// The tablet keeps retransmitting after the board's ACK until the
   /// unit's (v3.6); false for a battery unit (its parent's mailbox).

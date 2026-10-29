@@ -378,6 +378,161 @@ void main() {
     });
 
     test(
+        'the window is 100 s from the start: a late confirmation of one unit '
+        'does not keep a silent one on the map (2026-10-28)', () {
+      fakeAsync((async) {
+        boardAck = Completer<bool>();
+        final t = DeviceCommandTracker(
+          send: (_, __) => boardAck.future,
+          deliveries: deliveries.stream,
+          traffic: traffic.stream,
+          nodes: () => [n(a), n(b)],
+        );
+        t.run(safrBroadcastMac, DeviceCommandKind.test);
+        boardAck.complete(true);
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 90));
+        deliveries.add(a); // re-puts the Central's tally at 90 s
+        async.flushMicrotasks();
+        expect(t.state[safrBroadcastMac]!.step, DeviceCommandStep.boardAck);
+        async.elapse(const Duration(seconds: 11));
+        expect(t.state[safrBroadcastMac]!.step, DeviceCommandStep.failed,
+            reason: 'b never answered: red at 100 s, not at 190 s');
+        expect(t.state[b]!.step, DeviceCommandStep.failed);
+        expect(t.state[b]!.note, DeviceCommandTracker.noAnswerNote);
+        t.dispose();
+      });
+    });
+
+    test(
+        'a new test while the old one lingers: every mark of the old one '
+        'leaves, every unit is counted again (2026-10-28)', () {
+      fakeAsync((async) {
+        boardAck = Completer<bool>();
+        const c = 'AA:00:00:00:00:03';
+        var nodes = [n(a), n(b), n(c)];
+        final t = DeviceCommandTracker(
+          send: (_, __) => boardAck.future,
+          deliveries: deliveries.stream,
+          traffic: traffic.stream,
+          nodes: () => nodes,
+        );
+        t.run(safrBroadcastMac, DeviceCommandKind.test);
+        boardAck.complete(true);
+        async.flushMicrotasks();
+        deliveries.add(a);
+        deliveries.add(b);
+        traffic.add(testEvent(a));
+        async.flushMicrotasks();
+        // c never answers: the window closes red; the test lingers.
+        async.elapse(DeviceCommandTracker.broadcastWindow);
+        expect(t.state[safrBroadcastMac]!.step, DeviceCommandStep.failed);
+        expect(t.state[a]!.step, DeviceCommandStep.answered);
+        expect(t.state[b]!.step, DeviceCommandStep.delivered);
+        expect(t.state[c]!.step, DeviceCommandStep.failed);
+        // Pressed again 2 s later, with c gone from the map meanwhile.
+        async.elapse(const Duration(seconds: 2));
+        nodes = [n(a), n(b)];
+        boardAck = Completer<bool>();
+        expect(t.run(safrBroadcastMac, DeviceCommandKind.test), completes);
+        async.flushMicrotasks();
+        expect(t.state[c], isNull, reason: 'the old test left whole');
+        expect(t.state[a]!.step, DeviceCommandStep.sending);
+        expect(t.state[b]!.step, DeviceCommandStep.sending);
+        expect(t.broadcastUnits, {a, b}, reason: 'both counted, not 0');
+        expect(t.broadcastTally.total, 2);
+        boardAck.complete(true);
+        async.flushMicrotasks();
+        deliveries.add(a);
+        deliveries.add(b);
+        async.flushMicrotasks();
+        expect(t.state[safrBroadcastMac]!.step, DeviceCommandStep.delivered);
+        async.elapse(const Duration(seconds: 11));
+        expect(t.state, isEmpty, reason: 'nothing of either test remains');
+        t.dispose();
+      });
+    });
+
+    test(
+        'a trouble from a unit during the test keeps its ✓✓ and leaves with '
+        'the test (2026-10-28)', () {
+      fakeAsync((async) {
+        boardAck = Completer<bool>();
+        final t = DeviceCommandTracker(
+          send: (_, __) => boardAck.future,
+          deliveries: deliveries.stream,
+          traffic: traffic.stream,
+          nodes: () => [n(a), n(b)],
+        );
+        t.run(safrBroadcastMac, DeviceCommandKind.test);
+        boardAck.complete(true);
+        async.flushMicrotasks();
+        deliveries.add(a);
+        traffic.add(testEvent(a));
+        async.flushMicrotasks();
+        // Its ACK of the test was lost on a weak link: COMM_FAULT.
+        traffic.add(const SafrTrafficTick(
+          mac: a,
+          direction: SafrTrafficDirection.uplink,
+          severity: 1,
+          msgType: SafrMsgType.event,
+          eventCode: SafrEventCode.commFault,
+        ));
+        async.flushMicrotasks();
+        expect(t.state[a]!.kind, DeviceCommandKind.test);
+        expect(t.state[a]!.step, DeviceCommandStep.answered);
+        async.elapse(DeviceCommandTracker.broadcastWindow);
+        async.elapse(const Duration(seconds: 11));
+        expect(t.state[a], isNull, reason: 'left with the test');
+        expect(t.state[safrBroadcastMac], isNull);
+        t.dispose();
+      });
+    });
+
+    test(
+        'phone: the central\'s next test sweeps the old one\'s marks, '
+        'members not in the new one included (2026-10-28)', () {
+      fakeAsync((async) {
+        final t = DeviceCommandTracker(
+          deliveries: deliveries.stream,
+          traffic: traffic.stream,
+        );
+        final t0 = DateTime.now().toUtc();
+        DeviceCommandStatus st(String mac, DeviceCommandStep step) =>
+            DeviceCommandStatus(
+                mac: mac,
+                kind: DeviceCommandKind.test,
+                step: step,
+                startedAt: t0);
+        t.applyRemote(st(safrBroadcastMac, DeviceCommandStep.sending));
+        t.applyRemote(st(a, DeviceCommandStep.sending));
+        t.applyRemote(st(b, DeviceCommandStep.sending));
+        t.applyRemote(st(safrBroadcastMac, DeviceCommandStep.boardAck));
+        t.applyRemote(st(a, DeviceCommandStep.delivered));
+        t.applyRemote(st(b, DeviceCommandStep.delivered));
+        t.applyRemote(st(safrBroadcastMac, DeviceCommandStep.delivered));
+        async.flushMicrotasks();
+        expect(t.state[b]!.step, DeviceCommandStep.delivered);
+        // The central starts another test, with a only.
+        t.applyRemote(DeviceCommandStatus(
+            mac: safrBroadcastMac,
+            kind: DeviceCommandKind.test,
+            step: DeviceCommandStep.sending,
+            startedAt: t0.add(const Duration(seconds: 3))));
+        t.applyRemote(DeviceCommandStatus(
+            mac: a,
+            kind: DeviceCommandKind.test,
+            step: DeviceCommandStep.sending,
+            startedAt: t0.add(const Duration(seconds: 3))));
+        async.flushMicrotasks();
+        expect(t.state[b], isNull, reason: 'the old mark on b is gone');
+        expect(t.state[a]!.step, DeviceCommandStep.sending);
+        expect(t.broadcastUnits, {a});
+        t.dispose();
+      });
+    });
+
+    test(
         'every unit confirms before the board\'s answer is handed back: '
         'the Central still ends ✓✓, not ✓ then red', () {
       fakeAsync((async) {

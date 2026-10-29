@@ -195,7 +195,7 @@ class _JoinFromBoardScreenState extends ConsumerState<JoinFromBoardScreen> {
         safrPskHex: code['safr_psk_hex'] as String,
         channel: code['channel'] as int,
         meshId: code['mesh_id'] as int,
-        zones: const [],
+        addresses: const [],
         createdAt: DateTime.now().toUtc(),
       );
     } on TypeError {

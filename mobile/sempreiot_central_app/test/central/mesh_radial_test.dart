@@ -123,7 +123,7 @@ void main() {
     Widget map = MeshMap(
       nodes: units,
       board: mesh.first,
-      election: const RootElectionState(rootMac: root),
+      election: const RootElectionState(roots: {root}),
       onNodeTap: (_, __) {},
       showOta: false,
       radial: radial,
@@ -342,7 +342,7 @@ void main() {
               body: MeshMap(
                 nodes: small.where((n) => n.layer > 0).toList(),
                 board: small.first,
-                election: const RootElectionState(rootMac: root),
+                election: const RootElectionState(roots: {root}),
                 onNodeTap: (_, __) {},
                 showOta: false,
                 radial: radial,

@@ -12,23 +12,23 @@ import '../../domain/services/installation_backup_codec.dart';
 import '../../../central/domain/safr/safr_product.dart';
 
 /// One installation on this phone: share it (encrypted QR, lifecycle §2),
-/// manage its zones, provision units, and see this phone's work log.
+/// manage its endereçamentos, provision units, and see this phone's work log.
 class InstallationDetailScreen extends ConsumerWidget {
   const InstallationDetailScreen({super.key, required this.installationId});
   final String installationId;
 
-  Future<void> _addZone(BuildContext context, WidgetRef ref) async {
+  Future<void> _addAddress(BuildContext context, WidgetRef ref) async {
     final ctrl = TextEditingController();
-    final zone = await showDialog<String>(
+    final address = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: ctx.surfaceColor,
-        title: const Text('Nova zona'),
+        title: const Text('Novo endereçamento'),
         content: TextField(
           controller: ctrl,
           autofocus: true,
-          maxLength: 16,
-          decoration: const InputDecoration(hintText: 'ex: Térreo'),
+          maxLength: 32,
+          decoration: const InputDecoration(hintText: 'ex: 1º andar'),
           onSubmitted: (v) => Navigator.of(ctx).pop(v),
         ),
         actions: [
@@ -43,10 +43,10 @@ class InstallationDetailScreen extends ConsumerWidget {
         ],
       ),
     );
-    if (zone == null || zone.trim().isEmpty) return;
+    if (address == null || address.trim().isEmpty) return;
     await ref
         .read(installationListProvider.notifier)
-        .addZone(installationId, zone.trim());
+        .addAddress(installationId, address.trim());
   }
 
   Future<void> _share(
@@ -237,27 +237,35 @@ class InstallationDetailScreen extends ConsumerWidget {
                           label: const Text('Compartilhar (outro instalador / central)'),
                         ),
                         const SizedBox(height: 24),
-                        const _SectionLabel('ZONAS'),
+                        const _SectionLabel('ENDEREÇAMENTOS'),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Onde cada dispositivo fica (ex.: 1º andar): '
+                          'sugestões para o passo 3 da configuração. As '
+                          'zonas são definidas na central.',
+                          style: TextStyle(
+                              color: context.textSecondary, fontSize: 12),
+                        ),
                         const SizedBox(height: 8),
-                        if (installation.zones.isEmpty)
-                          Text('Nenhuma zona ainda.',
+                        if (installation.addresses.isEmpty)
+                          Text('Nenhum endereçamento ainda.',
                               style: TextStyle(color: context.textSecondary))
                         else
                           Wrap(
                             spacing: 8,
                             runSpacing: 8,
                             children: [
-                              for (final z in installation.zones)
-                                Chip(label: Text(z)),
+                              for (final a in installation.addresses)
+                                Chip(label: Text(a)),
                             ],
                           ),
                         const SizedBox(height: 12),
                         Align(
                           alignment: Alignment.centerLeft,
                           child: OutlinedButton.icon(
-                            onPressed: () => _addZone(context, ref),
+                            onPressed: () => _addAddress(context, ref),
                             icon: const Icon(Icons.add),
-                            label: const Text('Adicionar zona'),
+                            label: const Text('Adicionar endereçamento'),
                           ),
                         ),
                         const SizedBox(height: 24),
@@ -291,7 +299,7 @@ class InstallationDetailScreen extends ConsumerWidget {
                                     (SafrProduct.fromCode(d.productCode) ??
                                             SafrProduct.fromModel(d.model))
                                         ?.label,
-                                    d.zone,
+                                    if (d.address.isNotEmpty) d.address,
                                     d.mac,
                                   ].whereType<String>().join(' · '),
                                   style: TextStyle(

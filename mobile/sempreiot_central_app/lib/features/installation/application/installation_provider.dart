@@ -13,7 +13,7 @@ enum ImportSharedOutcome {
   /// New on this phone.
   added,
 
-  /// Same SYSTEM_ID already here: name/zones refreshed, work log kept.
+  /// Same SYSTEM_ID already here: name/endereçamentos refreshed, work log kept.
   updated,
 }
 
@@ -40,10 +40,11 @@ class InstallationListNotifier
 
   Future<Installation> create({
     required String displayName,
-    List<String> zones = const [],
+    List<String> addresses = const [],
   }) async {
     final installation =
-        InstallationGenerator.generate(displayName: displayName, zones: zones);
+        InstallationGenerator.generate(
+            displayName: displayName, addresses: addresses);
     await _storage.save(installation);
     await _load();
     return installation;
@@ -60,7 +61,7 @@ class InstallationListNotifier
       if (existing.systemId == shared.systemId) {
         final merged = existing.copyWith(
           displayName: shared.displayName,
-          zones: {...existing.zones, ...shared.zones}.toList(),
+          addresses: {...existing.addresses, ...shared.addresses}.toList(),
         );
         await _storage.save(merged);
         await _load();
@@ -83,10 +84,11 @@ class InstallationListNotifier
     await _load();
   }
 
-  Future<void> addZone(String installationLocalId, String zone) async {
+  Future<void> addAddress(String installationLocalId, String address) async {
     final target = _find(installationLocalId);
-    if (target.zones.contains(zone)) return;
-    final updated = target.copyWith(zones: [...target.zones, zone]);
+    if (target.addresses.contains(address)) return;
+    final updated =
+        target.copyWith(addresses: [...target.addresses, address]);
     await _storage.save(updated);
     await _load();
   }

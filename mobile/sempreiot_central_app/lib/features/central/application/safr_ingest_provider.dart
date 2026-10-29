@@ -76,9 +76,7 @@ class SafrIngestService {
       String? parentMac,
       SafrMsgType msgType,
       SafrEventCode? eventCode,
-      int? uptimeS,
-      int? dlHeard,
-      int? dlMap)? onTraffic;
+      int? uptimeS)? onTraffic;
 
   /// A frame whose header SYSTEM_ID is not ours (spec §3.1 "neighbouring
   /// system"). Null = ours again (a valid frame arrived). Feeds the
@@ -169,12 +167,6 @@ class SafrIngestService {
       frame.payload is SafrHeartbeatPayload
           ? (frame.payload as SafrHeartbeatPayload).uptimeS
           : null,
-      frame.payload is SafrHeartbeatPayload
-          ? (frame.payload as SafrHeartbeatPayload).dlHeard
-          : null,
-      frame.payload is SafrHeartbeatPayload
-          ? (frame.payload as SafrHeartbeatPayload).dlMap
-          : null,
     );
 
     if (frame.msgType == SafrMsgType.ack && frame.payload is SafrAckPayload) {
@@ -205,6 +197,14 @@ class SafrIngestService {
         frame.payload is SafrDeviceTablePayload) {
       await _handleDeviceTable(frame.payload as SafrDeviceTablePayload, now);
       return; // the board's own reply: not a device to register
+    }
+
+    // v3.8 (spec §14.2): the board's zone / endereçamento tables, a kind
+    // per page set — its own reply, like the device table.
+    if (frame.msgType == SafrMsgType.labelTable &&
+        frame.payload is SafrLabelTablePayload) {
+      await _handleLabelTable(frame.payload as SafrLabelTablePayload);
+      return;
     }
 
     // Firmware push (spec §13.3): the board's report goes to the push in
@@ -458,10 +458,10 @@ class SafrIngestService {
         break;
     }
 
-    // v3.1 (spec §7.11): the operator-chosen name/zone, announced once by
-    // the device itself — always wins over whatever INSTALLATION guessed.
+    // v3.1 (spec §7.11): the operator-chosen name, announced once by the
+    // device itself — always wins over whatever INSTALLATION guessed. (The
+    // zone slot of that frame is reserved since v3.8: ignored.)
     var name = existing?.name;
-    var zone = existing?.zone;
     var registryState = existing?.registryState;
     // v3.5 product identity: kept across every frame that does not carry it.
     var productCode = existing?.productCode;
@@ -469,7 +469,6 @@ class SafrIngestService {
     var fwVersion = existing?.fwVersion;
     if (payload case SafrNameAnnouncePayload p) {
       name = p.name;
-      zone = p.zone;
       // v3.2 trailing ROLE byte: a leaf says so on its very first frame.
       if (p.role != SafrNodeRole.unknown) role = p.role.wire;
       // v3.5 extension: unknown/empty never replaces a known value.
@@ -505,7 +504,6 @@ class SafrIngestService {
             // emits the missing/restored events on the state edges.
             supervisionState: Value(existing?.supervisionState ?? 0),
             name: Value(name),
-            zone: Value(zone),
             registryState: Value(registryState),
             lastDevSeq: Value(lastDevSeq),
             alarmLatched: Value(alarmLatched),
@@ -560,7 +558,6 @@ class SafrIngestService {
             lastMsgCtr: Value(existing?.lastMsgCtr ?? 0),
             supervisionState: Value(existing?.supervisionState ?? 0),
             name: Value(existing?.name),
-            zone: Value(existing?.zone),
             registryState: Value(existing?.registryState),
             lastDevSeq: Value(lastDevSeq),
             alarmLatched: Value(alarmLatched),
@@ -602,7 +599,6 @@ class SafrIngestService {
               lastMsgCtr: Value(existing?.lastMsgCtr ?? 0),
               supervisionState: Value(existing?.supervisionState ?? 0),
               name: Value(existing?.name ?? device.name),
-              zone: Value(existing?.zone ?? device.zone),
               registryState: const Value('enrolled'),
               lastDevSeq: Value(existing?.lastDevSeq ?? 0),
               alarmLatched: Value(existing?.alarmLatched ?? 0),
@@ -669,7 +665,6 @@ class SafrIngestService {
               lastMsgCtr: Value(existing?.lastMsgCtr ?? 0),
               supervisionState: Value(existing?.supervisionState ?? 0),
               name: Value(e.name.isNotEmpty ? e.name : existing?.name),
-              zone: Value(e.zone.isNotEmpty ? e.zone : existing?.zone),
               registryState: Value(live ? null : 'enrolled'),
               lastDevSeq: Value(existing?.lastDevSeq ?? 0),
               alarmLatched: Value(existing?.alarmLatched ?? 0),
@@ -683,6 +678,13 @@ class SafrIngestService {
                   Value(_knownProduct(e.productCode) ?? existing?.productCode),
               hwRev: Value(_knownHwRev(e.hwRev) ?? existing?.hwRev),
               fwVersion: Value(_knownFw(e.fwVersion) ?? existing?.fwVersion),
+              // v3.8 (format 2): the board's ids are the truth; an older
+              // page leaves what this tablet holds.
+              zoneId: Value(page.hasLabelFields ? e.zoneId : existing?.zoneId),
+              addressId: Value(
+                  page.hasLabelFields ? e.addressId : existing?.addressId),
+              linkKind: Value(
+                  page.hasLabelFields ? e.linkKind : existing?.linkKind ?? 0),
             ),
           );
     }
@@ -691,6 +693,23 @@ class SafrIngestService {
       await db.pruneUnlistedBoardRows(listed);
       _tableSeen.clear();
       onDeviceTableSynced?.call(listed);
+    }
+  }
+
+  /// LABEL_TABLE pages of one kind, gathered until the last; the tablet's
+  /// copy then becomes exactly the board's table (spec §14.2).
+  final _labelPages = <SafrLabelKind, Map<int, String>>{};
+
+  Future<void> _handleLabelTable(SafrLabelTablePayload page) async {
+    final gathered = page.page == 1
+        ? (_labelPages[page.kind] = <int, String>{})
+        : (_labelPages[page.kind] ??= <int, String>{});
+    for (final l in page.labels) {
+      gathered[l.id] = l.name;
+    }
+    if (page.isLastPage) {
+      _labelPages.remove(page.kind);
+      await db.replaceLabels(page.kind.wire, gathered);
     }
   }
 
@@ -801,8 +820,7 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
     onDeviceTableSynced: (listed) =>
         ref.read(boardSyncProvider.notifier).tableArrived(listed),
     onJournalData: downlink.handleJournalData,
-    onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS,
-            dlHeard, dlMap) =>
+    onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS) =>
         traffic.emit(SafrTrafficTick(
       mac: mac,
       direction: SafrTrafficDirection.uplink,
@@ -811,8 +829,6 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
       msgType: msgType,
       eventCode: eventCode,
       uptimeS: uptimeS,
-      dlHeard: dlHeard,
-      dlMap: dlMap,
     )),
   );
 

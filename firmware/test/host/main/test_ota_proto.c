@@ -250,6 +250,18 @@ TEST_CASE("ota: OTA_CONTROL filters", "[ota][control]")
     p[3] = 0; /* empty zone */
     TEST_ASSERT_FALSE(siot_ota_control_decode(p, 4, &b));
 
+    /* v3.8: filter 4 = one zone id (§13.6); 0 is refused */
+    c = (siot_ota_control_t){.action = SIOT_OTA_ACT_START, .family = SAFR_FAMILY_NODE, .filter = SIOT_OTA_FILTER_ZONE_ID, .zone_id = 0x0103};
+    n = siot_ota_control_encode(p, &c);
+    TEST_ASSERT_EQUAL(5, n);
+    TEST_ASSERT_EQUAL(4, p[2]);
+    TEST_ASSERT_EQUAL_HEX8(0x01, p[3]);
+    TEST_ASSERT_EQUAL_HEX8(0x03, p[4]);
+    TEST_ASSERT_TRUE(siot_ota_control_decode(p, n, &b));
+    TEST_ASSERT_EQUAL(0x0103, b.zone_id);
+    p[3] = 0; p[4] = 0;
+    TEST_ASSERT_FALSE(siot_ota_control_decode(p, n, &b));
+
     const uint8_t mac[6] = {0x80, 0x45, 0x6B, 0x72, 0xE3, 0x30};
     c = (siot_ota_control_t){.action = SIOT_OTA_ACT_START, .family = SAFR_FAMILY_LEAF, .filter = SIOT_OTA_FILTER_UNIT};
     memcpy(c.mac, mac, 6);

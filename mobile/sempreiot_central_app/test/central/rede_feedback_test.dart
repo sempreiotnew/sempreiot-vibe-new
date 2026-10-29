@@ -451,7 +451,7 @@ void main() {
       await tester.pumpWidget(banner(RootElectionState(
         electingSince: since,
         candidates: const {leafMac},
-        lostRootMac: rootMac,
+        lostRoots: const {rootMac},
       )));
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.text('Root perdido — elegendo um novo'), findsOneWidget);
@@ -464,7 +464,7 @@ void main() {
       await tester.pumpWidget(banner(RootElectionState(
         electingSince:
             DateTime.now().toUtc().subtract(const Duration(seconds: 45)),
-        lostRootMac: rootMac,
+        lostRoots: const {rootMac},
       )));
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.text('Sem root há 45 s'), findsOneWidget);
@@ -472,7 +472,7 @@ void main() {
 
       // Settled: who won, for a few seconds, then nothing.
       await tester.pumpWidget(banner(RootElectionState(
-        rootMac: leafMac,
+        roots: const {leafMac},
         electedMac: leafMac,
         electedAfter: const Duration(seconds: 12),
         electedAt: DateTime.now().toUtc(),

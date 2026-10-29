@@ -47,12 +47,15 @@ void main() {
 
     test('SET_DEVICE, single-MAC and REPLACE args', () {
       final sd = const SafrSetDeviceArgs(
-              mac: '5A:46:52:00:00:02', name: 'Sirene 1', zone: 'Térreo')
+              mac: '5A:46:52:00:00:02', name: 'Sirene 1')
           .build();
+      expect(sd.last, 0, reason: 'the zone slot is reserved: length 0 (v3.8)');
       final back = SafrSetDeviceArgs.parse(sd)!;
       expect(back.mac, '5A:46:52:00:00:02');
       expect(back.name, 'Sirene 1');
-      expect(back.zone, 'Térreo');
+      // A pre-v3.8 sender's zone string in the slot is skipped, not refused.
+      final legacy = Uint8List.fromList([...sd.sublist(0, sd.length - 1), 1, 0x54]);
+      expect(SafrSetDeviceArgs.parse(legacy)!.name, 'Sirene 1');
 
       expect(SafrMacArgs.parse(SafrMacArgs.build('5A:46:52:00:00:02')),
           '5A:46:52:00:00:02');
@@ -75,7 +78,6 @@ void main() {
             flags: SafrDeviceFlags.seenEver | SafrDeviceFlags.heardWhileRetired,
             lastSeenAgeS: 300,
             name: 'Detector 2º',
-            zone: '2º andar',
           ),
         ],
       );
@@ -92,7 +94,6 @@ void main() {
       expect(e.pendingRename, isFalse);
       expect(e.lastSeenAgeS, 300);
       expect(e.name, 'Detector 2º');
-      expect(e.zone, '2º andar');
     });
 
     test('ACK DETAIL byte and NAME_ANNOUNCE optional role', () {

@@ -74,6 +74,7 @@ SafrLogGroup safrLogGroup(SafrMsgType t) => switch (t) {
       SafrMsgType.ack || SafrMsgType.command => SafrLogGroup.commands,
       SafrMsgType.installation ||
       SafrMsgType.deviceTable ||
+      SafrMsgType.labelTable ||
       SafrMsgType.code =>
         SafrLogGroup.installation,
       SafrMsgType.otaPushBegin ||
@@ -110,6 +111,7 @@ SafrFrameLook safrFrameLook(SafrWireFrame f) {
     SafrInstallationPayload _ => (color: _install, chip: 'INST', name: name),
     SafrNameAnnouncePayload _ => (color: _network, chip: 'NAME', name: name),
     SafrDeviceTablePayload _ => (color: _install, chip: 'TABLE', name: name),
+    SafrLabelTablePayload _ => (color: _install, chip: 'LABELS', name: name),
     SafrCodePayload _ => (color: _install, chip: 'CODE', name: name),
     SafrParentProbePayload _ => (color: _topology, chip: 'PROBE', name: name),
     SafrParentOfferPayload _ => (color: _topology, chip: 'OFFER', name: name),
@@ -220,6 +222,9 @@ String safrFrameSummary(SafrWireFrame f) {
     case SafrOtaRolloutPayload p:
       return '${_rolloutState(p.state)} · ${_family(p.family)} '
           '${p.target} · pág. ${p.page}/${p.pageCount} · ${p.total} unid.';
+    case SafrLabelTablePayload p:
+      return '${p.kind.plural.toLowerCase()} ${p.page}/${p.pageCount} · '
+          '${p.total} · rev ${p.rev}';
     case SafrUnknownPayload p:
       return '${p.bytes.length} B não decodificados';
     case null:

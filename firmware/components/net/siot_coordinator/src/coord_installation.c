@@ -29,16 +29,13 @@ size_t coord_installation_encode(const siot_installation_t *code,
         const siot_devtab_entry_t *e = &entries[i];
         if (e->state == SIOT_DEV_RETIRED) continue; /* legacy view: members only */
         const size_t n_len = strnlen(e->name, SIOT_NAME_MAX_LEN);
-        const size_t z_len = strnlen(e->zone, SIOT_ZONE_MAX_LEN);
-        if (off + 6 + 1 + n_len + 1 + z_len > SAFR_MAX_PAYLOAD) break; /* stop cleanly, never overflow */
+        if (off + 6 + 1 + n_len + 1 > SAFR_MAX_PAYLOAD) break; /* stop cleanly, never overflow */
         memcpy(&out[off], e->mac, 6);
         off += 6;
         out[off++] = (uint8_t)n_len;
         memcpy(&out[off], e->name, n_len);
         off += n_len;
-        out[off++] = (uint8_t)z_len;
-        memcpy(&out[off], e->zone, z_len);
-        off += z_len;
+        out[off++] = 0; /* ZONE_LEN: reserved since v3.8 */
         count++;
     }
     out[count_off] = count;

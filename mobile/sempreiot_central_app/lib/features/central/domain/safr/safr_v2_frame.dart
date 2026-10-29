@@ -70,6 +70,10 @@ enum SafrMsgType {
   otaStatus(0x13),
   otaResult(0x14),
   otaRollout(0x15),
+
+  /// v3.8 (spec §14.2): the board's zone / endereçamento tables, one kind
+  /// per page set, serial only.
+  labelTable(0x16),
   unknown(0x00);
 
   const SafrMsgType(this.wire);
@@ -294,6 +298,7 @@ SafrWireFrame parseSafrWireFrame(
     SafrMsgType.otaStatus => SafrOtaStatusPayload.parse(plaintext),
     SafrMsgType.otaResult => SafrOtaResultPayload.parse(plaintext),
     SafrMsgType.otaRollout => SafrOtaRolloutPayload.parse(plaintext),
+    SafrMsgType.labelTable => SafrLabelTablePayload.parse(plaintext),
     SafrMsgType.unknown => SafrUnknownPayload(plaintext),
   };
 

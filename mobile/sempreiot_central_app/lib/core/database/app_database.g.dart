@@ -938,11 +938,25 @@ class $MeshDevicesTable extends MeshDevices
   late final GeneratedColumn<String> name = GeneratedColumn<String>(
       'name', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _zoneMeta = const VerificationMeta('zone');
+  static const VerificationMeta _zoneIdMeta = const VerificationMeta('zoneId');
   @override
-  late final GeneratedColumn<String> zone = GeneratedColumn<String>(
-      'zone', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
+  late final GeneratedColumn<int> zoneId = GeneratedColumn<int>(
+      'zone_id', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _addressIdMeta =
+      const VerificationMeta('addressId');
+  @override
+  late final GeneratedColumn<int> addressId = GeneratedColumn<int>(
+      'address_id', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _linkKindMeta =
+      const VerificationMeta('linkKind');
+  @override
+  late final GeneratedColumn<int> linkKind = GeneratedColumn<int>(
+      'link_kind', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
   static const VerificationMeta _registryStateMeta =
       const VerificationMeta('registryState');
   @override
@@ -1031,7 +1045,9 @@ class $MeshDevicesTable extends MeshDevices
         lastMsgCtr,
         supervisionState,
         name,
-        zone,
+        zoneId,
+        addressId,
+        linkKind,
         registryState,
         lastDevSeq,
         alarmLatched,
@@ -1136,9 +1152,17 @@ class $MeshDevicesTable extends MeshDevices
       context.handle(
           _nameMeta, name.isAcceptableOrUnknown(data['name']!, _nameMeta));
     }
-    if (data.containsKey('zone')) {
-      context.handle(
-          _zoneMeta, zone.isAcceptableOrUnknown(data['zone']!, _zoneMeta));
+    if (data.containsKey('zone_id')) {
+      context.handle(_zoneIdMeta,
+          zoneId.isAcceptableOrUnknown(data['zone_id']!, _zoneIdMeta));
+    }
+    if (data.containsKey('address_id')) {
+      context.handle(_addressIdMeta,
+          addressId.isAcceptableOrUnknown(data['address_id']!, _addressIdMeta));
+    }
+    if (data.containsKey('link_kind')) {
+      context.handle(_linkKindMeta,
+          linkKind.isAcceptableOrUnknown(data['link_kind']!, _linkKindMeta));
     }
     if (data.containsKey('registry_state')) {
       context.handle(
@@ -1241,8 +1265,12 @@ class $MeshDevicesTable extends MeshDevices
           .read(DriftSqlType.int, data['${effectivePrefix}supervision_state'])!,
       name: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}name']),
-      zone: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}zone']),
+      zoneId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}zone_id']),
+      addressId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}address_id']),
+      linkKind: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}link_kind'])!,
       registryState: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}registry_state']),
       lastDevSeq: attachedDatabase.typeMapping
@@ -1290,7 +1318,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
   final int lastMsgCtr;
   final int supervisionState;
   final String? name;
-  final String? zone;
+  final int? zoneId;
+  final int? addressId;
+  final int linkKind;
   final String? registryState;
   final int lastDevSeq;
   final int alarmLatched;
@@ -1318,7 +1348,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       required this.lastMsgCtr,
       required this.supervisionState,
       this.name,
-      this.zone,
+      this.zoneId,
+      this.addressId,
+      required this.linkKind,
       this.registryState,
       required this.lastDevSeq,
       required this.alarmLatched,
@@ -1360,9 +1392,13 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
     if (!nullToAbsent || name != null) {
       map['name'] = Variable<String>(name);
     }
-    if (!nullToAbsent || zone != null) {
-      map['zone'] = Variable<String>(zone);
+    if (!nullToAbsent || zoneId != null) {
+      map['zone_id'] = Variable<int>(zoneId);
     }
+    if (!nullToAbsent || addressId != null) {
+      map['address_id'] = Variable<int>(addressId);
+    }
+    map['link_kind'] = Variable<int>(linkKind);
     if (!nullToAbsent || registryState != null) {
       map['registry_state'] = Variable<String>(registryState);
     }
@@ -1420,7 +1456,12 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       lastMsgCtr: Value(lastMsgCtr),
       supervisionState: Value(supervisionState),
       name: name == null && nullToAbsent ? const Value.absent() : Value(name),
-      zone: zone == null && nullToAbsent ? const Value.absent() : Value(zone),
+      zoneId:
+          zoneId == null && nullToAbsent ? const Value.absent() : Value(zoneId),
+      addressId: addressId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(addressId),
+      linkKind: Value(linkKind),
       registryState: registryState == null && nullToAbsent
           ? const Value.absent()
           : Value(registryState),
@@ -1469,7 +1510,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       lastMsgCtr: serializer.fromJson<int>(json['lastMsgCtr']),
       supervisionState: serializer.fromJson<int>(json['supervisionState']),
       name: serializer.fromJson<String?>(json['name']),
-      zone: serializer.fromJson<String?>(json['zone']),
+      zoneId: serializer.fromJson<int?>(json['zoneId']),
+      addressId: serializer.fromJson<int?>(json['addressId']),
+      linkKind: serializer.fromJson<int>(json['linkKind']),
       registryState: serializer.fromJson<String?>(json['registryState']),
       lastDevSeq: serializer.fromJson<int>(json['lastDevSeq']),
       alarmLatched: serializer.fromJson<int>(json['alarmLatched']),
@@ -1502,7 +1545,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       'lastMsgCtr': serializer.toJson<int>(lastMsgCtr),
       'supervisionState': serializer.toJson<int>(supervisionState),
       'name': serializer.toJson<String?>(name),
-      'zone': serializer.toJson<String?>(zone),
+      'zoneId': serializer.toJson<int?>(zoneId),
+      'addressId': serializer.toJson<int?>(addressId),
+      'linkKind': serializer.toJson<int>(linkKind),
       'registryState': serializer.toJson<String?>(registryState),
       'lastDevSeq': serializer.toJson<int>(lastDevSeq),
       'alarmLatched': serializer.toJson<int>(alarmLatched),
@@ -1533,7 +1578,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           int? lastMsgCtr,
           int? supervisionState,
           Value<String?> name = const Value.absent(),
-          Value<String?> zone = const Value.absent(),
+          Value<int?> zoneId = const Value.absent(),
+          Value<int?> addressId = const Value.absent(),
+          int? linkKind,
           Value<String?> registryState = const Value.absent(),
           int? lastDevSeq,
           int? alarmLatched,
@@ -1563,7 +1610,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
         lastMsgCtr: lastMsgCtr ?? this.lastMsgCtr,
         supervisionState: supervisionState ?? this.supervisionState,
         name: name.present ? name.value : this.name,
-        zone: zone.present ? zone.value : this.zone,
+        zoneId: zoneId.present ? zoneId.value : this.zoneId,
+        addressId: addressId.present ? addressId.value : this.addressId,
+        linkKind: linkKind ?? this.linkKind,
         registryState:
             registryState.present ? registryState.value : this.registryState,
         lastDevSeq: lastDevSeq ?? this.lastDevSeq,
@@ -1609,7 +1658,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           ? data.supervisionState.value
           : this.supervisionState,
       name: data.name.present ? data.name.value : this.name,
-      zone: data.zone.present ? data.zone.value : this.zone,
+      zoneId: data.zoneId.present ? data.zoneId.value : this.zoneId,
+      addressId: data.addressId.present ? data.addressId.value : this.addressId,
+      linkKind: data.linkKind.present ? data.linkKind.value : this.linkKind,
       registryState: data.registryState.present
           ? data.registryState.value
           : this.registryState,
@@ -1656,7 +1707,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           ..write('lastMsgCtr: $lastMsgCtr, ')
           ..write('supervisionState: $supervisionState, ')
           ..write('name: $name, ')
-          ..write('zone: $zone, ')
+          ..write('zoneId: $zoneId, ')
+          ..write('addressId: $addressId, ')
+          ..write('linkKind: $linkKind, ')
           ..write('registryState: $registryState, ')
           ..write('lastDevSeq: $lastDevSeq, ')
           ..write('alarmLatched: $alarmLatched, ')
@@ -1689,7 +1742,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
         lastMsgCtr,
         supervisionState,
         name,
-        zone,
+        zoneId,
+        addressId,
+        linkKind,
         registryState,
         lastDevSeq,
         alarmLatched,
@@ -1721,7 +1776,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           other.lastMsgCtr == this.lastMsgCtr &&
           other.supervisionState == this.supervisionState &&
           other.name == this.name &&
-          other.zone == this.zone &&
+          other.zoneId == this.zoneId &&
+          other.addressId == this.addressId &&
+          other.linkKind == this.linkKind &&
           other.registryState == this.registryState &&
           other.lastDevSeq == this.lastDevSeq &&
           other.alarmLatched == this.alarmLatched &&
@@ -1751,7 +1808,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
   final Value<int> lastMsgCtr;
   final Value<int> supervisionState;
   final Value<String?> name;
-  final Value<String?> zone;
+  final Value<int?> zoneId;
+  final Value<int?> addressId;
+  final Value<int> linkKind;
   final Value<String?> registryState;
   final Value<int> lastDevSeq;
   final Value<int> alarmLatched;
@@ -1780,7 +1839,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     this.lastMsgCtr = const Value.absent(),
     this.supervisionState = const Value.absent(),
     this.name = const Value.absent(),
-    this.zone = const Value.absent(),
+    this.zoneId = const Value.absent(),
+    this.addressId = const Value.absent(),
+    this.linkKind = const Value.absent(),
     this.registryState = const Value.absent(),
     this.lastDevSeq = const Value.absent(),
     this.alarmLatched = const Value.absent(),
@@ -1810,7 +1871,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     this.lastMsgCtr = const Value.absent(),
     this.supervisionState = const Value.absent(),
     this.name = const Value.absent(),
-    this.zone = const Value.absent(),
+    this.zoneId = const Value.absent(),
+    this.addressId = const Value.absent(),
+    this.linkKind = const Value.absent(),
     this.registryState = const Value.absent(),
     this.lastDevSeq = const Value.absent(),
     this.alarmLatched = const Value.absent(),
@@ -1842,7 +1905,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     Expression<int>? lastMsgCtr,
     Expression<int>? supervisionState,
     Expression<String>? name,
-    Expression<String>? zone,
+    Expression<int>? zoneId,
+    Expression<int>? addressId,
+    Expression<int>? linkKind,
     Expression<String>? registryState,
     Expression<int>? lastDevSeq,
     Expression<int>? alarmLatched,
@@ -1872,7 +1937,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
       if (lastMsgCtr != null) 'last_msg_ctr': lastMsgCtr,
       if (supervisionState != null) 'supervision_state': supervisionState,
       if (name != null) 'name': name,
-      if (zone != null) 'zone': zone,
+      if (zoneId != null) 'zone_id': zoneId,
+      if (addressId != null) 'address_id': addressId,
+      if (linkKind != null) 'link_kind': linkKind,
       if (registryState != null) 'registry_state': registryState,
       if (lastDevSeq != null) 'last_dev_seq': lastDevSeq,
       if (alarmLatched != null) 'alarm_latched': alarmLatched,
@@ -1904,7 +1971,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
       Value<int>? lastMsgCtr,
       Value<int>? supervisionState,
       Value<String?>? name,
-      Value<String?>? zone,
+      Value<int?>? zoneId,
+      Value<int?>? addressId,
+      Value<int>? linkKind,
       Value<String?>? registryState,
       Value<int>? lastDevSeq,
       Value<int>? alarmLatched,
@@ -1933,7 +2002,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
       lastMsgCtr: lastMsgCtr ?? this.lastMsgCtr,
       supervisionState: supervisionState ?? this.supervisionState,
       name: name ?? this.name,
-      zone: zone ?? this.zone,
+      zoneId: zoneId ?? this.zoneId,
+      addressId: addressId ?? this.addressId,
+      linkKind: linkKind ?? this.linkKind,
       registryState: registryState ?? this.registryState,
       lastDevSeq: lastDevSeq ?? this.lastDevSeq,
       alarmLatched: alarmLatched ?? this.alarmLatched,
@@ -1997,8 +2068,14 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     if (name.present) {
       map['name'] = Variable<String>(name.value);
     }
-    if (zone.present) {
-      map['zone'] = Variable<String>(zone.value);
+    if (zoneId.present) {
+      map['zone_id'] = Variable<int>(zoneId.value);
+    }
+    if (addressId.present) {
+      map['address_id'] = Variable<int>(addressId.value);
+    }
+    if (linkKind.present) {
+      map['link_kind'] = Variable<int>(linkKind.value);
     }
     if (registryState.present) {
       map['registry_state'] = Variable<String>(registryState.value);
@@ -2057,7 +2134,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
           ..write('lastMsgCtr: $lastMsgCtr, ')
           ..write('supervisionState: $supervisionState, ')
           ..write('name: $name, ')
-          ..write('zone: $zone, ')
+          ..write('zoneId: $zoneId, ')
+          ..write('addressId: $addressId, ')
+          ..write('linkKind: $linkKind, ')
           ..write('registryState: $registryState, ')
           ..write('lastDevSeq: $lastDevSeq, ')
           ..write('alarmLatched: $alarmLatched, ')
@@ -4166,6 +4245,234 @@ class SystemTestsCompanion extends UpdateCompanion<SystemTest> {
   }
 }
 
+class $DeviceLabelsTable extends DeviceLabels
+    with TableInfo<$DeviceLabelsTable, DeviceLabel> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DeviceLabelsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<int> kind = GeneratedColumn<int>(
+      'kind', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _labelIdMeta =
+      const VerificationMeta('labelId');
+  @override
+  late final GeneratedColumn<int> labelId = GeneratedColumn<int>(
+      'label_id', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _nameMeta = const VerificationMeta('name');
+  @override
+  late final GeneratedColumn<String> name = GeneratedColumn<String>(
+      'name', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns => [kind, labelId, name];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'device_labels';
+  @override
+  VerificationContext validateIntegrity(Insertable<DeviceLabel> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('kind')) {
+      context.handle(
+          _kindMeta, kind.isAcceptableOrUnknown(data['kind']!, _kindMeta));
+    } else if (isInserting) {
+      context.missing(_kindMeta);
+    }
+    if (data.containsKey('label_id')) {
+      context.handle(_labelIdMeta,
+          labelId.isAcceptableOrUnknown(data['label_id']!, _labelIdMeta));
+    } else if (isInserting) {
+      context.missing(_labelIdMeta);
+    }
+    if (data.containsKey('name')) {
+      context.handle(
+          _nameMeta, name.isAcceptableOrUnknown(data['name']!, _nameMeta));
+    } else if (isInserting) {
+      context.missing(_nameMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {kind, labelId};
+  @override
+  DeviceLabel map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return DeviceLabel(
+      kind: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}kind'])!,
+      labelId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}label_id'])!,
+      name: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}name'])!,
+    );
+  }
+
+  @override
+  $DeviceLabelsTable createAlias(String alias) {
+    return $DeviceLabelsTable(attachedDatabase, alias);
+  }
+}
+
+class DeviceLabel extends DataClass implements Insertable<DeviceLabel> {
+  final int kind;
+  final int labelId;
+  final String name;
+  const DeviceLabel(
+      {required this.kind, required this.labelId, required this.name});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['kind'] = Variable<int>(kind);
+    map['label_id'] = Variable<int>(labelId);
+    map['name'] = Variable<String>(name);
+    return map;
+  }
+
+  DeviceLabelsCompanion toCompanion(bool nullToAbsent) {
+    return DeviceLabelsCompanion(
+      kind: Value(kind),
+      labelId: Value(labelId),
+      name: Value(name),
+    );
+  }
+
+  factory DeviceLabel.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return DeviceLabel(
+      kind: serializer.fromJson<int>(json['kind']),
+      labelId: serializer.fromJson<int>(json['labelId']),
+      name: serializer.fromJson<String>(json['name']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'kind': serializer.toJson<int>(kind),
+      'labelId': serializer.toJson<int>(labelId),
+      'name': serializer.toJson<String>(name),
+    };
+  }
+
+  DeviceLabel copyWith({int? kind, int? labelId, String? name}) => DeviceLabel(
+        kind: kind ?? this.kind,
+        labelId: labelId ?? this.labelId,
+        name: name ?? this.name,
+      );
+  DeviceLabel copyWithCompanion(DeviceLabelsCompanion data) {
+    return DeviceLabel(
+      kind: data.kind.present ? data.kind.value : this.kind,
+      labelId: data.labelId.present ? data.labelId.value : this.labelId,
+      name: data.name.present ? data.name.value : this.name,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DeviceLabel(')
+          ..write('kind: $kind, ')
+          ..write('labelId: $labelId, ')
+          ..write('name: $name')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(kind, labelId, name);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is DeviceLabel &&
+          other.kind == this.kind &&
+          other.labelId == this.labelId &&
+          other.name == this.name);
+}
+
+class DeviceLabelsCompanion extends UpdateCompanion<DeviceLabel> {
+  final Value<int> kind;
+  final Value<int> labelId;
+  final Value<String> name;
+  final Value<int> rowid;
+  const DeviceLabelsCompanion({
+    this.kind = const Value.absent(),
+    this.labelId = const Value.absent(),
+    this.name = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  DeviceLabelsCompanion.insert({
+    required int kind,
+    required int labelId,
+    required String name,
+    this.rowid = const Value.absent(),
+  })  : kind = Value(kind),
+        labelId = Value(labelId),
+        name = Value(name);
+  static Insertable<DeviceLabel> custom({
+    Expression<int>? kind,
+    Expression<int>? labelId,
+    Expression<String>? name,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (kind != null) 'kind': kind,
+      if (labelId != null) 'label_id': labelId,
+      if (name != null) 'name': name,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  DeviceLabelsCompanion copyWith(
+      {Value<int>? kind,
+      Value<int>? labelId,
+      Value<String>? name,
+      Value<int>? rowid}) {
+    return DeviceLabelsCompanion(
+      kind: kind ?? this.kind,
+      labelId: labelId ?? this.labelId,
+      name: name ?? this.name,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (kind.present) {
+      map['kind'] = Variable<int>(kind.value);
+    }
+    if (labelId.present) {
+      map['label_id'] = Variable<int>(labelId.value);
+    }
+    if (name.present) {
+      map['name'] = Variable<String>(name.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DeviceLabelsCompanion(')
+          ..write('kind: $kind, ')
+          ..write('labelId: $labelId, ')
+          ..write('name: $name, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -4177,6 +4484,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $OtaRunsTable otaRuns = $OtaRunsTable(this);
   late final $OtaRunUnitsTable otaRunUnits = $OtaRunUnitsTable(this);
   late final $SystemTestsTable systemTests = $SystemTestsTable(this);
+  late final $DeviceLabelsTable deviceLabels = $DeviceLabelsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -4189,7 +4497,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         deviceEvents,
         otaRuns,
         otaRunUnits,
-        systemTests
+        systemTests,
+        deviceLabels
       ];
 }
 
@@ -4682,7 +4991,9 @@ typedef $$MeshDevicesTableCreateCompanionBuilder = MeshDevicesCompanion
   Value<int> lastMsgCtr,
   Value<int> supervisionState,
   Value<String?> name,
-  Value<String?> zone,
+  Value<int?> zoneId,
+  Value<int?> addressId,
+  Value<int> linkKind,
   Value<String?> registryState,
   Value<int> lastDevSeq,
   Value<int> alarmLatched,
@@ -4713,7 +5024,9 @@ typedef $$MeshDevicesTableUpdateCompanionBuilder = MeshDevicesCompanion
   Value<int> lastMsgCtr,
   Value<int> supervisionState,
   Value<String?> name,
-  Value<String?> zone,
+  Value<int?> zoneId,
+  Value<int?> addressId,
+  Value<int> linkKind,
   Value<String?> registryState,
   Value<int> lastDevSeq,
   Value<int> alarmLatched,
@@ -4784,8 +5097,14 @@ class $$MeshDevicesTableFilterComposer
   ColumnFilters<String> get name => $composableBuilder(
       column: $table.name, builder: (column) => ColumnFilters(column));
 
-  ColumnFilters<String> get zone => $composableBuilder(
-      column: $table.zone, builder: (column) => ColumnFilters(column));
+  ColumnFilters<int> get zoneId => $composableBuilder(
+      column: $table.zoneId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get addressId => $composableBuilder(
+      column: $table.addressId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get linkKind => $composableBuilder(
+      column: $table.linkKind, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get registryState => $composableBuilder(
       column: $table.registryState, builder: (column) => ColumnFilters(column));
@@ -4880,8 +5199,14 @@ class $$MeshDevicesTableOrderingComposer
   ColumnOrderings<String> get name => $composableBuilder(
       column: $table.name, builder: (column) => ColumnOrderings(column));
 
-  ColumnOrderings<String> get zone => $composableBuilder(
-      column: $table.zone, builder: (column) => ColumnOrderings(column));
+  ColumnOrderings<int> get zoneId => $composableBuilder(
+      column: $table.zoneId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get addressId => $composableBuilder(
+      column: $table.addressId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get linkKind => $composableBuilder(
+      column: $table.linkKind, builder: (column) => ColumnOrderings(column));
 
   ColumnOrderings<String> get registryState => $composableBuilder(
       column: $table.registryState,
@@ -4976,8 +5301,14 @@ class $$MeshDevicesTableAnnotationComposer
   GeneratedColumn<String> get name =>
       $composableBuilder(column: $table.name, builder: (column) => column);
 
-  GeneratedColumn<String> get zone =>
-      $composableBuilder(column: $table.zone, builder: (column) => column);
+  GeneratedColumn<int> get zoneId =>
+      $composableBuilder(column: $table.zoneId, builder: (column) => column);
+
+  GeneratedColumn<int> get addressId =>
+      $composableBuilder(column: $table.addressId, builder: (column) => column);
+
+  GeneratedColumn<int> get linkKind =>
+      $composableBuilder(column: $table.linkKind, builder: (column) => column);
 
   GeneratedColumn<String> get registryState => $composableBuilder(
       column: $table.registryState, builder: (column) => column);
@@ -5051,7 +5382,9 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             Value<int> lastMsgCtr = const Value.absent(),
             Value<int> supervisionState = const Value.absent(),
             Value<String?> name = const Value.absent(),
-            Value<String?> zone = const Value.absent(),
+            Value<int?> zoneId = const Value.absent(),
+            Value<int?> addressId = const Value.absent(),
+            Value<int> linkKind = const Value.absent(),
             Value<String?> registryState = const Value.absent(),
             Value<int> lastDevSeq = const Value.absent(),
             Value<int> alarmLatched = const Value.absent(),
@@ -5081,7 +5414,9 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             lastMsgCtr: lastMsgCtr,
             supervisionState: supervisionState,
             name: name,
-            zone: zone,
+            zoneId: zoneId,
+            addressId: addressId,
+            linkKind: linkKind,
             registryState: registryState,
             lastDevSeq: lastDevSeq,
             alarmLatched: alarmLatched,
@@ -5111,7 +5446,9 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             Value<int> lastMsgCtr = const Value.absent(),
             Value<int> supervisionState = const Value.absent(),
             Value<String?> name = const Value.absent(),
-            Value<String?> zone = const Value.absent(),
+            Value<int?> zoneId = const Value.absent(),
+            Value<int?> addressId = const Value.absent(),
+            Value<int> linkKind = const Value.absent(),
             Value<String?> registryState = const Value.absent(),
             Value<int> lastDevSeq = const Value.absent(),
             Value<int> alarmLatched = const Value.absent(),
@@ -5141,7 +5478,9 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             lastMsgCtr: lastMsgCtr,
             supervisionState: supervisionState,
             name: name,
-            zone: zone,
+            zoneId: zoneId,
+            addressId: addressId,
+            linkKind: linkKind,
             registryState: registryState,
             lastDevSeq: lastDevSeq,
             alarmLatched: alarmLatched,
@@ -6157,6 +6496,149 @@ typedef $$SystemTestsTableProcessedTableManager = ProcessedTableManager<
     (SystemTest, BaseReferences<_$AppDatabase, $SystemTestsTable, SystemTest>),
     SystemTest,
     PrefetchHooks Function()>;
+typedef $$DeviceLabelsTableCreateCompanionBuilder = DeviceLabelsCompanion
+    Function({
+  required int kind,
+  required int labelId,
+  required String name,
+  Value<int> rowid,
+});
+typedef $$DeviceLabelsTableUpdateCompanionBuilder = DeviceLabelsCompanion
+    Function({
+  Value<int> kind,
+  Value<int> labelId,
+  Value<String> name,
+  Value<int> rowid,
+});
+
+class $$DeviceLabelsTableFilterComposer
+    extends Composer<_$AppDatabase, $DeviceLabelsTable> {
+  $$DeviceLabelsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get kind => $composableBuilder(
+      column: $table.kind, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get labelId => $composableBuilder(
+      column: $table.labelId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get name => $composableBuilder(
+      column: $table.name, builder: (column) => ColumnFilters(column));
+}
+
+class $$DeviceLabelsTableOrderingComposer
+    extends Composer<_$AppDatabase, $DeviceLabelsTable> {
+  $$DeviceLabelsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get kind => $composableBuilder(
+      column: $table.kind, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get labelId => $composableBuilder(
+      column: $table.labelId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get name => $composableBuilder(
+      column: $table.name, builder: (column) => ColumnOrderings(column));
+}
+
+class $$DeviceLabelsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $DeviceLabelsTable> {
+  $$DeviceLabelsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<int> get labelId =>
+      $composableBuilder(column: $table.labelId, builder: (column) => column);
+
+  GeneratedColumn<String> get name =>
+      $composableBuilder(column: $table.name, builder: (column) => column);
+}
+
+class $$DeviceLabelsTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $DeviceLabelsTable,
+    DeviceLabel,
+    $$DeviceLabelsTableFilterComposer,
+    $$DeviceLabelsTableOrderingComposer,
+    $$DeviceLabelsTableAnnotationComposer,
+    $$DeviceLabelsTableCreateCompanionBuilder,
+    $$DeviceLabelsTableUpdateCompanionBuilder,
+    (
+      DeviceLabel,
+      BaseReferences<_$AppDatabase, $DeviceLabelsTable, DeviceLabel>
+    ),
+    DeviceLabel,
+    PrefetchHooks Function()> {
+  $$DeviceLabelsTableTableManager(_$AppDatabase db, $DeviceLabelsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DeviceLabelsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$DeviceLabelsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$DeviceLabelsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<int> kind = const Value.absent(),
+            Value<int> labelId = const Value.absent(),
+            Value<String> name = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              DeviceLabelsCompanion(
+            kind: kind,
+            labelId: labelId,
+            name: name,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required int kind,
+            required int labelId,
+            required String name,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              DeviceLabelsCompanion.insert(
+            kind: kind,
+            labelId: labelId,
+            name: name,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$DeviceLabelsTableProcessedTableManager = ProcessedTableManager<
+    _$AppDatabase,
+    $DeviceLabelsTable,
+    DeviceLabel,
+    $$DeviceLabelsTableFilterComposer,
+    $$DeviceLabelsTableOrderingComposer,
+    $$DeviceLabelsTableAnnotationComposer,
+    $$DeviceLabelsTableCreateCompanionBuilder,
+    $$DeviceLabelsTableUpdateCompanionBuilder,
+    (
+      DeviceLabel,
+      BaseReferences<_$AppDatabase, $DeviceLabelsTable, DeviceLabel>
+    ),
+    DeviceLabel,
+    PrefetchHooks Function()>;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -6177,4 +6659,6 @@ class $AppDatabaseManager {
       $$OtaRunUnitsTableTableManager(_db, _db.otaRunUnits);
   $$SystemTestsTableTableManager get systemTests =>
       $$SystemTestsTableTableManager(_db, _db.systemTests);
+  $$DeviceLabelsTableTableManager get deviceLabels =>
+      $$DeviceLabelsTableTableManager(_db, _db.deviceLabels);
 }

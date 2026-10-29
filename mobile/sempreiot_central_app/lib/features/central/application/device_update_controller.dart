@@ -940,8 +940,8 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
     final layer = {
       for (final n in _ref.read(topologyProvider)) n.mac: n.layer,
     };
-    final root = _rootMac();
-    int rank(String k) => k == root ? -1 : (layer[k] ?? 0);
+    final roots = _roots();
+    int rank(String k) => roots.contains(k) ? -1 : (layer[k] ?? 0);
     final order = [...waiting];
     // Stable: same depth keeps the order of the queue.
     final index = {for (var i = 0; i < waiting.length; i++) waiting[i]: i};
@@ -952,22 +952,24 @@ class DeviceUpdateController extends StateNotifier<DeviceUpdateRun?> {
     return order.first;
   }
 
-  /// The mesh root: the settled election's, else the one unit at layer 1
-  /// (the election may not have settled yet when the run starts).
-  String? _rootMac() {
-    final elected = _ref.read(rootElectionProvider).rootMac;
-    if (elected != null) return elected;
-    final first = [
+  /// The mesh roots: the settled election's, else the units at layer 1
+  /// (the election may not have settled yet when the run starts). Several
+  /// roots are several paths to the board: all of them go last.
+  Set<String> _roots() {
+    final settled = _ref.read(rootElectionProvider).roots;
+    if (settled.isNotEmpty) return settled;
+    return {
       for (final n in _ref.read(topologyProvider))
         if (n.layer == 1 && n.online) n.mac,
-    ];
-    return first.length == 1 ? first.single : null;
+    };
   }
 
   List<String> _rootLast(Iterable<String> keys) {
-    final root = _rootMac();
+    final roots = _roots();
     final list = keys.toList();
-    if (root != null && list.remove(root)) list.add(root);
+    final last = [for (final k in list) if (roots.contains(k)) k];
+    list.removeWhere(roots.contains);
+    list.addAll(last);
     return list;
   }
 }

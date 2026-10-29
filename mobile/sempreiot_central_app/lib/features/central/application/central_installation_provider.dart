@@ -119,7 +119,7 @@ class CentralInstallationNotifier
   /// input and [PassphraseRequired] when a v2 envelope needs a passphrase.
   Future<ParsedBackup> import(String raw, {String? passphrase}) async {
     final parsed = parseInstallationBackup(raw, passphrase: passphrase);
-    // The tablet keeps the code and zones; the installer's work log is not
+    // The tablet keeps the code and endereçamentos; the installer's work log is not
     // the roster (lifecycle §1) and is dropped here.
     final kept = parsed.installation.copyWith(devices: const []);
     await _store.save(kept);

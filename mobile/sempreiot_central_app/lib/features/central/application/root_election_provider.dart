@@ -12,46 +12,63 @@ import 'topology_provider.dart';
 /// Who bridges the mesh to the board right now — or that the mesh is still
 /// deciding.
 ///
-/// After the root dies, Mesh-Lite lets every survivor that hears the board's
-/// AP associate to it; for up to ~10 s two or three units genuinely are level
-/// 1, each reporting itself as root, until the weaker ones back off. Nobody
-/// — not even the board — can name the root during that window, so the map
-/// must not: it shows the candidates and "reorganizando" instead. A unit
-/// earns the ROOT badge only after being the sole online level-1 device for
-/// [rootElectionSettle].
+/// A root is a unit at level 1: attached to the board's access point
+/// directly. Mesh-Lite lets every unit that hears the access point attach to
+/// it, and resolves several of them by "fusion" only when they hear each
+/// other; a far unit that hears the board but not its siblings stays at level
+/// 1 for good (bench, 2026-10-28). So there may be **several roots**, and
+/// that is a stable, legitimate mesh with more than one path to the board —
+/// not an election. An election is a *change*: a settled root vanished, or
+/// the set of level-1 units moved and has not held still for
+/// [rootElectionSettle] yet. After the root dies, Mesh-Lite lets every
+/// survivor that hears the board associate to it; for up to ~10 s two or
+/// three units genuinely are level 1, each reporting itself as root, until
+/// the weaker ones back off — or do not. Nobody, not even the board, can name
+/// the roots during that window, so the map must not: it shows the candidates
+/// and "reorganizando" instead. The units earn the ROOT badge together once
+/// the set has held for [rootElectionSettle].
 class RootElectionState {
   const RootElectionState({
-    this.rootMac,
+    this.roots = const {},
     this.electingSince,
     this.candidates = const {},
-    this.settlingMac,
+    this.settlingSet,
     this.settlingSince,
-    this.lostRootMac,
+    this.lostRoots = const {},
     this.electedMac,
     this.electedAfter,
     this.electedAt,
   });
 
-  /// The settled root; null while electing, or with no mesh at all.
-  final String? rootMac;
+  /// The settled roots; empty while electing, or with no mesh at all.
+  final Set<String> roots;
 
-  /// Non-null while an election runs (root lost or several candidates).
+  /// The one root when exactly one is settled, else null (several roots,
+  /// an election, or no mesh). For what needs a single unit, such as the
+  /// update's "root last"; everything that draws a unit asks [isRoot].
+  String? get rootMac => roots.length == 1 ? roots.first : null;
+
+  bool isRoot(String mac) => roots.contains(mac);
+
+  /// Non-null while an election runs (a settled root was lost).
   final DateTime? electingSince;
 
   /// Online level-1 units right now — the contenders while electing.
   final Set<String> candidates;
 
-  /// The single candidate currently alone, and since when (settle timer).
-  final String? settlingMac;
+  /// The level-1 set waiting to hold still, and since when (settle timer).
+  final Set<String>? settlingSet;
   final DateTime? settlingSince;
 
-  /// The root this election replaces (null when none was known: a fresh
-  /// mesh with several contenders).
-  final String? lostRootMac;
+  /// The roots this election replaces (empty when none was known).
+  final Set<String> lostRoots;
+
+  /// The first lost root, for the banner's one line.
+  String? get lostRootMac => lostRoots.isEmpty ? null : lostRoots.first;
 
   /// The last election's outcome — who won, how long it took and when —
   /// kept while that root holds, so the Rede banner can say so for a few
-  /// seconds after.
+  /// seconds after. Null when the election settled on several roots.
   final String? electedMac;
   final Duration? electedAfter;
   final DateTime? electedAt;
@@ -71,71 +88,77 @@ class RootElectionState {
 const rootElectionSettle = Duration(seconds: 3);
 const rootElectionOverdue = Duration(seconds: 30);
 
+bool _same(Set<String>? a, Set<String> b) =>
+    a != null && a.length == b.length && a.containsAll(b);
+
 /// Pure step: previous state + the online level-1 units now → next state.
 ///
-/// - one candidate, alone for [rootElectionSettle] → settled root;
-/// - several candidates → electing;
-/// - none, after a root was known (or mid-election) → electing ("root lost");
+/// - the same set as the settled roots → settled, as it was;
+/// - a set that differs → it must hold still for [rootElectionSettle], then
+///   every unit in it is a root (one or several);
+/// - a settled root missing from the set → an election ("root lost") until
+///   the set holds still;
+/// - none, after roots were known (or mid-election) → electing;
 /// - none, and no root was ever known → nothing (empty mesh, not an election).
-/// A fresh start with a single unit settles silently: no election is
-/// declared unless a root was known or several units contend.
+/// A fresh start, with one unit or several, settles silently: no election is
+/// declared unless a root was known and vanished.
 RootElectionState stepRootElection(
   RootElectionState prev,
   Set<String> candidates,
   DateTime now,
 ) {
-  // The root an election replaces: the settled one it started from, kept
+  // The roots an election replaces: the settled ones that are gone, kept
   // for as long as the election runs.
-  final lost = prev.electing ? prev.lostRootMac : prev.rootMac;
-  RootElectionState settled(String mac) {
-    if (!prev.electing) {
-      // No election ran (or this root just holds): keep the last outcome.
-      return RootElectionState(
-        rootMac: mac,
-        candidates: candidates,
-        electedMac: prev.electedMac == mac ? prev.electedMac : null,
-        electedAfter: prev.electedMac == mac ? prev.electedAfter : null,
-        electedAt: prev.electedMac == mac ? prev.electedAt : null,
-      );
-    }
+  final lost = prev.electing
+      ? prev.lostRoots
+      : prev.roots.where((m) => !candidates.contains(m)).toSet();
+
+  if (candidates.isEmpty) {
+    if (prev.roots.isEmpty && !prev.electing) return RootElectionState.none;
     return RootElectionState(
-      rootMac: mac,
-      candidates: candidates,
-      electedMac: mac,
-      electedAfter: now.difference(prev.electingSince!),
-      electedAt: now,
+      electingSince: prev.electingSince ?? now,
+      lostRoots: lost,
     );
   }
 
-  if (candidates.length == 1) {
-    final mac = candidates.first;
-    if (prev.rootMac == mac && !prev.electing) return settled(mac);
-    final since = prev.settlingMac == mac ? prev.settlingSince! : now;
-    if (now.difference(since) >= rootElectionSettle) return settled(mac);
-    final electingSince =
-        prev.electingSince ?? (prev.rootMac != null ? now : null);
+  if (_same(prev.roots, candidates) && !prev.electing) {
+    // Holding: keep the last outcome.
+    final one = candidates.length == 1 ? candidates.first : null;
     return RootElectionState(
-      electingSince: electingSince,
+      roots: candidates,
       candidates: candidates,
-      settlingMac: mac,
-      settlingSince: since,
-      lostRootMac: electingSince == null ? null : lost,
+      electedMac: prev.electedMac == one ? prev.electedMac : null,
+      electedAfter: prev.electedMac == one ? prev.electedAfter : null,
+      electedAt: prev.electedMac == one ? prev.electedAt : null,
     );
   }
-  if (candidates.length > 1) {
+
+  // The set moved: an election only when a settled root is gone; a unit
+  // joining at level 1 (or a fresh start) settles quietly.
+  final electingSince = prev.electingSince ?? (lost.isNotEmpty ? now : null);
+  final since = _same(prev.settlingSet, candidates) ? prev.settlingSince! : now;
+  if (now.difference(since) >= rootElectionSettle) {
+    final one = candidates.length == 1 ? candidates.first : null;
+    if (electingSince == null) {
+      return RootElectionState(roots: candidates, candidates: candidates);
+    }
     return RootElectionState(
-      electingSince: prev.electingSince ?? now,
+      roots: candidates,
       candidates: candidates,
-      lostRootMac: lost,
+      electedMac: one,
+      electedAfter: now.difference(electingSince),
+      electedAt: now,
     );
   }
-  if (prev.rootMac != null || prev.electing) {
-    return RootElectionState(
-      electingSince: prev.electingSince ?? now,
-      lostRootMac: lost,
-    );
-  }
-  return RootElectionState.none;
+  return RootElectionState(
+    // No election: the known roots keep their badge while a newcomer settles.
+    roots: electingSince == null ? prev.roots : const {},
+    electingSince: electingSince,
+    candidates: candidates,
+    settlingSet: candidates,
+    settlingSince: since,
+    lostRoots: electingSince == null ? const {} : lost,
+  );
 }
 
 class RootElectionNotifier extends StateNotifier<RootElectionState> {
@@ -163,7 +186,7 @@ class RootElectionNotifier extends StateNotifier<RootElectionState> {
   /// Once a second: advances the settle timer and the elapsed display.
   void tick() {
     if (!mounted) return;
-    if (state.electing || state.settlingMac != null) _evaluate();
+    if (state.electing || state.settlingSet != null) _evaluate();
   }
 
   void _evaluate() {
@@ -178,15 +201,16 @@ class RootElectionNotifier extends StateNotifier<RootElectionState> {
     if (!prev.electing && next.electing) {
       _log(
         kind: 'root_election_started',
-        description: prev.rootMac != null
-            ? 'Root ${prev.rootMac} perdido — a malha está reorganizando'
-            : 'Eleição de root: ${next.candidates.length} candidatos',
+        description: 'Root ${next.lostRoots.join(', ')} perdido — a malha '
+            'está reorganizando',
       );
-    } else if (prev.electing && !next.electing && next.rootMac != null) {
+    } else if (prev.electing && !next.electing && next.roots.isNotEmpty) {
       final s = now.difference(prev.electingSince!).inSeconds;
       _log(
         kind: 'root_elected',
-        description: 'Novo root: ${next.rootMac} após $s s',
+        description: next.roots.length == 1
+            ? 'Novo root: ${next.rootMac} após $s s'
+            : 'Novos roots: ${next.roots.join(', ')} após $s s',
         deviceMac: next.rootMac,
       );
     }

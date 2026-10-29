@@ -1,12 +1,13 @@
 /// Steps of the device provisioning wizard, in flow order.
-/// POC-BRIEF.md §6.2: scan sticker -> name + zone -> connecting -> identify
-/// -> provision -> result.
+/// POC-BRIEF.md §6.2: scan sticker -> name + endereçamento -> connecting ->
+/// identify -> provision -> result.
 enum ProvisioningStep {
   /// Scan the device's factory sticker QR (or type id/mac/pop manually).
   scan,
 
-  /// Operator names the device and picks a zone within the installation.
-  nameZone,
+  /// Operator names the device and may pick its endereçamento (where it
+  /// is). The zone is set on the tablet (protocol §14.8).
+  nameAddress,
 
   /// Programmatic join of the device's setup SoftAP; /info polling runs
   /// underneath once joined.
@@ -38,7 +39,7 @@ extension ProvisioningStepX on ProvisioningStep {
   /// 0-based index of the visible wizard phase (for the progress header).
   int get phaseIndex => switch (this) {
         ProvisioningStep.scan => 0,
-        ProvisioningStep.nameZone => 1,
+        ProvisioningStep.nameAddress => 1,
         ProvisioningStep.connecting ||
         ProvisioningStep.identifying ||
         ProvisioningStep.identifyFailed =>

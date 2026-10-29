@@ -69,6 +69,12 @@ bool siot_coordinator_alarm_recent(void);
 /* The board's own NAME_ANNOUNCE (§7.11): what it is and the firmware it runs. */
 void siot_coordinator_announce_board(void);
 
+/* A unit's endereçamento by name (from its NAME_ANNOUNCE or the phone's
+ * /enroll list): resolved to a label id, created when new, set on the unit
+ * only while it has none (spec §7.11 ADDRESS, §14.1). true = something
+ * changed. Usable before siot_coordinator_start() (the /enroll path). */
+bool siot_coordinator_adopt_address(const uint8_t mac[6], const char *address);
+
 /* ---- rollout (protocol §13.4, §13.6) ---------------------------------------- */
 
 /* What came UP from the mesh and the rollout wants to see: OTA_STATUS,

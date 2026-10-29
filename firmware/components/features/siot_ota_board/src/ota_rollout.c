@@ -418,8 +418,9 @@ static bool passes(const siot_devtab_entry_t *e, const siot_ota_control_t *c)
     switch (c->filter) {
     case SIOT_OTA_FILTER_ALL:     return true;
     case SIOT_OTA_FILTER_PRODUCT: return e->product == c->product;
-    case SIOT_OTA_FILTER_ZONE:    return strcmp(e->zone, c->zone) == 0;
+    case SIOT_OTA_FILTER_ZONE:    return false; /* the zone string is reserved since v3.8: matches nothing */
     case SIOT_OTA_FILTER_UNIT:    return siot_mac_eq(e->mac, c->mac);
+    case SIOT_OTA_FILTER_ZONE_ID: return e->zone_id == c->zone_id;
     default:                      return false;
     }
 }

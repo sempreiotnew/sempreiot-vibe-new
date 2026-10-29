@@ -14,17 +14,20 @@ Installation _sample() => Installation(
       safrPskHex: '00112233445566778899aabbccddeeff',
       channel: 6,
       meshId: 0x34,
-      zones: const ['Térreo', '1º andar'],
+      addresses: const ['Térreo', '1º andar'],
       createdAt: DateTime.utc(2026, 9, 24, 10),
       devices: const [
         ProvisionedDevice(
-            mac: '7C:4F:AD:AE:85:90', id: 'dev-b', name: 'Sirene 1', zone: 'Térreo'),
+            mac: '7C:4F:AD:AE:85:90',
+            id: 'dev-b',
+            name: 'Sirene 1',
+            address: 'Térreo'),
       ],
     );
 
 void main() {
   group('InstallationBackupCodec', () {
-    test('round trip keeps the code and zones, drops the work log', () {
+    test('round trip keeps the code and endereçamentos, drops the work log', () {
       final env = InstallationBackupCodec.encode(_sample(), 'senha-forte-1',
           iterations: 2000);
       expect(InstallationBackupCodec.detectFormat(env), BackupFormat.encryptedV2);
@@ -32,7 +35,7 @@ void main() {
       expect(back.systemId, 0x1234);
       expect(back.safrPskHex, '00112233445566778899aabbccddeeff');
       expect(back.netPsk, 'QR2heszWr0mJjaDd');
-      expect(back.zones, ['Térreo', '1º andar']);
+      expect(back.addresses, ['Térreo', '1º andar']);
       expect(back.devices, isEmpty);
       expect(back.formatVersion, 2);
     });

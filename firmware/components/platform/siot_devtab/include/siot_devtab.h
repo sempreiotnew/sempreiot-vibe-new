@@ -2,15 +2,20 @@
  * spec §7.12). Board only.
  *
  * One entry per MAC. Persisted in NVS namespace "siot_devtab" (key = 12
- * lowercase hex chars of the MAC, blob = siot_devtab_rec_t) only on first
+ * lowercase hex chars of the MAC, blob = a versioned record, brief phase 4
+ * §2.2 item 6: a record of another version is dropped on load and the table
+ * rebuilt from what the board hears + what the tablet resends) only on first
  * sighting and operator actions; `online` / `missing` are derived at run time
  * from `last_seen_ms` and never written. Thread-safe (internal mutex).
  *
+ * Zone and endereçamento are label ids (spec §14.1, siot_labels), never the
+ * strings a unit announces: the zone slot of NAME_ANNOUNCE is reserved.
+ *
  * Who writes what (lifecycle §3.2):
  *   discovery   siot_devtab_touch()      any authenticated frame → SEEN_EVER, online
- *   announce    siot_devtab_announce()   NAME_ANNOUNCE → name/zone unless ANNOTATED
+ *   announce    siot_devtab_announce()   NAME_ANNOUNCE → name unless ANNOTATED
  *   hint        siot_devtab_hint()       /enroll from a phone → `expected`
- *   operator    set_name_zone / retire / unretire / replace / forget / decommission
+ *   operator    set_name / set_ids / retire / unretire / replace / forget / decommission
  */
 #pragma once
 
@@ -55,10 +60,12 @@ typedef struct {
     uint32_t first_seen;    /* epoch s of the first authenticated frame, 0 = never */
     int64_t  last_seen_ms;  /* RAM only; <0 = never this boot */
     char     name[SIOT_NAME_MAX_LEN + 1];
-    char     zone[SIOT_ZONE_MAX_LEN + 1];
     uint16_t product;       /* PRODUCT the unit announced (spec §7.11), 0 = not yet */
     uint8_t  hw_rev;
     char     fw[SIOT_DEVTAB_FW_MAX_LEN + 1]; /* firmware version it announced, "" = not yet */
+    uint16_t zone_id;       /* label ids (spec §14.1), SAFR_LABEL_ID_NONE = none */
+    uint16_t address_id;
+    uint8_t  link;          /* SAFR_DT_LINK_* (spec §7.12 format 2) */
     uint8_t  layer;         /* RAM only: mesh LAYER of its last HEARTBEAT / TOPOLOGY, 0 = not this boot */
 } siot_devtab_entry_t;
 
@@ -87,9 +94,9 @@ void siot_devtab_set_layer(const uint8_t mac[6], uint8_t layer);
 /* Its LAYER as last reported since the board started, 0 = not known. */
 uint8_t siot_devtab_layer(const uint8_t mac[6]);
 
-/* NAME_ANNOUNCE: adopt name/zone unless ANNOTATED; when they equal the
- * pending rename, PENDING_RENAME clears. */
-esp_err_t siot_devtab_announce(const uint8_t mac[6], const char *name, const char *zone, uint8_t role);
+/* NAME_ANNOUNCE: adopt the name unless ANNOTATED; when it equals the pending
+ * rename, PENDING_RENAME clears. */
+esp_err_t siot_devtab_announce(const uint8_t mac[6], const char *name, uint8_t role);
 
 /* NAME_ANNOUNCE v3.5: what the unit is (PRODUCT, HW_REV) and the firmware
  * it runs. Stored only when something changed (an OTA changes `fw`); a
@@ -98,19 +105,32 @@ esp_err_t siot_devtab_announce(const uint8_t mac[6], const char *name, const cha
 esp_err_t siot_devtab_set_product(const uint8_t mac[6], uint16_t product, uint8_t hw_rev, const char *fw);
 
 /* /enroll hint from a phone: creates an `expected` entry (no-op when known). */
-esp_err_t siot_devtab_hint(const uint8_t mac[6], const char *name, const char *zone);
+esp_err_t siot_devtab_hint(const uint8_t mac[6], const char *name);
 
 /* SET_DEVICE from the tablet: ANNOTATED; PENDING_RENAME unless online now.
  * Unknown MAC → new `expected` entry. ESP_ERR_NO_MEM when the table is full. */
-esp_err_t siot_devtab_set_name_zone(const uint8_t mac[6], const char *name, const char *zone,
-                                    bool online_now);
+esp_err_t siot_devtab_set_name(const uint8_t mac[6], const char *name, bool online_now);
+
+/* SET_DEVICE_IDS from the tablet (spec §14.1): the unit's zone and
+ * endereçamento. Board-only data, never pushed to the unit. Unknown MAC → new
+ * `expected` entry. The caller validates the ids against siot_labels. */
+esp_err_t siot_devtab_set_ids(const uint8_t mac[6], uint16_t zone_id, uint16_t address_id);
+
+/* The endereçamento a unit announced (spec §7.11 ADDRESS, resolved to an id
+ * by the caller): taken only while the entry has none — an id set from the
+ * tablet (SET_DEVICE_IDS) is never overridden. ESP_OK = set now;
+ * ESP_ERR_INVALID_STATE = it already had one; ESP_ERR_NOT_FOUND unknown MAC. */
+esp_err_t siot_devtab_set_address_if_unset(const uint8_t mac[6], uint16_t address_id);
+
+/* true when any entry carries this label (DEL_LABEL refuses, spec §7.6 0x08). */
+bool siot_devtab_uses_label(uint8_t kind, uint16_t id);
 
 /* ESP_ERR_NOT_FOUND when unknown. */
 esp_err_t siot_devtab_retire(const uint8_t mac[6], bool pending_decommission);
 /* ESP_ERR_NOT_FOUND unknown; ESP_ERR_INVALID_STATE not retired. */
 esp_err_t siot_devtab_unretire(const uint8_t mac[6]);
 esp_err_t siot_devtab_forget(const uint8_t mac[6]);
-/* Copies name/zone old → new (ANNOTATED + PENDING_RENAME on new, created as
+/* Copies name and ids old → new (ANNOTATED + PENDING_RENAME on new, created as
  * expected if unknown), retires old. `old_online_out` tells the caller
  * whether to originate a DECOMMISSION. ESP_ERR_NOT_FOUND when old unknown. */
 esp_err_t siot_devtab_replace(const uint8_t old_mac[6], const uint8_t new_mac[6], int64_t now_ms,

@@ -265,6 +265,12 @@ class DeviceCommandTracker
   late final List<StreamSubscription<Object?>> _subs;
   final _timers = <String, Timer>{};
 
+  /// The running broadcast's window: started when the board took it, never
+  /// restarted by the tally moving (2026-10-28: every unit that confirmed
+  /// re-put the Central's status and pushed the verdict out again, so a
+  /// unit that never answered kept the whole test on the map).
+  Timer? _broadcastWindowTimer;
+
   /// Sends [kind] to [mac] and follows it. False when it was never
   /// confirmed, or another command to the unit is still on its way.
   Future<bool> run(
@@ -283,10 +289,12 @@ class DeviceCommandTracker
       waitsForWake: waitsForWake,
       by: by,
     );
-    _put(started);
     if (mac == safrBroadcastMac) {
-      _broadcastWaiting.clear();
-      _broadcastUnits.clear();
+      _putNewBroadcast(started);
+    } else {
+      _put(started);
+    }
+    if (mac == safrBroadcastMac) {
       final now = _clock();
       for (final n in _nodes?.call() ?? const <TopologyNode>[]) {
         if (n.layer <= 0 || n.awaitingSignal) continue;
@@ -351,7 +359,13 @@ class DeviceCommandTracker
   /// Phone: a step the central published.
   void applyRemote(DeviceCommandStatus remote) {
     final cur = state[remote.mac];
-    if (cur != null &&
+    // A "sending" newer than what is shown is a NEW command (the next test
+    // right after one that ended), never a late step of the old one.
+    final newer = remote.step == DeviceCommandStep.sending &&
+        cur != null &&
+        remote.startedAt.isAfter(cur.startedAt);
+    if (!newer &&
+        cur != null &&
         cur.kind == remote.kind &&
         cur.step.index > remote.step.index &&
         cur.step != DeviceCommandStep.failed) {
@@ -370,7 +384,16 @@ class DeviceCommandTracker
       // tally would count nobody (fixed 2026-10-14).
       if (remote.step == DeviceCommandStep.sending &&
           (cur == null || cur.step != DeviceCommandStep.sending)) {
-        _broadcastUnits.clear();
+        _putNewBroadcast(DeviceCommandStatus(
+          mac: remote.mac,
+          kind: remote.kind,
+          step: remote.step,
+          startedAt: remote.startedAt,
+          waitsForWake: remote.waitsForWake,
+          by: remote.by,
+          note: _broadcastNote(),
+        ));
+        return;
       }
     } else if (all != null && all.kind == remote.kind) {
       _broadcastUnits.add(remote.mac);
@@ -379,7 +402,8 @@ class DeviceCommandTracker
       mac: remote.mac,
       kind: remote.kind,
       step: remote.step,
-      startedAt: cur?.kind == remote.kind ? cur!.startedAt : remote.startedAt,
+      startedAt:
+          cur?.kind == remote.kind && !newer ? cur!.startedAt : remote.startedAt,
       // A detector waiting for its wake keeps its clock the whole window
       // on the phone too.
       waitsForWake: remote.waitsForWake,
@@ -665,8 +689,15 @@ class DeviceCommandTracker
         return;
       }
       // Something the unit sent on its own: ✓, the central received it.
-      // A command still on its way keeps its ticks.
+      // A command still on its way keeps its ticks — and so does a unit's
+      // outcome in a running test (a trouble from it, say): the test's
+      // picture stays whole and leaves whole (2026-10-28).
       if (cur != null && cur.inFlight) return;
+      if (cur != null &&
+          _broadcastUnits.contains(tick.mac) &&
+          state[safrBroadcastMac]?.kind == cur.kind) {
+        return;
+      }
       _put(DeviceCommandStatus(
         mac: tick.mac,
         kind: tick.eventCode == SafrEventCode.manualTest
@@ -761,12 +792,61 @@ class DeviceCommandTracker
         note: mac == safrBroadcastMac ? _broadcastNote() : null));
   }
 
+  /// The broadcast and every status of its members leave the map together
+  /// — whatever a member's status became meanwhile (a ✓✓, a red, a unit's
+  /// own event), with their timers. A member busy with another command of
+  /// its own keeps that one. Run when a broadcast ends, and before a new
+  /// one is counted, so no mark of a finished test can survive it
+  /// (2026-10-28: ticks stayed, and a new test counted 0 units).
+  void _sweepBroadcast() => state = _swept();
+
+  /// The map after the sweep — not yet shown. A new broadcast goes into
+  /// it before it is shown, so nobody ever sees a moment with no
+  /// broadcast between the old one and the new (the system test's
+  /// controller would read it as the test gone and close it).
+  Map<String, DeviceCommandStatus> _swept() {
+    final all = state[safrBroadcastMac];
+    final members = Set.of(_broadcastUnits);
+    _broadcastUnits.clear();
+    _broadcastWaiting.clear();
+    _broadcastWindowTimer = null;
+    _timers.remove(safrBroadcastMac)?.cancel();
+    final next = {...state}..remove(safrBroadcastMac);
+    for (final m in members) {
+      final u = next[m];
+      if (u == null) continue;
+      final ownCommand = !u.kind.fromUnit &&
+          u.kind != all?.kind &&
+          u.step == DeviceCommandStep.sending;
+      if (ownCommand) continue;
+      next.remove(m);
+      _timers.remove(m)?.cancel();
+    }
+    return next;
+  }
+
+  /// A new broadcast replaces whatever the previous one left, in one
+  /// state change.
+  void _putNewBroadcast(DeviceCommandStatus started) {
+    state = _swept()..[started.mac] = started;
+    _arm(started);
+  }
+
   void _put(DeviceCommandStatus s) {
     state = {...state, s.mac: s};
-    _timers.remove(s.mac)?.cancel();
-    var linger = _lingerAfter[s.step]!;
+    _arm(s);
+  }
+
+  /// The timer that moves [s] on (or lets it go) when nothing else does.
+  void _arm(DeviceCommandStatus s) {
     final broadcastWaits =
         s.mac == safrBroadcastMac && s.step == DeviceCommandStep.boardAck;
+    if (broadcastWaits && _broadcastWindowTimer?.isActive == true) {
+      return; // the window runs on: only the tally changed
+    }
+    _timers.remove(s.mac)?.cancel();
+    if (s.mac == safrBroadcastMac) _broadcastWindowTimer = null;
+    var linger = _lingerAfter[s.step]!;
     // The board took a command to one unit: its ✓ waits for the unit's
     // own ACK — seconds for a mains unit, the next wake for a detector.
     final awaitsUnit = s.mac != safrBroadcastMac &&
@@ -782,10 +862,18 @@ class DeviceCommandTracker
         s.step == DeviceCommandStep.delivered) {
       linger = _testAnswerWithin;
     }
-    _timers[s.mac] = Timer(linger, () {
+    final timer = Timer(linger, () {
       if (!mounted) return;
       final now = state[s.mac];
-      if (now == null || !identical(now, s)) return;
+      // The broadcast's window: whatever its tally says now, as long as it
+      // is still waiting. Anything else: only the status this timer was
+      // set for.
+      if (now == null ||
+          (broadcastWaits
+              ? now.step != DeviceCommandStep.boardAck
+              : !identical(now, s))) {
+        return;
+      }
       // The window closed: the tablet gives the verdict. A phone never
       // invents one — with nothing heard it just lets the test go.
       if (broadcastWaits && _send != null) {
@@ -809,17 +897,13 @@ class DeviceCommandTracker
       }
       // The broadcast leaves: its units' outcomes with it.
       if (s.mac == safrBroadcastMac) {
-        final units = Set.of(_broadcastUnits);
-        _broadcastUnits.clear();
-        state = {...state}
-          ..remove(s.mac)
-          // (Its units were never busy with anything else: `run` left
-          // those out of the test.)
-          ..removeWhere((m, u) => units.contains(m) && u.kind == s.kind);
+        _sweepBroadcast();
         return;
       }
       state = {...state}..remove(s.mac);
     });
+    _timers[s.mac] = timer;
+    if (broadcastWaits) _broadcastWindowTimer = timer;
   }
 
   @override

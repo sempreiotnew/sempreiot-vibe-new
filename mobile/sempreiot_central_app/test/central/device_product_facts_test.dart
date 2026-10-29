@@ -165,7 +165,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.textContaining('SIOT\u2011'), findsNothing);
       expect(find.text('FIRMWARE'), findsOneWidget);
-      expect(find.text('—'), findsOneWidget);
+      // Three unset facts read "—": ENDEREÇAMENTO, ZONA (protocol §14.1,
+      // none assigned) and FIRMWARE (older than v3.5).
+      expect(find.text('ENDEREÇAMENTO'), findsOneWidget);
+      expect(find.text('ZONA'), findsOneWidget);
+      expect(find.text('—'), findsNWidgets(3));
       expect(tester.takeException(), isNull);
     });
   });

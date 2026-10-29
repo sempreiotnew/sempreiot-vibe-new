@@ -62,9 +62,10 @@ void main() {
       expect(parsed.legacyPlaintext, isFalse);
       expect(parsed.installation.systemId, 1220);
       expect(parsed.installation.safrPskHex, original.safrPskHex);
-      // The share carries the code and zones, never the phone's work log.
+      // The share carries the code and endereçamentos (read from the
+      // pre-2026-10-28 'zones' key too), never the phone's work log.
       expect(parsed.installation.devices, isEmpty);
-      expect(parsed.installation.zones, ['Térreo']);
+      expect(parsed.installation.addresses, ['Térreo']);
     });
 
     test('rejects garbage, sticker QRs and bad keys', () {
