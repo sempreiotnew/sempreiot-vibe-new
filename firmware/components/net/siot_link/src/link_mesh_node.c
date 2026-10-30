@@ -45,6 +45,18 @@ static const char *TAG = "link_mesh_node";
 #define TCP_KEEPALIVE_CNT        3
 #define STA_INACTIVE_TIME_S      6    /* parent beacon loss; driver default seen on the bench was 25 s */
 #define MESH_MAX_LEVEL           4
+/* ONE root (blueprint §4, 2026-10-30). Mesh-Lite makes every unit that reaches
+ * the board a root at first and settles it by "fusion" (User Guide, Automatic
+ * Root Node Selection): the roots announce their router RSSI to each other
+ * through the board's AP, the weaker ones leave the board and join the
+ * strongest as level 2. The library checks right after the address, then every
+ * 600 s by default: two roots could legally share the board for ten minutes,
+ * taking turns on its one session every 4 s. Every minute instead, first check
+ * 10 s after the address. The loser must SCAN and find the winner, so this
+ * only works with link_mesh_scan_shim.c in the image. */
+#define FUSION_RSSI_MIN_DBM    (-85) /* library default: a winner heard weaker than this is not joined */
+#define FUSION_START_S           10
+#define FUSION_EVERY_S           60
 
 /* App-chosen ids for the two raw-message channels: the receiver dispatches
  * on this id to the raw_process callback registered below. 0 is
@@ -224,6 +236,20 @@ static esp_err_t node_start(void)
     mesh_cfg.softap_password = s_code.net_psk;
     esp_mesh_lite_init(&mesh_cfg);
 
+    /* Mesh-Lite keeps the mesh id in its own NVS namespace ("mesh_lite") and
+     * boots with THAT, not with mesh_cfg.mesh_id. A unit moved to another
+     * installation kept its first id through our factory reset (siot_inst
+     * only) and through every reflash: bench 2026-10-30, "Mesh ID: 7" and
+     * "Mesh ID: 137" next to "mesh_id=69" on the two nodes — two one-node
+     * meshes, "[vid mesh id dont match]", two roots fighting for the board.
+     * The installation code wins, every boot. */
+    const uint8_t stored_mesh_id = esp_mesh_lite_get_mesh_id();
+    if (stored_mesh_id != s_code.mesh_id) {
+        ESP_LOGW(TAG, "Mesh-Lite remembered mesh id %u, the code says %u: the code wins",
+                 stored_mesh_id, s_code.mesh_id);
+    }
+    esp_mesh_lite_set_mesh_id(s_code.mesh_id, true);
+
     err = esp_mesh_lite_set_softap_info(s_softap_ssid, s_code.net_psk);
     if (err != ESP_OK) return err;
 
@@ -234,6 +260,14 @@ static esp_err_t node_start(void)
     strlcpy((char *)router_cfg.password, s_code.net_psk, sizeof(router_cfg.password));
     err = esp_mesh_lite_set_router_config(&router_cfg);
     if (err != ESP_OK) return err;
+
+    esp_mesh_lite_fusion_config_t fusion = {
+        .fusion_rssi_threshold = FUSION_RSSI_MIN_DBM,
+        .fusion_start_time_sec = FUSION_START_S,
+        .fusion_frequency_sec = FUSION_EVERY_S,
+    };
+    err = esp_mesh_lite_set_fusion_config(&fusion);
+    if (err != ESP_OK) ESP_LOGW(TAG, "fusion config: %s", esp_err_to_name(err));
 
     err = esp_mesh_lite_raw_msg_action_list_register(s_raw_actions);
     if (err != ESP_OK) return err;
