@@ -6,6 +6,8 @@
 /// change it here.
 library;
 
+import 'dart:math' as math;
+
 enum LedColor { red, green, blue, cyan, magenta, yellow, white }
 
 /// `SIOT_LED_TICK_MS` — background traffic (HEARTBEAT, TOPOLOGY, …).
@@ -54,6 +56,16 @@ const ledBreatheMaxDuty = 64 / 255;
 
 /// The steady pattern under the pulses (`pattern_for_state`).
 enum LedBase { off, redSolid, greenFlash, magentaFlash }
+
+/// How bright a duty LOOKS. The real LED's output follows its PWM duty, and
+/// the eye reads light on a curve close to a cube root (CIE lightness): the
+/// breathe's 25 % duty is a clearly lit LED on the bench, not a quarter-lit
+/// one. The on-screen lens (`LedLens`) draws this; [LedLook.intensity] stays
+/// the duty, as the firmware has it. 0 stays dark, 1 stays full.
+double ledPerceivedBrightness(double duty) {
+  final d = duty.clamp(0.0, 1.0);
+  return d <= 0 ? 0 : math.pow(d, 1 / 3).toDouble();
+}
 
 /// What the LED shows at one instant: a colour, or dark. [intensity] is the
 /// duty, 0..1 (1 = full; the breathe never reaches it).

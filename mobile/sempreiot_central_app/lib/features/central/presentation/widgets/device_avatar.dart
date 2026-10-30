@@ -584,14 +584,15 @@ class LedLens extends StatelessWidget {
   Widget build(BuildContext context) {
     final size = this.size;
     final full = color == null ? null : ledDisplayColor(color!);
-    // A low duty on the real LED is a dim lens: the colour towards the dark
-    // lens, the glow fainter.
+    // A low duty on the real LED is a dimmer lens: the colour towards the
+    // dark lens, the glow fainter — at the brightness the eye sees for that
+    // duty (ledPerceivedBrightness), not the duty itself: the breathe's 25 %
+    // looked nearly off on screen while the unit's LED is clearly lit.
+    final lit = ledPerceivedBrightness(intensity);
     final dark = Color.alphaBlend(
         Colors.black.withValues(alpha: context.isDark ? 0.35 : 0.55),
         context.surfaceColor);
-    final led = full == null
-        ? null
-        : Color.lerp(dark, full, intensity.clamp(0.0, 1.0))!;
+    final led = full == null ? null : Color.lerp(dark, full, lit)!;
     return Container(
       width: size,
       height: size,
@@ -602,7 +603,7 @@ class LedLens extends StatelessWidget {
             ? null
             : RadialGradient(
                 center: const Alignment(-0.3, -0.3),
-                colors: [Color.lerp(led, Colors.white, 0.55 * intensity)!, led],
+                colors: [Color.lerp(led, Colors.white, 0.55 * lit)!, led],
               ),
         color: led == null ? dark : null,
         border: Border.all(
@@ -615,7 +616,7 @@ class LedLens extends StatelessWidget {
             ? null
             : [
                 BoxShadow(
-                  color: full!.withValues(alpha: 0.9 * intensity),
+                  color: full!.withValues(alpha: 0.9 * lit),
                   blurRadius: size * 0.9,
                   spreadRadius: size * 0.15,
                 ),

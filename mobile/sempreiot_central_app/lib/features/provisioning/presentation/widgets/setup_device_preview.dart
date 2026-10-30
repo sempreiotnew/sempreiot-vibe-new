@@ -14,8 +14,13 @@ import '../../../central/presentation/widgets/network_3d/device_model_sprites.da
 /// same sprites Rede and Dispositivos draw, `deviceModelFor`) with its LED
 /// showing what the real unit's LED shows at this step of the wizard
 /// (`ledSetupLook`: white blink in setup mode, white breathe once the code
-/// is stored and it looks for the network). A product without a model yet
-/// is drawn as its type's placeholder — the LED still blinks on it.
+/// is stored and it looks for the network). The central is drawn as the
+/// tablet (`deviceCentralModel`, the Rede hub's model). A product without a
+/// model yet is drawn as its type's placeholder — the LED still blinks on it.
+///
+/// The picture is centred in whatever width it is given: the result step's
+/// column stretches its children, and a stretched 112 px box drew the model
+/// and its LED 56 px from the left edge (fixed 2026-10-30).
 ///
 /// [product] and [family] come from the sticker until `GET /info` answers,
 /// then from the unit (`ProvisioningWizardState.product`).
@@ -81,8 +86,10 @@ class _SetupDevicePreviewState extends State<SetupDevicePreview>
 
   void _resolve() {
     final code = SetupDevicePreview.modelCode(widget.product, widget.family);
-    final spec =
-        deviceModelFor(code, isLeaf: widget.family == SafrProductFamily.leaf);
+    // The central's model is not a product's: deviceModelFor never returns it.
+    final spec = widget.family == SafrProductFamily.board
+        ? deviceCentralModel
+        : deviceModelFor(code, isLeaf: widget.family == SafrProductFamily.leaf);
     if (spec?.slug == _spec?.slug && (_sprites != null || spec == null)) {
       return;
     }
@@ -129,16 +136,20 @@ class _SetupDevicePreviewState extends State<SetupDevicePreview>
   Widget build(BuildContext context) {
     _syncTicker();
     final size = widget.size;
-    final picture = SizedBox(
-      width: size,
-      height: size,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Positioned.fill(child: _picture(context)),
-          if (widget.badge != null)
-            Positioned(right: -4, bottom: -4, child: widget.badge!),
-        ],
+    // Center: a parent that stretches (the result step's column) must not
+    // widen this box — the model and its LED are placed from its centre.
+    final picture = Center(
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned.fill(child: _picture(context)),
+            if (widget.badge != null)
+              Positioned(right: -4, bottom: -4, child: widget.badge!),
+          ],
+        ),
       ),
     );
     if (!widget.labels) return picture;
@@ -252,9 +263,9 @@ class _SetupDevicePreviewState extends State<SetupDevicePreview>
 /// The LED lens on the preview (tests).
 const setupLedLensKey = ValueKey('setup-led');
 
-/// A product with no 3D model yet (the generic bench units, the central
-/// until its model is made): its type's icon in a soft disc, same box as a
-/// model, so the step does not jump when the model arrives.
+/// A product with no 3D model yet (the generic bench units): its type's
+/// icon in a soft disc, same box as a model, so the step does not jump when
+/// the model arrives. The central has its model (the tablet) since 2026-10-30.
 class _Placeholder extends StatelessWidget {
   const _Placeholder({required this.family});
   final SafrProductFamily family;

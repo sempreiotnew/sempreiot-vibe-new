@@ -9,8 +9,9 @@ import 'package:sempreiot_central_app/features/central/presentation/widgets/netw
 import 'package:sempreiot_central_app/features/provisioning/presentation/widgets/setup_device_preview.dart';
 
 /// The unit being set up is drawn as its product's model (the same sprites
-/// as Rede / Dispositivos) with the LED the real unit shows; a product
-/// without a model is its type's placeholder, LED included.
+/// as Rede / Dispositivos) with the LED the real unit shows; the central as
+/// the tablet; a product without a model is its type's placeholder, LED
+/// included.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -46,8 +47,10 @@ void main() {
     expect(lens(tester).color, LedColor.white);
   });
 
-  testWidgets('the central has no model yet: its placeholder, LED on top',
+  testWidgets('the central is drawn as the tablet, the LED on it',
       (tester) async {
+    DeviceModelSprites.resetCache();
+    await tester.runAsync(() => DeviceModelSprites.load(deviceCentralModel!));
     await show(
         tester,
         SetupDevicePreview(
@@ -55,10 +58,48 @@ void main() {
           family: SafrProductFamily.board,
           pattern: LedSetupPattern.whiteBlink,
         ));
-    expect(modelPaint(), findsNothing);
-    expect(find.byIcon(Icons.developer_board_rounded), findsOneWidget);
+    expect(modelPaint(), findsOneWidget);
+    expect(find.byIcon(Icons.developer_board_rounded), findsNothing);
     expect(find.text('CENTRAL'), findsOneWidget);
     expect(lens(tester).color, LedColor.white);
+  });
+
+  testWidgets('stays centred when the parent stretches (the result step)',
+      (tester) async {
+    final spec = deviceModelSpecs.firstWhere((s) => s.slug == 'siren');
+    DeviceModelSprites.resetCache();
+    await tester.runAsync(() => DeviceModelSprites.load(spec));
+    const box = Key('stretched');
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: SizedBox(
+            key: box,
+            width: 440,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SetupDevicePreview(
+                  product: SafrProduct.fromCode(0x0201),
+                  family: SafrProductFamily.node,
+                  pattern: LedSetupPattern.whiteBreathe,
+                  size: 112,
+                  labels: false,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ));
+    final centre = tester.getCenter(find.byKey(box)).dx;
+    final paint = tester.getRect(modelPaint());
+    expect(paint.width, 112, reason: 'the picture keeps its own box');
+    expect(paint.center.dx, closeTo(centre, 0.5));
+    final led = tester.getRect(find.byKey(setupLedLensKey));
+    expect(led.left, greaterThanOrEqualTo(paint.left));
+    expect(led.right, lessThanOrEqualTo(paint.right));
   });
 
   testWidgets('a sticker with only the type: the type\'s picture and name',

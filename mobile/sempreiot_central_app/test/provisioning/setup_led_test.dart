@@ -19,6 +19,18 @@ void main() {
     });
   });
 
+  group('what the lens draws for a duty', () {
+    test('the eye\'s curve: 0 dark, 1 full, the breathe top clearly lit', () {
+      expect(ledPerceivedBrightness(0), 0);
+      expect(ledPerceivedBrightness(1), 1);
+      expect(ledPerceivedBrightness(ledBreatheMaxDuty), closeTo(0.63, 0.01));
+      expect(
+          ledPerceivedBrightness(0.1), lessThan(ledPerceivedBrightness(0.2)));
+      expect(ledPerceivedBrightness(-1), 0);
+      expect(ledPerceivedBrightness(2), 1);
+    });
+  });
+
   group('white breathe (configured, finding the network)', () {
     LedLook at(int ms) => ledSetupLook(LedSetupPattern.whiteBreathe, ms);
 
