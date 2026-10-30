@@ -86,30 +86,6 @@ static int64_t s_last_downlink_ms = -1;
  * s_lock. */
 static siot_hbwin_t s_hbwin;
 
-/* Root ban (brief §6, 2026-10-29): a node the board refused as a second root
- * runs banned from level 1 (link_mesh_node.c). The ban is lifted — and the
- * node restarts to try the board — when it has heard nothing from the board
- * for ROOT_BAN_LIFT_MS: the root died (or this node never found a parent),
- * the slot may be free. Three missed board HEARTBEATs (§7.3), well under the
- * 90 s board-silence supervision, so failover stays short. */
-#define ROOT_BAN_LIFT_MS 45000
-
-static void lift_root_ban_if_due(int64_t t)
-{
-    static bool checked_once;
-    static bool banned;
-    if (!checked_once) { banned = siot_config_root_banned(); checked_once = true; }
-    if (!banned || siot_link_mesh_level() == 1) return;
-    const int64_t last = s_last_downlink_ms >= 0 ? s_last_downlink_ms : s_epoch_ref_ms;
-    if (t - last < ROOT_BAN_LIFT_MS) return;
-    ESP_LOGW(TAG, "root ban: no board heard for %d s — lifting the ban and restarting to try the board",
-             ROOT_BAN_LIFT_MS / 1000);
-    siot_config_set_root_banned(false);
-    siot_link_mesh_forget();
-    vTaskDelay(pdMS_TO_TICKS(200));
-    esp_restart();
-}
-
 static bool board_reachable(int64_t t)
 {
     if (siot_link_mesh_level() == 1 && siot_link_mesh_board_up()) return true;
@@ -606,7 +582,6 @@ static void netcore_task(void *arg)
     for (;;) {
         const int64_t t = now_ms();
         (void)update_state();
-        lift_root_ban_if_due(t);
         xSemaphoreTake(s_lock, portMAX_DELAY);
 
         /* Role/layer changed: announce it (HEARTBEAT carries LAYER, TOPOLOGY

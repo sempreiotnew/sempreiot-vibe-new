@@ -14,13 +14,11 @@ import 'topology_provider.dart';
 ///
 /// A root is a unit at level 1: attached to the board's access point
 /// directly. Mesh-Lite lets every unit that hears the access point attach to
-/// it, so for a few seconds there can be two. **The board holds one root**
-/// (2026-10-29, `link_mesh_board.c`): it refuses a second one, which bans
-/// itself from level 1 and joins the mesh under a parent node. Two ROOT
-/// badges together are therefore a passing state, never a stable mesh —
-/// until 2026-10-29 the board let the newest root replace the old one, two
-/// roots took turns on it every 4 s and the map called that legitimate; it
-/// was the bench's broken afternoon. An election is a *change*: a settled root vanished, or
+/// it, and resolves several of them by "fusion" only when they hear each
+/// other; a far unit that hears the board but not its siblings stays at level
+/// 1 for good (bench, 2026-10-28). So there may be **several roots**, and
+/// that is a stable, legitimate mesh with more than one path to the board —
+/// not an election. An election is a *change*: a settled root vanished, or
 /// the set of level-1 units moved and has not held still for
 /// [rootElectionSettle] yet. After the root dies, Mesh-Lite lets every
 /// survivor that hears the board associate to it; for up to ~10 s two or

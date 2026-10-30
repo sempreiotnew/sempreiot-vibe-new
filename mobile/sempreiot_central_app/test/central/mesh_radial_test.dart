@@ -213,13 +213,17 @@ void main() {
       'a phone, 201 units: halos alone at the opening zoom, the models '
       'once they can be read', (tester) async {
     await pumpMap(tester, const Size(390, 844), big);
-    expect(find.byType(DeviceModelAvatar), findsNothing,
+    // The hub draws the CENTRAL as the tablet at every zoom (2026-10-29);
+    // the units' models are the ones gated by size.
+    final unitModels = find.byWidgetPredicate(
+        (w) => w is DeviceModelAvatar && w.spec != deviceCentralModel);
+    expect(unitModels, findsNothing,
         reason: 'too small to read: the glow\'s core instead');
     for (var i = 0; i < 6; i++) {
       await tester.tap(find.byTooltip('Aproximar'));
       await tester.pump();
     }
-    expect(find.byType(DeviceModelAvatar), findsWidgets);
+    expect(unitModels, findsWidgets);
     expect(tester.takeException(), isNull);
   });
 

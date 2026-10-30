@@ -14,7 +14,6 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -27,8 +26,6 @@
 #include "esp_log.h"
 #include "esp_mesh_lite.h"
 #include "esp_netif.h"
-#include "esp_system.h"
-#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -48,33 +45,6 @@ static const char *TAG = "link_mesh_node";
 #define TCP_KEEPALIVE_CNT        3
 #define STA_INACTIVE_TIME_S      6    /* parent beacon loss; driver default seen on the bench was 25 s */
 #define MESH_MAX_LEVEL           4
-#define ROOT_RSSI_MIN_DBM      (-70) /* the board weaker than this: prefer a parent node in reach */
-#define FUSION_RSSI_MIN_DBM    (-85) /* two roots must hear each other at least this well to merge (library default) */
-#define FUSION_START_S           10  /* first merge check after the mesh is up */
-#define FUSION_EVERY_S           60  /* then every minute (library default: 600 s) */
-/* Root ban (brief §6, 2026-10-29): the board holds one root and refuses a
- * second one by closing the session right after accepting it. A session that
- * ends within ROOT_REFUSED_MS with nothing received, ROOT_REFUSED_STRIKES times
- * in a row, is that refusal: this node is not the root. It bans itself from
- * level 1 (NVS, siot_config), forgets Mesh-Lite's RTC store and restarts, so
- * the next boot can only land under a parent node. siot_netcore lifts the ban
- * when the board is not heard for a while (the root died: the slot is free). */
-#define ROOT_REFUSED_MS        1500
-#define ROOT_REFUSED_STRIKES      2
-/* The other way to be a root that should not be one: attached to the board's
- * Wi-Fi at a weak signal and unable to even open the session (a timeout is
- * not a refusal). ROOT_WEAK_CONNECT_FAILS failed connects in a row with the
- * board below ROOT_RSSI_MIN_DBM = ban too — a parent node may be in reach.
- * A strong-signal root with no board keeps the mesh and keeps trying: the
- * board may simply be off (brief §6.3). */
-#define ROOT_WEAK_CONNECT_FAILS   3
-/* Before any ban: is there a node of THIS mesh to join? Scan our channel
- * for the siblings' SoftAPs (NET_SSID-xxxxxx) — ban only when the best one is
- * at least PARENT_MIN_DBM and PARENT_MARGIN_DB better than the board. Two
- * units far from the board with nobody better in reach would otherwise both
- * give up the root and leave the mesh with none (bench, 2026-10-29 evening). */
-#define PARENT_MIN_DBM         (-85)
-#define PARENT_MARGIN_DB          6
 
 /* App-chosen ids for the two raw-message channels: the receiver dispatches
  * on this id to the raw_process callback registered below. 0 is
@@ -153,15 +123,11 @@ static int tcp_connect_bounded(const struct sockaddr_in *addr)
     return sock;
 }
 
-static bool ban_root_if_parent(const char *why, int8_t board_rssi);
-
 static void root_tcp_task(void *arg)
 {
     (void)arg;
     static siot_link_reasm_t reasm;
     uint8_t chunk[256];
-    int refusals = 0;
-    int weak_fails = 0;
 
     for (;;) {
         if (!is_root()) { vTaskDelay(pdMS_TO_TICKS(500)); continue; } /* parked until elected */
@@ -169,24 +135,9 @@ static void root_tcp_task(void *arg)
         struct sockaddr_in addr = { .sin_family = AF_INET, .sin_port = htons(BOARD_TCP_PORT) };
         inet_pton(AF_INET, BOARD_TCP_IP, &addr.sin_addr);
         const int sock = tcp_connect_bounded(&addr);
-        if (sock < 0) {
-            uint8_t bssid[6];
-            int8_t rssi = 0;
-            const bool weak = siot_link_mesh_parent(bssid, &rssi) && rssi < ROOT_RSSI_MIN_DBM;
-            weak_fails = weak ? weak_fails + 1 : 0;
-            if (weak_fails >= ROOT_WEAK_CONNECT_FAILS) {
-                char why[64];
-                snprintf(why, sizeof(why), "no board session %d times at %d dBm", weak_fails, rssi);
-                if (!ban_root_if_parent(why, rssi)) weak_fails = 0; /* a weak root alone: keep trying */
-            }
-            vTaskDelay(pdMS_TO_TICKS(TCP_RECONNECT_BACKOFF_MS)); /* root without a board: keep the mesh, keep trying */
-            continue;
-        }
-        weak_fails = 0;
+        if (sock < 0) { vTaskDelay(pdMS_TO_TICKS(TCP_RECONNECT_BACKOFF_MS)); continue; } /* root without a board: keep the mesh, keep trying */
 
         ESP_LOGI(TAG, "connected to the board (%s:%d)", BOARD_TCP_IP, BOARD_TCP_PORT);
-        const int64_t connected_ms = esp_timer_get_time() / 1000;
-        bool received = false;
         xSemaphoreTake(s_tcp_lock, portMAX_DELAY);
         s_tcp_sock = sock;
         xSemaphoreGive(s_tcp_lock);
@@ -197,85 +148,16 @@ static void root_tcp_task(void *arg)
             const int n = recv(sock, chunk, sizeof(chunk), 0);
             if (n < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) continue; /* SO_RCVTIMEO tick */
             if (n <= 0) break; /* board gone (or keepalive gave up) */
-            received = true;
             siot_link_reasm_feed(&reasm, SIOT_LINK_MESH, chunk, (size_t)n);
         }
 
+        ESP_LOGW(TAG, "board session dropped, reconnecting");
         xSemaphoreTake(s_tcp_lock, portMAX_DELAY);
         s_tcp_sock = -1;
         xSemaphoreGive(s_tcp_lock);
         close(sock);
-
-        /* Closed at once with nothing received: the board has a root and it
-         * is not us (link_mesh_board.c). Twice in a row = certain. */
-        const bool refused = !received && is_root() &&
-                             esp_timer_get_time() / 1000 - connected_ms < ROOT_REFUSED_MS;
-        refusals = refused ? refusals + 1 : 0;
-        if (refusals >= ROOT_REFUSED_STRIKES) {
-            char why[72];
-            snprintf(why, sizeof(why), "the board refused this root %d times (another node is the root)", refusals);
-            if (!ban_root_if_parent(why, -100)) refusals = 0; /* refused and nobody to join: keep knocking */
-        }
-        ESP_LOGW(TAG, "board session dropped, reconnecting%s", refused ? " (refused?)" : "");
         vTaskDelay(pdMS_TO_TICKS(TCP_RECONNECT_BACKOFF_MS));
     }
-}
-
-void siot_link_mesh_forget(void)
-{
-    esp_mesh_lite_erase_rtc_store();
-}
-
-/* The best sibling SoftAP (NET_SSID-xxxxxx) heard on our channel, or false
- * when none is in reach / the scan could not run (Mesh-Lite scanning too). */
-static bool best_parent_in_reach(int8_t *best_rssi, char *best_ssid, size_t ssid_len)
-{
-    const wifi_scan_config_t cfg = {
-        .channel = s_code.channel,
-        .show_hidden = false,
-        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
-    };
-    if (esp_wifi_scan_start(&cfg, true) != ESP_OK) return false;
-    uint16_t n = 0;
-    if (esp_wifi_scan_get_ap_num(&n) != ESP_OK || n == 0) return false;
-    wifi_ap_record_t *recs = calloc(n, sizeof(*recs));
-    if (recs == NULL) return false;
-    if (esp_wifi_scan_get_ap_records(&n, recs) != ESP_OK) { free(recs); return false; }
-    char prefix[34];
-    snprintf(prefix, sizeof(prefix), "%.22s-", s_code.net_ssid);
-    bool found = false;
-    for (uint16_t i = 0; i < n; i++) {
-        const char *ssid = (const char *)recs[i].ssid;
-        if (strncmp(ssid, prefix, strlen(prefix)) != 0) continue;
-        if (strcmp(ssid, s_softap_ssid) == 0) continue; /* ourselves */
-        if (!found || recs[i].rssi > *best_rssi) {
-            *best_rssi = recs[i].rssi;
-            strlcpy(best_ssid, ssid, ssid_len);
-            found = true;
-        }
-    }
-    free(recs);
-    return found;
-}
-
-/* Give up the root for a parent only when there is one worth joining. */
-static bool ban_root_if_parent(const char *why, int8_t board_rssi)
-{
-    int8_t best = 0;
-    char ssid[33] = "";
-    const bool have = best_parent_in_reach(&best, ssid, sizeof(ssid));
-    if (!have || best < PARENT_MIN_DBM || best < board_rssi + PARENT_MARGIN_DB) {
-        ESP_LOGW(TAG, "%s — but no better parent in reach (%s%d dBm, board %d dBm): staying root",
-                 why, have ? ssid : "none ", have ? best : 0, board_rssi);
-        return false;
-    }
-    ESP_LOGW(TAG, "%s — %s heard at %d dBm (board %d dBm): banning level 1 and restarting to join it",
-             why, ssid, best, board_rssi);
-    siot_config_set_root_banned(true);
-    siot_link_mesh_forget();
-    vTaskDelay(pdMS_TO_TICKS(200));
-    esp_restart();
-    return true;
 }
 
 /* ---- Mesh-Lite raw-message callbacks (raw_msg_process_cb_t) ----------- */
@@ -352,33 +234,6 @@ static esp_err_t node_start(void)
     strlcpy((char *)router_cfg.password, s_code.net_psk, sizeof(router_cfg.password));
     err = esp_mesh_lite_set_router_config(&router_cfg);
     if (err != ESP_OK) return err;
-
-    if (siot_config_root_banned()) {
-        /* Refused by the board on the last life: not the root — only a
-         * parent node will do (the API must be called before start). */
-        err = esp_mesh_lite_set_disallowed_level(1);
-        ESP_LOGW(TAG, "root ban: level 1 disallowed, joining under a parent node (%s)", esp_err_to_name(err));
-    }
-
-    /* Who becomes root (2026-10-29, bench: a unit far from the board attached
-     * to it at a weak signal instead of to the node beside it, and two units
-     * next to the board both stayed root). Router mode with a threshold: a
-     * board weaker than ROOT_RSSI_MIN_DBM loses to a parent node in reach
-     * (Mesh-Lite: "if the router's signal strength is below this threshold,
-     * the device will connect to a mesh node"). No hard minimum
-     * (esp_mesh_lite_set_router_min_rssi_threshold): a unit alone at the far
-     * end must still be able to become root. Fusion — the weaker of two roots
-     * that hear each other drops under the stronger — every FUSION_EVERY_S
-     * instead of the library's 600 s. */
-    err = esp_mesh_lite_set_networking_mode(ESP_MESH_LITE_ROUTER, ROOT_RSSI_MIN_DBM);
-    if (err != ESP_OK) ESP_LOGW(TAG, "networking mode: %s", esp_err_to_name(err));
-    esp_mesh_lite_fusion_config_t fusion = {
-        .fusion_rssi_threshold = FUSION_RSSI_MIN_DBM,
-        .fusion_start_time_sec = FUSION_START_S,
-        .fusion_frequency_sec = FUSION_EVERY_S,
-    };
-    err = esp_mesh_lite_set_fusion_config(&fusion);
-    if (err != ESP_OK) ESP_LOGW(TAG, "fusion config: %s", esp_err_to_name(err));
 
     err = esp_mesh_lite_raw_msg_action_list_register(s_raw_actions);
     if (err != ESP_OK) return err;

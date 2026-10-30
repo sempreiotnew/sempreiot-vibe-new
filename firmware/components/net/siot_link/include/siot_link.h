@@ -143,10 +143,6 @@ uint8_t siot_link_mesh_level(void);                       /* 0 = not joined, 1 =
 bool    siot_link_mesh_parent(uint8_t mac[6], int8_t *rssi); /* STA's AP: parent, or the board when root */
 size_t  siot_link_mesh_children(uint8_t (*macs)[6], int8_t *rssi, size_t max); /* direct children */
 bool    siot_link_mesh_board_up(void);                    /* root with the TCP session open */
-/* Forget the mesh state Mesh-Lite keeps across a restart (its RTC store: the
- * parent it had, its level), so the next boot chooses afresh. Called before a
- * restart that changes the root ban (siot_netcore). */
-void    siot_link_mesh_forget(void);
 
 /* Node: push a downlink frame one hop further, to this node's own children
  * (brief §6.3; the caller dedupes so it is a loop-safe re-broadcast). */

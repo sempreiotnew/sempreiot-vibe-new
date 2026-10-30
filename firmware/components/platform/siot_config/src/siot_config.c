@@ -179,28 +179,6 @@ uint16_t siot_config_dev_seq_next(void)
     return next;
 }
 
-bool siot_config_root_banned(void)
-{
-    nvs_handle_t h;
-    if (open_ns(NVS_READONLY, &h) != ESP_OK) return false;
-    uint8_t v = 0;
-    const bool banned = nvs_get_u8(h, "root_ban", &v) == ESP_OK && v != 0;
-    nvs_close(h);
-    return banned;
-}
-
-esp_err_t siot_config_set_root_banned(bool banned)
-{
-    nvs_handle_t h;
-    esp_err_t err = open_ns(NVS_READWRITE, &h);
-    if (err != ESP_OK) return err;
-    err = banned ? nvs_set_u8(h, "root_ban", 1) : nvs_erase_key(h, "root_ban");
-    if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
-    if (err == ESP_OK) err = nvs_commit(h);
-    nvs_close(h);
-    return err;
-}
-
 esp_err_t siot_config_factory_reset(void)
 {
     nvs_handle_t h;

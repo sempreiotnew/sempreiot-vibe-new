@@ -30,7 +30,6 @@ static const char *TAG = "link_mesh_board";
 
 static siot_installation_t s_code;
 static volatile int s_client_fd = -1; /* -1 = no root connected */
-static struct in_addr s_client_ip;    /* the root's address: the same root back is a reconnect, another one is refused */
 static TaskHandle_t s_task;
 
 static esp_err_t ap_apply(const char *ssid, const char *pass, uint8_t channel, uint8_t max_sta)
@@ -99,14 +98,9 @@ static void drop_client(int *client)
     *client = -1;
 }
 
-/* ONE root, never stuck on a dead one: select() watches the listening socket
- * and the client together, keepalive reaps a vanished root in ~5 s. The same
- * root coming back (same address: it rebooted, or its session broke) replaces
- * its old connection at once. ANOTHER node arriving while the root is alive is
- * refused — accepted and closed — so it learns it is not the root and joins
- * the mesh under a parent (link_mesh_node.c, root ban). Until 2026-10-29 the
- * newest root won: two nodes that both heard the board took turns on this
- * slot every 4 s and every frame sent in the other's turn was lost. */
+/* One root at a time, never stuck on a dead one: select() watches the
+ * listening socket and the client together, a new root replaces the old
+ * connection the moment it arrives, keepalive reaps a vanished one. */
 static void tcp_server_task(void *arg)
 {
     (void)arg;
@@ -146,16 +140,8 @@ static void tcp_server_task(void *arg)
             struct sockaddr_in peer;
             socklen_t peer_len = sizeof(peer);
             const int fd = accept(listen_fd, (struct sockaddr *)&peer, &peer_len);
-            if (fd >= 0 && client >= 0 && peer.sin_addr.s_addr != s_client_ip.s_addr) {
-                char who[16], root[16];
-                inet_ntoa_r(peer.sin_addr, who, sizeof(who));
-                inet_ntoa_r(s_client_ip, root, sizeof(root));
-                ESP_LOGW(TAG, "second root %s refused: the root is %s", who, root);
-                close(fd);
-            } else if (fd >= 0) {
-                if (client >= 0) ESP_LOGW(TAG, "the root reconnected: replacing its old session");
-                drop_client(&client);
-                s_client_ip = peer.sin_addr;
+            if (fd >= 0) {
+                drop_client(&client); /* newest root wins */
                 const int ka = 1, idle = KEEPALIVE_IDLE_S, intvl = KEEPALIVE_INTVL_S, cnt = KEEPALIVE_CNT;
                 setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka));
                 setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
