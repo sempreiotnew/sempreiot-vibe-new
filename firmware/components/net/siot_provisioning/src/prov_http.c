@@ -251,8 +251,10 @@ static esp_err_t handle_provision(httpd_req_t *req)
                 if (code) cJSON_Delete(code);
             }
             if (!bad) {
-                if (cJSON_IsString(name)) strlcpy(inst.name, name->valuestring, sizeof(inst.name));
-                if (cJSON_IsString(zone)) strlcpy(inst.zone, zone->valuestring, sizeof(inst.zone));
+                /* Cut at the byte limit on a character boundary: a name cut inside
+                 * an accent is invalid UTF-8 and the tablet refuses the frame. */
+                if (cJSON_IsString(name)) { strlcpy(inst.name, name->valuestring, sizeof(inst.name)); siot_utf8_trim(inst.name); }
+                if (cJSON_IsString(zone)) { strlcpy(inst.zone, zone->valuestring, sizeof(inst.zone)); siot_utf8_trim(inst.zone); }
                 bad = siot_config_save_code(&inst) != ESP_OK;
             }
         }
@@ -304,8 +306,8 @@ static esp_err_t handle_enroll(httpd_req_t *req)
         siot_enrolled_entry_t e;
         memset(&e, 0, sizeof(e));
         if (!siot_mac_from_str(mac->valuestring, e.mac)) continue;
-        if (cJSON_IsString(name)) strlcpy(e.name, name->valuestring, sizeof(e.name));
-        if (cJSON_IsString(zone)) strlcpy(e.zone, zone->valuestring, sizeof(e.zone));
+        if (cJSON_IsString(name)) { strlcpy(e.name, name->valuestring, sizeof(e.name)); siot_utf8_trim(e.name); }
+        if (cJSON_IsString(zone)) { strlcpy(e.zone, zone->valuestring, sizeof(e.zone)); siot_utf8_trim(e.zone); }
         if (s_enroll_sink) {
             if (s_enroll_sink(e.mac, e.name, e.zone) == ESP_OK) stored++;
         } else {

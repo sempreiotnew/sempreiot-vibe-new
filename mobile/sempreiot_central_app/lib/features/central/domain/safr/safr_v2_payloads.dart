@@ -705,7 +705,7 @@ class SafrInstallationPayload extends SafrV2Payload {
       if (len > maxLen || off + len > p.length) {
         throw const FormatException('bad length prefix');
       }
-      final s = utf8.decode(p.sublist(off, off + len));
+      final s = utf8.decode(p.sublist(off, off + len), allowMalformed: true);
       off += len;
       return s;
     }
@@ -813,13 +813,13 @@ class SafrNameAnnouncePayload extends SafrV2Payload {
       final nameLen = p[off];
       off += 1;
       if (nameLen > 32 || off + nameLen > p.length) return null;
-      final name = utf8.decode(p.sublist(off, off + nameLen));
+      final name = utf8.decode(p.sublist(off, off + nameLen), allowMalformed: true);
       off += nameLen;
       if (off >= p.length) return null;
       final zoneLen = p[off];
       off += 1;
       if (zoneLen > 16 || off + zoneLen > p.length) return null;
-      final zone = utf8.decode(p.sublist(off, off + zoneLen));
+      final zone = utf8.decode(p.sublist(off, off + zoneLen), allowMalformed: true);
       off += zoneLen;
       if (off >= p.length) {
         return SafrNameAnnouncePayload(name: name, zone: zone);
@@ -932,7 +932,7 @@ class _Reader {
   String str(int maxLen) {
     final len = u8();
     if (len > maxLen) throw const FormatException('bad length prefix');
-    return utf8.decode(bytes(len));
+    return utf8.decode(bytes(len), allowMalformed: true);
   }
 
   bool get atEnd => off >= p.length;

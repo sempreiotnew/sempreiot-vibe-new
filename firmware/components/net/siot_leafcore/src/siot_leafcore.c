@@ -446,6 +446,8 @@ static void build_event(uint8_t *p, uint8_t evt_type, uint8_t evt_code)
     siot_put_u16(&p[15], siot_config_dev_seq_next());
 }
 
+static bool send_acked(uint8_t msg_type, const uint8_t *payload, size_t len, uint32_t wait_ms, uint8_t extra_flags);
+
 static bool emit_name_announce(void)
 {
     uint8_t p[1 + SIOT_NAME_MAX_LEN + 1 + SIOT_ZONE_MAX_LEN + 1 + SAFR_PRODUCT_MAX_LEN];
@@ -457,8 +459,24 @@ static bool emit_name_announce(void)
     p[off++] = SAFR_ROLE_LEAF;
     off += siot_safr_put_product(&p[off], siot_board_def_product(), siot_board_def()->hw_rev,
                                  siot_version_string()); /* v3.5: what this unit is and runs */
-    return siot_safr_send(SAFR_BCAST_MAC, SAFR_MSG_NAME_ANNOUNCE, siot_safr_next_msg_id(), 0, p, off) == ESP_OK
-           && s_last_tx_ok;
+    /* §12.9 (2026-10-31): the frame asks for the parent's hop ACK, and only
+     * that ACK — from a parent that has a path to the board — counts as
+     * announced. The MAC-layer ACK alone said "the radio heard it" and a
+     * parent without a path dropped the frame while the leaf believed it
+     * had told everyone its name. The parent then keeps it in custody until
+     * the central's ACK (§12.6). Never called from inside send_acked. */
+    const bool acked = send_acked(SAFR_MSG_NAME_ANNOUNCE, p, off, SIOT_LEAF_ACK_WAIT_MS, 0);
+    const bool done = acked && !s_rtc.no_path;
+    ESP_LOGW(TAG, "NAME_ANNOUNCE \"%s\" / \"%s\": %s", s_code->name, s_code->zone,
+             done ? "parent took it" : acked ? "parent has NO_PATH, again next wake" : "no hop ACK, again next wake");
+    return done;
+}
+
+/* The name goes out whenever it is due: after every bind, after SET_DEVICE,
+ * on the first wakes after provisioning, every 10th wake, after a new image. */
+static void announce_if_due(void)
+{
+    if (!s_rtc.announced && emit_name_announce()) s_rtc.announced = true;
 }
 
 static bool for_me(const siot_safr_frame_t *f)
@@ -525,7 +543,7 @@ static void on_command(const siot_safr_frame_t *f, const uint8_t *raw, size_t ra
         status = SAFR_ACK_ERROR;
     }
     if (ack_req) send_ack(f->msg_id, status, f->src_mac);
-    if (cmd == SAFR_CMD_SET_DEVICE && status == SAFR_ACK_OK && emit_name_announce()) s_rtc.announced = true;
+    if (cmd == SAFR_CMD_SET_DEVICE && status == SAFR_ACK_OK) s_rtc.announced = false; /* sent at this wake's announce point */
 }
 
 /* ---- 4. discovery ------------------------------------------------------------ */
@@ -642,9 +660,12 @@ static bool discover(bool first_contact)
     }
     /* TOPOLOGY first: the first frame after a bind names the new parent, so
      * every receiver (board table, tablet map) re-homes the leaf on that
-     * frame; the name follows. */
+     * frame; the name follows — from the caller (announce_if_due), because
+     * discover() also runs inside send_acked (rebind_now) and the announce
+     * is itself an acked send. Every bind announces again (2026-10-31): a
+     * new parent is a new path, and the old one may never have relayed it. */
     emit_topology();
-    if (!s_rtc.announced && emit_name_announce()) s_rtc.announced = true;
+    s_rtc.announced = false;
     return true;
 }
 
@@ -704,6 +725,14 @@ static bool send_acked(uint8_t msg_type, const uint8_t *payload, size_t len, uin
     }
     const int64_t until = now_ms() + wait_ms;
     while (!s_ack_hop && now_ms() < until) pump((uint32_t)(until - now_ms()));
+    if (!s_ack_hop) {
+        /* The radio took it (MAC ACK) but the parent's task is late: keep
+         * listening up to SIOT_LEAF_ACK_LATE_MS more rather than count a
+         * miss — a miss costs a re-probe, more than this (§12.10). */
+        const int64_t late_until = now_ms() + SIOT_LEAF_ACK_LATE_MS;
+        while (!s_ack_hop && now_ms() < late_until) pump((uint32_t)(late_until - now_ms()));
+        if (s_ack_hop) ESP_LOGW(TAG, "type 0x%02X: hop ACK %lld ms late", msg_type, (long long)(now_ms() - until));
+    }
     return s_ack_hop;
 }
 
@@ -851,8 +880,12 @@ static void test_or_survey(void)
      * A failed probe keeps the old parent, as on a timer wake. */
     if (s_rtc.bind != BIND_BOUND) discover(!s_rtc.bound_ever);
     else if (s_rtc.no_path && !discover(false)) s_rtc.bind = BIND_BOUND;
-    if (s_rtc.bind == BIND_BOUND && !s_rtc.no_path) walk_test();
-    else survey();
+    if (s_rtc.bind == BIND_BOUND && !s_rtc.no_path) {
+        announce_if_due(); /* §12.9: the name before the test event */
+        walk_test();
+    } else {
+        survey();
+    }
 }
 
 static void verdict_after_provisioning(void)
@@ -1042,6 +1075,7 @@ static void one_wake(esp_sleep_wakeup_cause_t cause)
         s_ota.selftest_verdict(heard);  /* a rollback does not return */
     }
     if (heard) {
+        const siot_leaf_ack_t hb_ack = s_ack_last; /* the announce below has its own ACK; the offer rode this one */
         if (s_ota.report_if_due) s_ota.report_if_due();
         /* Insurance (2026-10-29): the one announce after provisioning can be lost
          * between the parent and the board (relay, board busy) and nothing would
@@ -1056,9 +1090,9 @@ static void one_wake(esp_sleep_wakeup_cause_t cause)
             emit_topology();
             s_rtc.announced = false;
         }
-        if (!s_rtc.announced && emit_name_announce()) s_rtc.announced = true; /* first wake of another image */
-        if (s_ack_last.has_offer && s_ota.on_offer) {
-            const bool installed = s_ota.on_offer(s_ack_last.offer_msg_id, &s_ack_last.offer,
+        announce_if_due(); /* also the first wake of another image */
+        if (hb_ack.has_offer && s_ota.on_offer) {
+            const bool installed = s_ota.on_offer(hb_ack.offer_msg_id, &hb_ack.offer,
                                                   cause != ESP_SLEEP_WAKEUP_TIMER && cause != ESP_SLEEP_WAKEUP_UNDEFINED,
                                                   s_rtc.parent_mac, wake_started_ms);
             s_ack_last.has_offer = false;

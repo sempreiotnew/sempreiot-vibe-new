@@ -70,6 +70,15 @@ bool siot_mac_eq(const uint8_t a[SIOT_MAC_LEN], const uint8_t b[SIOT_MAC_LEN]);
 /* FF:FF:FF:FF:FF:FF — SAFR broadcast / "to central" (spec §3). */
 bool siot_mac_is_bcast(const uint8_t mac[SIOT_MAC_LEN]);
 
+/* ---- UTF-8 ------------------------------------------------------------ */
+
+/* Drops an incomplete trailing UTF-8 sequence from a NUL-terminated string
+ * (in place): what strlcpy leaves when it cuts a name at a byte limit in the
+ * middle of an accented character. A string cut that way is invalid UTF-8,
+ * and a receiver that decodes strictly (the tablet) refuses the whole frame.
+ * Returns the new length. */
+size_t siot_utf8_trim(char *s);
+
 #ifdef __cplusplus
 }
 #endif

@@ -207,7 +207,7 @@ not interoperable with a neighboring installation. Two mechanisms enforce this:
 | Bit | Name | Meaning |
 |-----|------|---------|
 | 0 | **F_ENC** | Payload is encrypted (AES-CCM) and a 16-byte TAG follows it. **Production receivers must reject frames without F_ENC** (§4.1) — plaintext is a bench-debug facility only. |
-| 1 | **F_ACK_REQ** | Sender demands an ACK (§9). Set on ALARM/TROUBLE events and on all central downlink except EVENT_LOG_REQ. *(v3.4)* Also on **every leaf EVENT and every leaf HEARTBEAT**: the parent's ACK is the leaf's permission to sleep (§12.2, §12.6). |
+| 1 | **F_ACK_REQ** | Sender demands an ACK (§9). Set on ALARM/TROUBLE events and on all central downlink except EVENT_LOG_REQ. *(v3.4)* Also on **every leaf EVENT and every leaf HEARTBEAT**: the parent's ACK is the leaf's permission to sleep (§12.2, §12.6). *(2026-10-31)* And on a **leaf's NAME_ANNOUNCE**: the parent's hop ACK is what makes the leaf consider itself announced (§12.9). |
 | 2 | **F_RETX** | This frame is a **periodic re-announcement** of a condition already reported (§7.2): same DEV_SEQ, fresh MSG_ID/MSG_CTR. Lets the log console label repeats honestly instead of showing what looks like a brand-new alarm every 60 s. ⛑ NFPA 72 §23.16: alarm repeated ≤ every 60 s until restore. |
 | 3–7 | reserved | Must be 0. Receivers ignore them (forward compatibility). |
 
@@ -726,6 +726,14 @@ still says which image the unit takes). Master copy of this table: reference
 sends it **once after provisioning**, not on every deep-sleep wake — and
 *(v3.5)* again after any reset that is not a wake (power-on, the reboot into a
 new firmware), so the version the board and the tablet hold is the one running.
+*(2026-10-31)* A leaf's carries `F_ACK_REQ` and counts as sent only on the parent's
+hop ACK without `NO_PATH`; the parent keeps it in custody (§12.6) until the
+central's ACK. A leaf announces again after **every** bind (§12.9).
+
+NAME and ADDRESS are **bytes** of UTF-8: an accented letter costs two. The unit
+cuts a longer text at the limit **on a character boundary** (`siot_utf8_trim`),
+and the tablet decodes both leniently (a bad byte becomes U+FFFD) — a cut name
+must never cost the frame, nor the DEVICE_TABLE page that carries it.
 
 ### 7.12 DEVICE_TABLE — `MSG_TYPE 0x0B` (uplink, board → central, serial only) — variable, ≤ 202 bytes, paged
 
@@ -1167,7 +1175,10 @@ a HEARTBEAT ACK only.
 
 ### 12.6 Uplink events — custody, alarm, outbox
 
-**Every leaf EVENT carries `F_ACK_REQ`** (§3.2). Three tiers:
+**Every leaf EVENT carries `F_ACK_REQ`** (§3.2). *(2026-10-31)* So does a leaf's
+**NAME_ANNOUNCE**, which the parent keeps in custody like a non-alarm event
+(tier 1: the 3 fast retries) — its ACK from the central is consumed by the
+parent and **not** queued for the leaf, which needs nothing from it. Three tiers:
 
 1. **Hop ACK = custody.** The parent acknowledges on the same wake (`SRC_MAC` =
    parent). From then on the **parent** owns delivery: it forwards the frame
@@ -1288,13 +1299,27 @@ are always awake to answer a leaf's probe.
   can be lost or dropped, and nothing else ever carries the name,
   endereçamento and product). From that frame (or the first `TOPOLOGY`) the
   board knows the role and applies the 3 × 60 s = 180 s missing rule (§9.2).
+- *(2026-10-31)* The announce is **acknowledged**: it carries `F_ACK_REQ`, and the
+  leaf marks itself announced only on the parent's hop ACK **without
+  `NO_PATH`** — a MAC-layer ACK alone meant "the radio heard it" while a
+  parent with no path dropped the frame. Not acknowledged → again on the next
+  heard wake. The parent keeps it in custody to the board (§12.6). The leaf
+  announces again **after every bind** (first contact, a replaced parent): a
+  new parent is a new path. The order on the verdict wake is TOPOLOGY,
+  NAME_ANNOUNCE, then the walk-test EVENT.
+- *(2026-10-31)* **Late hop ACK.** The 100 ms ACK wait is the normal case; on
+  silence the leaf keeps listening up to **400 ms more**, once per acked send,
+  never past the 500 ms wake budget. A miss declared at 100 ms cost a re-probe
+  (listen window, bind, TOPOLOGY) and silenced every re-announce rule, which is
+  more battery than the wait; a normal wake pays nothing.
 
 ### 12.10 Numbers
 
 | Quantity | Value | Where |
 |---|---|---|
 | `HB_INTERVAL` | 60 s, fixed | §12.2, §12.12 |
-| Wake budget / ACK wait / probe listen | 500 ms / 100 ms / ≈ 200 ms | §12.2, §12.3 |
+| Wake budget / ACK wait / late-ACK grace / probe listen | 500 ms / 100 ms / + 400 ms once, within the budget / ≈ 200 ms | §12.2, §12.3, §12.9 |
+| NAME_ANNOUNCE | acked by the parent (hop ACK, no `NO_PATH`), custody to the board; after provisioning, every bind, the next 3 bound wakes, every 10th wake, after SET_DEVICE, after a new image | §12.9, §12.6 |
 | First contact (never bound since provisioning) | 3 probe copies 300 ms apart, ≈ 800 ms listen; a probe on every one of the first 10 wakes | §12.3, §12.9 |
 | Post-provisioning verdict window | ≤ 30 s awake | §12.8 |
 | Bind preference / weak-link flag | link ≥ −85 dBm / < −75 dBm reported, < −85 flagged | §12.3, §12.7 |

@@ -221,8 +221,8 @@ uint8_t siot_leaf_custody_count(const siot_leaf_custody_t *c)
     return n;
 }
 
-bool siot_leaf_custody_add(siot_leaf_custody_t *c, const uint8_t leaf[6], uint16_t msg_id, bool alarm,
-                           const uint8_t *frame, size_t len, int64_t now_ms)
+bool siot_leaf_custody_add(siot_leaf_custody_t *c, const uint8_t leaf[6], uint16_t msg_id, uint8_t msg_type,
+                           bool alarm, const uint8_t *frame, size_t len, int64_t now_ms)
 {
     if (len == 0 || len > sizeof(c->e[0].frame)) return false;
     siot_leaf_custody_entry_t *slot = NULL, *victim = NULL, *victim_alarm = NULL;
@@ -237,6 +237,7 @@ bool siot_leaf_custody_add(siot_leaf_custody_t *c, const uint8_t leaf[6], uint16
     slot->len = (uint8_t)len;
     memcpy(slot->leaf, leaf, 6);
     slot->msg_id = msg_id;
+    slot->msg_type = msg_type;
     slot->alarm = alarm;
     slot->attempts = 1;
     slot->next_ms = now_ms + SIOT_LEAF_CUSTODY_FAST_MS;
@@ -244,11 +245,15 @@ bool siot_leaf_custody_add(siot_leaf_custody_t *c, const uint8_t leaf[6], uint16
     return true;
 }
 
-bool siot_leaf_custody_ack(siot_leaf_custody_t *c, const uint8_t leaf[6], uint16_t msg_id)
+bool siot_leaf_custody_ack(siot_leaf_custody_t *c, const uint8_t leaf[6], uint16_t msg_id, uint8_t *msg_type_out)
 {
     for (int i = 0; i < SIOT_LEAF_CUSTODY_CAP; i++) {
         siot_leaf_custody_entry_t *e = &c->e[i];
-        if (e->len && e->msg_id == msg_id && memcmp(e->leaf, leaf, 6) == 0) { e->len = 0; return true; }
+        if (e->len && e->msg_id == msg_id && memcmp(e->leaf, leaf, 6) == 0) {
+            if (msg_type_out) *msg_type_out = e->msg_type;
+            e->len = 0;
+            return true;
+        }
     }
     return false;
 }

@@ -79,3 +79,23 @@ bool siot_mac_is_bcast(const uint8_t mac[SIOT_MAC_LEN])
     }
     return true;
 }
+
+size_t siot_utf8_trim(char *s)
+{
+    size_t len = strlen(s);
+    if (len == 0) return 0;
+    /* Walk back over continuation bytes (10xxxxxx) to the last lead byte. */
+    size_t i = len;
+    while (i > 0 && ((uint8_t)s[i - 1] & 0xC0) == 0x80) i--;
+    if (i == 0) { s[0] = '\0'; return 0; } /* continuation bytes only: nothing valid */
+    const uint8_t lead = (uint8_t)s[i - 1];
+    size_t need;
+    if (lead < 0x80) need = 1;
+    else if ((lead & 0xE0) == 0xC0) need = 2;
+    else if ((lead & 0xF0) == 0xE0) need = 3;
+    else if ((lead & 0xF8) == 0xF0) need = 4;
+    else need = 0; /* not a lead byte: drop it */
+    const size_t have = len - (i - 1);
+    if (need == 0 || have < need) { s[i - 1] = '\0'; return i - 1; }
+    return len;
+}

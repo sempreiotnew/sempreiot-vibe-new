@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -8,6 +6,7 @@ import '../../../../core/theme/theme_ext.dart';
 import '../../../central/domain/led/led_language.dart';
 import '../../../installation/application/installation_provider.dart';
 import '../../application/provisioning_wizard_provider.dart';
+import '../../domain/entities/provisioning_limits.dart';
 import 'setup_device_preview.dart';
 import 'wizard_buttons.dart';
 
@@ -36,13 +35,20 @@ class _NameAddressStepState extends ConsumerState<NameAddressStep> {
     super.dispose();
   }
 
-  /// The unit's slot holds 16 bytes of UTF-8 (protocol §7.11).
-  static const addressMaxBytes = 16;
+  /// The unit's slots hold 32 bytes (name) and 16 bytes (endereçamento) of
+  /// UTF-8 (protocol §7.11). Bytes, not characters: an accent counts two.
+  /// A name past the limit used to be cut by the unit in the middle of an
+  /// accent, and the tablet then refused every frame carrying it.
+  static const nameMaxBytes = ProvisioningLimits.nameMaxBytes;
+  static const addressMaxBytes = ProvisioningLimits.addressMaxBytes;
 
+  bool get _nameFits =>
+      ProvisioningLimits.fits(_nameCtrl.text.trim(), nameMaxBytes);
   bool get _addressFits =>
-      utf8.encode(_addressCtrl.text.trim()).length <= addressMaxBytes;
+      ProvisioningLimits.fits(_addressCtrl.text.trim(), addressMaxBytes);
 
-  bool get _canContinue => _nameCtrl.text.trim().isNotEmpty && _addressFits;
+  bool get _canContinue =>
+      _nameCtrl.text.trim().isNotEmpty && _nameFits && _addressFits;
 
   void _continue() {
     if (!_canContinue) return;
@@ -106,6 +112,13 @@ class _NameAddressStepState extends ConsumerState<NameAddressStep> {
             onChanged: _onChanged,
             onSubmitted: (_) => _continue(),
           ),
+          if (!_nameFits) ...[
+            const SizedBox(height: 6),
+            const Text(
+              'Até $nameMaxBytes caracteres (acentos contam dois).',
+              style: TextStyle(color: AppColors.error, fontSize: 12),
+            ),
+          ],
           const SizedBox(height: 16),
           const _FieldLabel('ENDEREÇAMENTO (OPCIONAL)'),
           const SizedBox(height: 8),

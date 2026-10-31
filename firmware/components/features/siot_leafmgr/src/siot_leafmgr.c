@@ -219,7 +219,7 @@ static void handle_leaf_frame(const rx_item_t *it)
         if (!dup) {
             forward_up(it->data, it->len);
             const bool alarm = f.payload_len >= 1 && f.payload[0] == SAFR_EVT_ALARM;
-            siot_leaf_custody_add(&s_custody, f.src_mac, f.msg_id, alarm, it->data, it->len, now_ms());
+            siot_leaf_custody_add(&s_custody, f.src_mac, f.msg_id, SAFR_MSG_EVENT, alarm, it->data, it->len, now_ms());
             ESP_LOGW(TAG, "custody: leaf EVENT type %u code %u msg_id %u (%u in custody)%s", f.payload[0],
                      f.payload_len > 1 ? f.payload[1] : 0, f.msg_id, siot_leaf_custody_count(&s_custody),
                      alarm ? " ALARM" : "");
@@ -240,7 +240,17 @@ static void handle_leaf_frame(const rx_item_t *it)
         break;
     default: /* NAME_ANNOUNCE, TOPOLOGY, OTA_STATUS / OTA_RESULT, anything else: up it goes */
         if (f.flags & SAFR_F_ACK_REQ) send_leaf_ack(l, f.msg_id, SAFR_ACK_OK, false); /* hop ACK closes an OTA_RESULT (§13.5) */
-        if (!dup) forward_up(it->data, it->len);
+        if (!dup) {
+            forward_up(it->data, it->len);
+            /* §12.9 (2026-10-31): the frame that carries the unit's name,
+             * endereçamento and product is kept like an event — retried to
+             * the board until the central's ACK comes down — so one lost
+             * relay no longer leaves the tablet with a bare MAC. */
+            if (f.msg_type == SAFR_MSG_NAME_ANNOUNCE && (f.flags & SAFR_F_ACK_REQ)) {
+                siot_leaf_custody_add(&s_custody, f.src_mac, f.msg_id, SAFR_MSG_NAME_ANNOUNCE, false, it->data, it->len, now_ms());
+                ESP_LOGI(TAG, "custody: leaf NAME_ANNOUNCE msg_id %u (%u in custody)", f.msg_id, siot_leaf_custody_count(&s_custody));
+            }
+        }
         break;
     }
     unlock();
@@ -287,9 +297,13 @@ static void downlink_hook(const siot_safr_frame_t *f, const uint8_t *raw, size_t
              * cyan / end-to-end alarm ACK). The central also ACKs every leaf
              * HEARTBEAT it sees (spec §7.5); the leaf needs nothing from those,
              * and queueing them would cost it a mailbox drain on every wake. */
-            if (siot_leaf_custody_ack(&s_custody, l->mac, acked)) {
-                ESP_LOGI(TAG, "custody: msg_id %u confirmed by the board/central (%u left)", acked, siot_leaf_custody_count(&s_custody));
-                deliver_or_queue(l, raw, raw_len, SIOT_LEAF_NOT_A_COMMAND, f->msg_id);
+            uint8_t kept = 0;
+            if (siot_leaf_custody_ack(&s_custody, l->mac, acked, &kept)) {
+                ESP_LOGI(TAG, "custody: type 0x%02X msg_id %u confirmed by the central (%u left)", kept, acked,
+                         siot_leaf_custody_count(&s_custody));
+                /* A NAME_ANNOUNCE's ACK ends here: the leaf needs nothing from it,
+                 * and a mailbox frame would cost it a drain on its next wake. */
+                if (kept == SAFR_MSG_EVENT) deliver_or_queue(l, raw, raw_len, SIOT_LEAF_NOT_A_COMMAND, f->msg_id);
             } else {
                 ESP_LOGD(TAG, "ACK msg_id %u for a leaf frame not in custody (heartbeat?): not forwarded", acked);
             }

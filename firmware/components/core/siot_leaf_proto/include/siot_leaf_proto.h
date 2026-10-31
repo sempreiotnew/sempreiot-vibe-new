@@ -21,6 +21,14 @@ extern "C" {
 #define SIOT_LEAF_HB_INTERVAL_S        60   /* fixed in v3.4 (§12.12) */
 #define SIOT_LEAF_WAKE_BUDGET_MS       500  /* hard cap outside alarm */
 #define SIOT_LEAF_ACK_WAIT_MS          100
+/* A parent whose leaf-manager task is busy (forwarding, draining another
+ * leaf's mailbox) answers later than 100 ms. Giving up there cost more than
+ * it saved: the wake counted as a miss, two misses meant a re-probe (listen
+ * window, new bind, TOPOLOGY), and the re-announce rules never ran. So on
+ * silence the leaf keeps listening up to this much more, once per acked
+ * send, and never past the wake budget (100 + 400 = 500 ms). Battery cost:
+ * zero on a normal wake; ≈ 0.01 mAh at 100 mA on a slow one (2026-10-31). */
+#define SIOT_LEAF_ACK_LATE_MS          400
 #define SIOT_LEAF_PROBE_LISTEN_MS      200
 /* First contact (never bound since provisioning, §12.3 amended 2026-10-09): the
  * discovery probe is a broadcast nobody acknowledges, and one copy at the first
@@ -167,6 +175,7 @@ typedef struct {
     uint8_t  len;              /* 0 = free */
     uint8_t  leaf[6];
     uint16_t msg_id;
+    uint8_t  msg_type;         /* EVENT, or NAME_ANNOUNCE (§12.9, 2026-10-31) */
     bool     alarm;
     uint8_t  attempts;         /* sends so far (1 = the first forward) */
     int64_t  next_ms;
@@ -176,12 +185,15 @@ typedef struct { siot_leaf_custody_entry_t e[SIOT_LEAF_CUSTODY_CAP]; } siot_leaf
 
 void siot_leaf_custody_init(siot_leaf_custody_t *c);
 uint8_t siot_leaf_custody_count(const siot_leaf_custody_t *c);
-/* Records a forwarded EVENT (attempts = 1, next retry in 2 s). Full: the
- * oldest non-ALARM entry is dropped (an ALARM only if every entry is one). */
-bool siot_leaf_custody_add(siot_leaf_custody_t *c, const uint8_t leaf[6], uint16_t msg_id, bool alarm,
-                           const uint8_t *frame, size_t len, int64_t now_ms);
-/* The board's / central's ACK for (leaf, msg_id) arrived: entry released. */
-bool siot_leaf_custody_ack(siot_leaf_custody_t *c, const uint8_t leaf[6], uint16_t msg_id);
+/* Records a forwarded EVENT or NAME_ANNOUNCE (attempts = 1, next retry in
+ * 2 s). Full: the oldest non-ALARM entry is dropped (an ALARM only if every
+ * entry is one). */
+bool siot_leaf_custody_add(siot_leaf_custody_t *c, const uint8_t leaf[6], uint16_t msg_id, uint8_t msg_type,
+                           bool alarm, const uint8_t *frame, size_t len, int64_t now_ms);
+/* The board's / central's ACK for (leaf, msg_id) arrived: entry released.
+ * `msg_type_out` (optional) says what it was — only an EVENT's ACK goes on
+ * to the leaf. */
+bool siot_leaf_custody_ack(siot_leaf_custody_t *c, const uint8_t leaf[6], uint16_t msg_id, uint8_t *msg_type_out);
 /* Next entry due for a retry at `now_ms` (NULL = none). The caller resends
  * e->frame and then calls siot_leaf_custody_sent(). */
 siot_leaf_custody_entry_t *siot_leaf_custody_due(siot_leaf_custody_t *c, int64_t now_ms);
