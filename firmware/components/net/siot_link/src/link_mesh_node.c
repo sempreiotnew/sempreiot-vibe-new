@@ -57,6 +57,16 @@ static const char *TAG = "link_mesh_node";
 #define FUSION_RSSI_MIN_DBM    (-85) /* library default: a winner heard weaker than this is not joined */
 #define FUSION_START_S           10
 #define FUSION_EVERY_S           60
+/* Parent choice (2026-10-31). Mesh-Lite picks a parent by layer first and
+ * signal second (User Guide, Preferred Parent Node): a shallower candidate
+ * always wins unless it is heard weaker than a floor, and the library's floor
+ * is -90 dBm. On the bench a station took the root at exactly -90 while the
+ * siren beside it offered -63. The floor is -80 here, one step above the
+ * protocol's -85 "weak link" (spec §9): a link the map paints red is never
+ * chosen while any other parent is in reach. The library has no "best
+ * signal whatever the layer" policy; this is the lever it offers. The
+ * range→score list is the one from the header's own example. */
+#define PARENT_RSSI_MIN_DBM    (-80)
 
 /* App-chosen ids for the two raw-message channels: the receiver dispatches
  * on this id to the raw_process callback registered below. 0 is
@@ -268,6 +278,17 @@ static esp_err_t node_start(void)
     };
     err = esp_mesh_lite_set_fusion_config(&fusion);
     if (err != ESP_OK) ESP_LOGW(TAG, "fusion config: %s", esp_err_to_name(err));
+
+    static esp_mesh_lite_rssi_threshold_list_t rssi_level[] = {
+        {0, -35, 20},
+        {-35, -55, 15},
+        {-55, -75, 10},
+        {-75, -125, 5},
+    };
+    err = esp_mesh_lite_set_rssi_threshold(rssi_level, sizeof(rssi_level) / sizeof(rssi_level[0]),
+                                           PARENT_RSSI_MIN_DBM);
+    if (err != ESP_OK) ESP_LOGW(TAG, "parent rssi floor %d dBm not set: %s", PARENT_RSSI_MIN_DBM, esp_err_to_name(err));
+    else ESP_LOGI(TAG, "parent rssi floor %d dBm", PARENT_RSSI_MIN_DBM);
 
     err = esp_mesh_lite_raw_msg_action_list_register(s_raw_actions);
     if (err != ESP_OK) return err;

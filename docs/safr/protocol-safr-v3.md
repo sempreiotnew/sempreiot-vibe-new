@@ -207,7 +207,7 @@ not interoperable with a neighboring installation. Two mechanisms enforce this:
 | Bit | Name | Meaning |
 |-----|------|---------|
 | 0 | **F_ENC** | Payload is encrypted (AES-CCM) and a 16-byte TAG follows it. **Production receivers must reject frames without F_ENC** (§4.1) — plaintext is a bench-debug facility only. |
-| 1 | **F_ACK_REQ** | Sender demands an ACK (§9). Set on ALARM/TROUBLE events and on all central downlink except EVENT_LOG_REQ. *(v3.4)* Also on **every leaf EVENT and every leaf HEARTBEAT**: the parent's ACK is the leaf's permission to sleep (§12.2, §12.6). *(2026-10-31)* And on a **leaf's NAME_ANNOUNCE**: the parent's hop ACK is what makes the leaf consider itself announced (§12.9). |
+| 1 | **F_ACK_REQ** | Sender demands an ACK (§9). Set on ALARM/TROUBLE events and on all central downlink except EVENT_LOG_REQ. *(v3.4)* Also on **every leaf EVENT and every leaf HEARTBEAT**: the parent's ACK is the leaf's permission to sleep (§12.2, §12.6). *(2026-10-31)* And on **every NAME_ANNOUNCE**: a leaf's (the parent's hop ACK makes it announced, §12.9) and a node's (the central's ACK does, §7.11). |
 | 2 | **F_RETX** | This frame is a **periodic re-announcement** of a condition already reported (§7.2): same DEV_SEQ, fresh MSG_ID/MSG_CTR. Lets the log console label repeats honestly instead of showing what looks like a brand-new alarm every 60 s. ⛑ NFPA 72 §23.16: alarm repeated ≤ every 60 s until restore. |
 | 3–7 | reserved | Must be 0. Receivers ignore them (forward compatibility). |
 
@@ -674,10 +674,16 @@ legacy view for pre-v3.2 tablets. New tablets use `DEVICE_TABLE` (§7.12).
 
 ### 7.11 NAME_ANNOUNCE — `MSG_TYPE 0x0A` (uplink) — variable, ≤ 50 bytes
 
-*v3.1, POC round 1 (pocs/POC-BRIEF.md §4.2/§4.3).* Sent once by a node after
+*v3.1, POC round 1 (pocs/POC-BRIEF.md §4.2/§4.3).* Sent by a node after
 boot (and forwarded by the board like any other frame) so the central can
 attach the operator-chosen name/zone to a device without waiting on the
 enrolled list. `SRC_MAC` (header) identifies which device this is.
+*(2026-10-31)* A node's carries `F_ACK_REQ` and is sent **again** — 3 × 2 s,
+then once a minute — until the central's ACK for it comes down; the board
+adopts the first copy and ignores the repeats. Before this a node announced
+once, marked done on the local send, and a copy lost above it (a root
+session flipping during network formation) left the unit a bare MAC with no
+model on the tablet until a reboot.
 
 | Off | Size | Field |
 |----|------|-------|

@@ -26,6 +26,12 @@ static const char *TAG = "siot_netcore";
 #define ALARM_RETX_MS     60000 /* spec §7.2 */
 #define RETRY_BACKOFF_MS   2000 /* spec §9.1 */
 #define RETRY_MAX             3
+/* NAME_ANNOUNCE (spec §7.11, 2026-10-31): sent with F_ACK_REQ and again until
+ * the central's ACK comes down — 3 × 2 s, then once a minute. One lost
+ * frame left a unit as a bare MAC with no model on the tablet for good. */
+#define ANNOUNCE_FAST_MS   2000
+#define ANNOUNCE_FAST_TRIES   3
+#define ANNOUNCE_SLOW_MS  60000
 #define STEP_MS             250
 #define MAX_CHILDREN         16
 #define DEFAULT_EPOCH 0x686E2Fu /* until TIME_SYNC arrives (same placeholder as the POC) */
@@ -52,7 +58,18 @@ static uint8_t  s_pending_payload[SAFR_EVENT_LEN];
 static uint8_t  s_pending_attempts;
 static int64_t  s_pending_next_ms;
 
-static bool s_name_announced;
+static bool s_name_announced;     /* the central acknowledged our NAME_ANNOUNCE */
+static uint16_t s_announce_msg_id; /* the copy waiting for that ACK */
+static uint8_t  s_announce_tries;
+static int64_t  s_announce_next_ms;
+
+/* Lock held: the name goes out again from the next tick. */
+static void announce_again_locked(void)
+{
+    s_name_announced = false;
+    s_announce_tries = 0;
+    s_announce_next_ms = 0;
+}
 static esp_timer_handle_t s_decommission_timer;
 
 /* Role announcement after a Mesh-Lite level change (spec §7.4: TOPOLOGY on
@@ -101,7 +118,7 @@ static void note_downlink(void)
     if (!was) {
         ESP_LOGI(TAG, "board reachable: re-announcing name");
         xSemaphoreTake(s_lock, portMAX_DELAY);
-        s_name_announced = false; /* the announce sent into a board-less mesh was lost */
+        announce_again_locked(); /* the announce sent into a board-less mesh was lost */
         xSemaphoreGive(s_lock);
     }
 }
@@ -293,7 +310,11 @@ static bool emit_name_announce(void)
     p[off++] = siot_link_mesh_level() == 1 ? SAFR_ROLE_ROOT : SAFR_ROLE_NODE; /* v3.2 ROLE */
     off += siot_safr_put_product(&p[off], siot_board_def_product(), siot_board_def()->hw_rev,
                                  siot_version_string()); /* v3.5: what this unit is and runs */
-    return send_uplink(SAFR_MSG_NAME_ANNOUNCE, siot_safr_next_msg_id(), 0, p, off) == ESP_OK;
+    /* F_ACK_REQ: the central ACKs it and the board relays the ACK down; only
+     * that ACK (on_ack) makes the unit announced. The local send proved
+     * nothing beyond this hop (2026-10-31). */
+    s_announce_msg_id = siot_safr_next_msg_id();
+    return send_uplink(SAFR_MSG_NAME_ANNOUNCE, s_announce_msg_id, SAFR_F_ACK_REQ, p, off) == ESP_OK;
 }
 
 /* ---- downlink handlers (run in the link rx task, lock taken here) ------- */
@@ -330,6 +351,10 @@ static void on_ack(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_le
              s_pending_used && s_pending_msg_id == acked ? "confirms the pending frame"
              : s_pending_used ? "pending is another id" : "nothing pending");
     if (s_pending_used && s_pending_msg_id == acked) s_pending_used = false;
+    if (!s_name_announced && s_announce_tries > 0 && s_announce_msg_id == acked) {
+        s_name_announced = true; /* the central has our name, product and version */
+        ESP_LOGI(TAG, "NAME_ANNOUNCE confirmed by the central (try %u)", s_announce_tries);
+    }
     if (s_comm_fault) { /* the uplink works again: RESTORE (brief §9) */
         s_comm_fault = false;
         emit_event(now_ms(), SAFR_EVT_OK, SAFR_EC_RESTORE, false, false);
@@ -408,7 +433,7 @@ static bool apply_set_device(const uint8_t *a, size_t alen)
     if (siot_config_save_code(&inst) != ESP_OK) return false;
     ESP_LOGW(TAG, "SET_DEVICE: now \"%s\" / \"%s\" — re-announcing", inst.name, inst.zone);
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    s_name_announced = false;
+    announce_again_locked();
     xSemaphoreGive(s_lock);
     return true;
 }
@@ -606,12 +631,21 @@ static void netcore_task(void *arg)
             }
         }
 
-        /* NAME_ANNOUNCE once after boot — keep trying until a live transport takes it. */
+        /* NAME_ANNOUNCE after boot — and again, 3 × 2 s then once a minute,
+         * until the central's ACK says it arrived (on_ack). The board adopts
+         * the first copy it hears and ignores the repeats; the repeats are for
+         * the copy lost between here and the tablet (2026-10-31: a unit whose
+         * one announce was lost stayed a bare MAC with no model for good). */
         if (!s_name_announced && siot_link_mesh_level() > 0 && siot_link_is_up(SIOT_LINK_MESH) &&
-            board_reachable(t)) {
-            s_name_announced = emit_name_announce();
-            if (s_name_announced) ESP_LOGI(TAG, "NAME_ANNOUNCE sent: %s / %s",
-                                           siot_config_code()->name, siot_config_code()->zone);
+            board_reachable(t) && t >= s_announce_next_ms) {
+            if (emit_name_announce()) {
+                if (s_announce_tries < 0xFF) s_announce_tries++;
+                s_announce_next_ms = t + (s_announce_tries < ANNOUNCE_FAST_TRIES ? ANNOUNCE_FAST_MS : ANNOUNCE_SLOW_MS);
+                ESP_LOGI(TAG, "NAME_ANNOUNCE sent (try %u, msg_id %u): %s / %s — waiting for the central's ACK",
+                         s_announce_tries, s_announce_msg_id, siot_config_code()->name, siot_config_code()->zone);
+            } else {
+                s_announce_next_ms = t + ANNOUNCE_FAST_MS; /* the transport did not take it: soon again */
+            }
         }
         if (t >= next_hb_ms) { emit_heartbeat(t); next_hb_ms = t + HB_INTERVAL_MS; }
 
