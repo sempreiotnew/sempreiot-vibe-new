@@ -62,6 +62,7 @@ alarms held on the panel, always** (decided 2026-10-03).
 | `sempreiot/releases/{channel}` | cloud → every central | **yes** | when `ota_release.sh` publishes | the catalog of published firmware (§4.4) |
 | `{id}/release` | cloud → this central | **yes** | when `ota_release.sh --central` publishes | this central's own catalog (§4.4) |
 | `{id}/cmd/{user}` | phone → central | no | an Administrador taps Atualizar / Cancelar | `ota_start` / `ota_cancel` (§4.6); `{user}` = the phone's Identity ID, which AWS lets only that user publish under |
+| `{id}/cmd/{user}` | phone → central | no | an Administrador taps Testar tudo / Cancelar teste | `test_start` / `test_cancel` (§4.9), answered by a `test_answer` event |
 | `{id}/cmd/{user}` *(planned 2026-10-28)* | phone → central | no | an Administrador edits Causa e efeito | `label_set` / `label_del` / `rule_set` / `rule_del` (§4.8) |
 | `{id}/rules` *(planned)* | central → cloud | no | watched: on hello, then on change | the label tables and the rule table **as the board confirmed them** (§4.8) |
 | `{id}/mesh/up` · `{id}/mesh/down` *(planned, names to settle — Phase C)* | island root ↔ central | no | always while an island exists | SAFR frames, end-to-end authenticated, tunnelled over MQTT (`phase4-cause-and-effect-brief.md` §2.4) |
@@ -325,17 +326,59 @@ script).
 (`domain/system_test/system_test_run.dart`): `verdict` = `running` / `passed` / `failed` /
 `cancelled`; a unit's `outcome` = `pending` / `pendingWake` (a battery detector, on its next wake) /
 `confirmed` / `noAnswer` / `missing` (offline when the test started) / `cancelled`; `by` = the phone
-account that started it (absent = the tablet). Retained, QoS 1, written on every change of either
+account that started it (`remote:<name>`; absent = the tablet). Retained, QoS 1, written on every change of either
 and on every new MQTT session — **with nobody watching too**, like `alarm`: a phone that opens the
 central, or is reloaded, in the middle of a test reads it the moment it subscribes, whatever the
 timing of `state` and `frames`. On the phone it **seeds the command tracker** (the map's clocks and
 ticks, the Central's tally) through the same door as the `command` events, so nothing already passed
 goes back; the Central's popover lists it under "Últimos testes" and the report sheet opens by
-itself when a running test ends, on the tablet and on the phone alike. Cancelling is the tablet's
-alone (the popover's "Cancelar teste"); a phone only looks.
+itself when a running test ends, on the tablet and on the phone alike. A phone's Administrador may
+start and cancel it too (§4.9).
+
+**The record must be true (2026-10-31).** It is the lock every phone reads: `running` present =
+nobody may start another test. Two rules keep it honest:
+
+- **The central retries until it lands.** A write that fails (no session at that instant, no
+  identity yet at start-up) marks the message dirty and the publisher's pump tries again every 2 s,
+  watched or not, until the broker has it — the same for `alarm`. Before this, a lost write waited
+  for the next change of the test state, which is the next test: the end of a test lost that way left
+  `running` on the broker for hours, every phone showed ✓✓ on every unit while the central was clean,
+  and their "Testar tudo" would have stayed locked.
+- **A phone distrusts an old "running".** The central rewrites the record on every change and a test
+  ends inside its 100 s window, so a `running` whose `at` is older than **3 min**
+  (`mirrorTestsStaleAfter`) is a record whose end never arrived: the phone treats it as no test —
+  nothing lights up, the button is free. `MirrorTests.runningAt(now)`.
 
 Size: about 90 bytes per unit per run — 11 runs × 50 units ≈ 50 KB (AWS limit 128 KB; the tablet
 keeps every run in its database, the message carries the last 10).
+
+### 4.9 Testar tudo from a phone (`{id}/cmd/{user}`) — 2026-10-31
+
+```json
+{"v":1,"type":"test_start","id":"muvia60t-1","name":"…"}
+{"v":1,"type":"test_cancel","id":"…","name":"…"}
+```
+
+- **Who is asking / who may.** As §4.6: the topic's last level is the phone's Identity ID; it must
+  be an accepted Administrador (`LEVEL_4`) or Master of this central.
+- **One test at a time.** The central is the only arbiter: every start, from the tablet or from any
+  phone, goes through `SystemTestController.start()`, which refuses while a run is current. A phone
+  that loses the race gets `refused` — "Já há um teste em andamento. Iniciado por …" — and the
+  retained `test` record (§4.7) is the lock every phone's button reads. Runs never overlap.
+- **The checks after that.** The board must be on the link. The run is the tablet's own, with
+  `by = remote:<name>`; the tablet's report shows who started it.
+- **Cancel.** The tablet's "Cancelar teste", and the phone account that started the run; any other
+  phone is refused ("Só a central, ou quem iniciou o teste, pode cancelá-lo").
+- **The answer.** A `test_answer` event on `frames`: `started` or `refused` plus the reason, at once
+  (no `working`: a test starts or is refused immediately). The phone waits up to 8 s. The run itself
+  reaches every phone through the retained record, exactly as when the tablet starts it.
+- **Audit.** `test_remote_started` / `test_remote_cancelled` / `test_remote_refused`, with the
+  user's Identity ID.
+- **On the phone.** The Central's popover (Rede → the CENTRAL chip) shows "Testar tudo" /
+  "Cancelar teste" to everyone; for anyone who is not an Administrador of this central the button is
+  there but disabled, with "Só um Administrador desta central pode testar." under it. Code:
+  `remote_system_test.dart` (the central), `central_mirror_viewer.dart` `sendTestStart` /
+  `sendTestCancel` (the phone), `device_menu.dart`. Tests: `test/central/system_test_remote_test.dart`.
 
 ### 4.8 Causa e efeito from a phone (`{id}/cmd/{user}`) — planned 2026-10-28
 

@@ -402,8 +402,9 @@ class DeviceCommandTracker
       mac: remote.mac,
       kind: remote.kind,
       step: remote.step,
-      startedAt:
-          cur?.kind == remote.kind && !newer ? cur!.startedAt : remote.startedAt,
+      startedAt: cur?.kind == remote.kind && !newer
+          ? cur!.startedAt
+          : remote.startedAt,
       // A detector waiting for its wake keeps its clock the whole window
       // on the phone too.
       waitsForWake: remote.waitsForWake,
@@ -941,7 +942,9 @@ final deviceCommandProvider = StateNotifierProvider<DeviceCommandTracker,
     // the whole picture after a reload or a late join, whatever the
     // snapshot's and the events' timing.
     ref.listen<MirrorTests?>(mirrorTestsProvider(viewed), (_, next) {
-      final run = next?.running;
+      // A "running" written too long ago is a record whose end was lost:
+      // nothing lights up for it (MirrorTests.runningAt).
+      final run = next?.runningAt(DateTime.now());
       if (run != null) {
         tracker.seedFromRun(run);
       } else if (next?.recent.firstOrNull case final last?) {

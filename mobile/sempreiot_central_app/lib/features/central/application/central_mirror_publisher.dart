@@ -19,6 +19,7 @@ import 'device_update_history.dart';
 import 'device_update_source.dart';
 import 'firmware_release_provider.dart';
 import 'remote_ota.dart';
+import 'remote_system_test.dart';
 import 'device_update_state.dart';
 import 'ota_push_report.dart';
 import 'ota_push_state.dart';
@@ -101,6 +102,8 @@ class CentralMirrorPublisher {
         otaOffer,
     Future<String?> Function(String userIdentityId, MirrorRemoteOta command)?
         remoteOta,
+    Future<String?> Function(String userIdentityId, MirrorRemoteTest command)?
+        remoteTest,
     void Function(List<MirrorWatcher> watchers)? onWatchers,
     List<DeviceCommandStatus> Function()? commands,
     DateTime Function()? clock,
@@ -114,6 +117,7 @@ class CentralMirrorPublisher {
         _identify = identify,
         _otaOffer = otaOffer,
         _remoteOta = remoteOta,
+        _remoteTest = remoteTest,
         _onWatchers = onWatchers,
         _clock = clock ?? DateTime.now;
 
@@ -121,6 +125,13 @@ class CentralMirrorPublisher {
   static const snapshotGap = Duration(seconds: 1);
   static const softRefresh = Duration(seconds: 30);
   static const pumpEvery = Duration(milliseconds: 250);
+
+  /// A retained message (`alarm`, `test`) that could not be written — no
+  /// identity yet, no session at that instant — is tried again this often
+  /// from [pump] until it lands, watched or not. Before 2026-10-31 it waited
+  /// for the next change of its state: the end of a test lost that way
+  /// left "running" on the broker for hours.
+  static const retryEvery = Duration(seconds: 2);
 
   /// About 70 bytes a tick: 50 stay inside one AWS-billed message (5 KB).
   static const maxTicksPerBatch = 50;
@@ -148,6 +159,11 @@ class CentralMirrorPublisher {
   /// why not (for the phone). The topic already proved who asked.
   final Future<String?> Function(
       String userIdentityId, MirrorRemoteOta command)? _remoteOta;
+
+  /// Carries out a phone's `test_start` / `test_cancel` (§4.9): null = done,
+  /// else why not. One test at a time: the handler refuses while one runs.
+  final Future<String?> Function(
+      String userIdentityId, MirrorRemoteTest command)? _remoteTest;
   final void Function(List<MirrorWatcher> watchers)? _onWatchers;
 
   /// The tablet's commands on the map right now (device_command_provider):
@@ -178,6 +194,11 @@ class CentralMirrorPublisher {
   String? _testsSignature;
   SystemTestRun? _testRunning;
   List<SystemTestRun> _testsRecent = const [];
+
+  /// A retained message that still has to be written (see [retryEvery]).
+  bool _alarmsDirty = false;
+  bool _testsDirty = false;
+  DateTime? _retryAt;
 
   bool _otaHelloPending = false;
   String? _lastOtaBody;
@@ -248,11 +269,17 @@ class CentralMirrorPublisher {
   /// who asked. Today: an Internet update, or cancelling it
   /// (docs/ota/ota-internet-plan.md §5.4).
   void onUserCommand(String userIdentityId, String payload) {
+    final test = decodeMirrorRemoteTest(payload);
+    if (test != null) {
+      _userTest(userIdentityId, test);
+      return;
+    }
     final command = decodeMirrorRemoteOta(payload);
     final handle = _remoteOta;
     if (command == null || handle == null) return;
     // Heard: the phone now waits for the outcome, which may take a download.
-    _answer(command.id, MirrorOtaAnswer.working, null);
+    _answer(
+        MirrorEventKind.otaAnswer, command.id, MirrorOtaAnswer.working, null);
     unawaited(() async {
       String? refused;
       try {
@@ -261,6 +288,7 @@ class CentralMirrorPublisher {
         refused = 'A central não conseguiu: $e';
       }
       _answer(
+          MirrorEventKind.otaAnswer,
           command.id,
           refused == null ? MirrorOtaAnswer.started : MirrorOtaAnswer.refused,
           refused);
@@ -269,10 +297,36 @@ class CentralMirrorPublisher {
     }());
   }
 
-  void _answer(String id, int arg, String? text) {
+  /// A phone's "Testar tudo" / "Cancelar teste" (§4.9). The test starts at
+  /// once or is refused at once (one at a time), so there is no "working":
+  /// the answer is `started` or `refused` with the reason. The record of
+  /// the run itself reaches every phone through the retained `test`
+  /// message, as when the tablet starts it.
+  void _userTest(String userIdentityId, MirrorRemoteTest command) {
+    final handle = _remoteTest;
+    if (handle == null) {
+      _answer(MirrorEventKind.testAnswer, command.id, MirrorOtaAnswer.refused,
+          'Esta central não aceita testes pela internet.');
+      return;
+    }
+    unawaited(() async {
+      String? refused;
+      try {
+        refused = await handle(userIdentityId, command);
+      } catch (e) {
+        refused = 'A central não conseguiu: $e';
+      }
+      _answer(
+          MirrorEventKind.testAnswer,
+          command.id,
+          refused == null ? MirrorOtaAnswer.started : MirrorOtaAnswer.refused,
+          refused);
+    }());
+  }
+
+  void _answer(String kind, String id, int arg, String? text) {
     if (!watched) return;
-    _events
-        .add((kind: MirrorEventKind.otaAnswer, mac: id, arg: arg, text: text));
+    _events.add((kind: kind, mac: id, arg: arg, text: text));
   }
 
   /// One frame movement on the mesh.
@@ -337,6 +391,17 @@ class CentralMirrorPublisher {
 
   /// Every [pumpEvery]: sends what is due.
   void pump() {
+    // The retained messages first, watched or not: a write that failed is
+    // tried again until it lands (see [retryEvery]).
+    if (_alarmsDirty || _testsDirty) {
+      final now = _clock();
+      final due = _retryAt;
+      if (due == null || !now.isBefore(due)) {
+        _retryAt = now.add(retryEvery);
+        if (_alarmsDirty) _publishAlarms(force: false);
+        if (_testsDirty) _publishTests(force: false);
+      }
+    }
     // Phones whose pings stopped: closed, in the background, no signal.
     final before = _watchers.length;
     _watchers.removeWhere((_, w) => !_alive(w.lastPing));
@@ -528,9 +593,12 @@ class CentralMirrorPublisher {
 
   void _publishTests({required bool force}) {
     final signature = mirrorTestsSignature(_testRunning, _testsRecent);
-    if (!force && signature == _testsSignature) return;
+    if (!force && !_testsDirty && signature == _testsSignature) return;
     final id = _identityId();
-    if (id == null) return;
+    if (id == null) {
+      _testsDirty = true; // no identity yet: [pump] tries again
+      return;
+    }
     final sent = _publish(
       mirrorTestTopic(id),
       encodeMirrorTests(
@@ -538,21 +606,27 @@ class CentralMirrorPublisher {
       retain: true,
       qos: 1,
     );
+    // Not sent = no session at this instant: [pump] tries again until it
+    // lands (the end of a test must never stay unwritten).
+    _testsDirty = !sent;
     if (sent) _testsSignature = signature;
   }
 
   void _publishAlarms({required bool force}) {
     final signature = mirrorAlarmsSignature(_alarms);
-    if (!force && signature == _alarmSignature) return;
+    if (!force && !_alarmsDirty && signature == _alarmSignature) return;
     final id = _identityId();
-    if (id == null) return;
+    if (id == null) {
+      _alarmsDirty = true;
+      return;
+    }
     final sent = _publish(
       mirrorAlarmTopic(id),
       encodeMirrorAlarms(at: _clock(), alarms: _alarms),
       retain: true,
       qos: 1,
     );
-    // Not sent = MQTT down: [onConnected] writes it when the session is back.
+    _alarmsDirty = !sent;
     if (sent) _alarmSignature = signature;
   }
 }
@@ -602,6 +676,8 @@ final centralMirrorPublisherProvider = Provider<void>((ref) {
     },
     remoteOta: (user, command) =>
         ref.read(remoteOtaProvider).handle(user, command),
+    remoteTest: (user, command) =>
+        ref.read(remoteSystemTestProvider).handle(user, command),
     // The same path as the tablet's own popover (device_menu.dart): the
     // command goes down; the blink starts only on the unit's own ACK. The
     // answer here is the board's (it took the command); "identify_failed"

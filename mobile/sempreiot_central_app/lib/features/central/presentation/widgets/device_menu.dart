@@ -11,6 +11,7 @@ import '../../../../core/utils/relative_time.dart';
 import '../../application/central_mirror_viewer.dart';
 import '../../application/device_command_provider.dart';
 import '../../application/device_sound_provider.dart';
+import '../../application/device_update_source.dart';
 import '../../application/root_election_provider.dart';
 import '../../application/topology_provider.dart';
 import '../screens/device_settings_screen.dart';
@@ -1248,16 +1249,39 @@ Future<void> showCentralMenu({
       child: child,
     ),
   );
+  // A phone: the central runs it (central-mirror.md §4.9); a refusal
+  // ("já há um teste em andamento", not an Administrador) is shown as the
+  // central worded it. The run itself arrives as the retained record.
+  final remote = ref.read(mirrorViewOnlyProvider);
   switch (action) {
     case CentralMenuAction.startTest:
-      ref.read(systemTestControllerProvider.notifier).start();
+      if (!remote) {
+        ref.read(systemTestControllerProvider.notifier).start();
+      } else {
+        final refused =
+            await ref.read(centralMirrorProvider.notifier).sendTestStart();
+        if (refused != null && context.mounted) _say(context, refused);
+      }
     case CentralMenuAction.cancelTest:
-      ref.read(systemTestControllerProvider.notifier).cancel();
+      if (!remote) {
+        ref.read(systemTestControllerProvider.notifier).cancel();
+      } else {
+        final refused =
+            await ref.read(centralMirrorProvider.notifier).sendTestCancel();
+        if (refused != null && context.mounted) _say(context, refused);
+      }
     case CentralMenuAction.history:
       if (context.mounted) showSystemTestHistory(context);
     case null:
       break;
   }
+}
+
+void _say(BuildContext context, String words) {
+  ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+    content: Text(words),
+    behavior: SnackBarBehavior.floating,
+  ));
 }
 
 class _CentralPopoverRoute extends StatefulWidget {
@@ -1313,12 +1337,18 @@ class _CentralPopover extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final viewOnly = ref.watch(mirrorViewOnlyProvider);
+    // A phone whose user is an Administrador of this central starts and
+    // cancels the test through the central (§4.9) — one test at a time:
+    // the record says whether one runs, whoever started it. Everyone else
+    // sees the same button, disabled, and why.
+    final canTest = !viewOnly || ref.watch(mirrorCanUpdateProvider);
+    final record = ref.watch(systemTestsViewProvider).running;
     final units =
         ref.watch(topologyProvider).where((n) => n.layer > 0 && n.online);
     final sleepers = units.where((n) => n.isLeaf).length;
     final commands = ref.watch(deviceCommandProvider);
     final test = commands[safrBroadcastMac];
-    final running = test?.broadcastRunning == true;
+    final running = test?.broadcastRunning == true || record != null;
     final tally = test == null
         ? null
         : ref.read(deviceCommandProvider.notifier).broadcastTally;
@@ -1500,65 +1530,82 @@ class _CentralPopover extends ConsumerWidget {
                     Text(
                       test != null
                           ? (tally?.text ?? 'Em andamento…')
-                          : viewOnly
-                              ? 'Nenhum teste em andamento. O teste é '
-                                  'iniciado na central; o resultado aparece '
-                                  'aqui e em Últimos testes.'
-                              : 'Envia TESTAR a todos os ${units.length} '
-                                  'dispositivos de uma vez. Cada um confirma '
-                                  'por conta própria; os detectores a bateria '
-                                  '($sleepers) no próximo despertar, em até '
-                                  '1 min. Sirenes e botoeiras geram um evento '
-                                  'de teste.',
+                          : record != null
+                              ? 'Em andamento${record.by != null ? ' — iniciado por ${record.by!.replaceFirst('remote:', '')}' : ' na central'}…'
+                              : viewOnly && !canTest
+                                  ? 'Nenhum teste em andamento. Só um '
+                                      'Administrador desta central pode '
+                                      'iniciar o teste; o resultado aparece '
+                                      'aqui e em Últimos testes.'
+                                  : 'Envia TESTAR a todos os ${units.length} '
+                                      'dispositivos de uma vez. Cada um confirma '
+                                      'por conta própria; os detectores a bateria '
+                                      '($sleepers) no próximo despertar, em até '
+                                      '1 min. Sirenes e botoeiras geram um evento '
+                                      'de teste.',
                       style: TextStyle(
                         color: context.textSecondary,
                         fontSize: 11,
                         height: 1.3,
                       ),
                     ),
-                    if (!viewOnly) ...[
-                      const SizedBox(height: 10),
-                      // While a test runs the same button cancels it: the
-                      // units still waiting read "cancelado" and the
-                      // report says so.
-                      if (running)
-                        OutlinedButton.icon(
-                          key: const ValueKey('central-test-cancel'),
-                          onPressed: () => Navigator.of(context)
-                              .pop(CentralMenuAction.cancelTest),
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size.fromHeight(44),
-                            foregroundColor: AppColors.error,
-                            side: BorderSide(
-                                color: AppColors.error.withValues(alpha: 0.7)),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12)),
-                          ),
-                          icon:
-                              const Icon(Icons.stop_circle_outlined, size: 18),
-                          label: const Text(
-                            'Cancelar teste',
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                        )
-                      else
-                        FilledButton.icon(
-                          key: const ValueKey('central-test-all'),
-                          onPressed: !linkUp
-                              ? null
-                              : () => Navigator.of(context)
-                                  .pop(CentralMenuAction.startTest),
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size.fromHeight(44),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12)),
-                          ),
-                          icon: const Icon(Icons.fact_check_outlined, size: 18),
-                          label: const Text(
-                            'Testar tudo',
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
+                    const SizedBox(height: 10),
+                    // While a test runs the same button cancels it: the
+                    // units still waiting read "cancelado" and the
+                    // report says so. (A phone may cancel only the test
+                    // it started; the central answers otherwise.) On a
+                    // phone without the right, both stay in place,
+                    // disabled: the user sees what an Administrador can do.
+                    if (running)
+                      OutlinedButton.icon(
+                        key: const ValueKey('central-test-cancel'),
+                        onPressed: !canTest
+                            ? null
+                            : () => Navigator.of(context)
+                                .pop(CentralMenuAction.cancelTest),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(44),
+                          foregroundColor: AppColors.error,
+                          side: BorderSide(
+                              color: AppColors.error.withValues(alpha: 0.7)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
                         ),
+                        icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                        label: const Text(
+                          'Cancelar teste',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      )
+                    else
+                      FilledButton.icon(
+                        key: const ValueKey('central-test-all'),
+                        onPressed: !linkUp || !canTest
+                            ? null
+                            : () => Navigator.of(context)
+                                .pop(CentralMenuAction.startTest),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(44),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        icon: const Icon(Icons.fact_check_outlined, size: 18),
+                        label: const Text(
+                          'Testar tudo',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    if (viewOnly && !canTest) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        'Só um Administrador desta central pode testar.',
+                        key: const ValueKey('central-test-admin-only'),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: context.textSecondary,
+                          fontSize: 11,
+                        ),
+                      ),
                     ],
                   ],
                 ),

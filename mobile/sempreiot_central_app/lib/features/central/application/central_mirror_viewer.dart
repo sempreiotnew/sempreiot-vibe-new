@@ -432,6 +432,19 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
   Future<String?> sendOtaCancel() =>
       _sendOta((id) => encodeMirrorOtaCancel(id: id, name: _who()));
 
+  /// Asks the central to start "Testar tudo" (§4.9). Null when it started;
+  /// otherwise why not — "já há um teste em andamento" when one runs,
+  /// whoever started it: one test at a time. The run itself then arrives
+  /// as the retained `test` record, as when the tablet starts it.
+  Future<String?> sendTestStart() =>
+      _sendOta((id) => encodeMirrorTestStart(id: id, name: _who()));
+
+  /// Asks the central to cancel the test this phone started.
+  Future<String?> sendTestCancel() =>
+      _sendOta((id) => encodeMirrorTestCancel(id: id, name: _who()));
+
+  /// One request on this phone's own command topic, answered by an
+  /// `ota_answer` / `test_answer` event that carries the same id.
   Future<String?> _sendOta(String Function(String id) payload) {
     final central = centralId;
     final me = _repo.identityId;
@@ -485,6 +498,13 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
         _identifyDone(event.mac, MirrorIdentifyOutcome.notConfirmed);
       case MirrorEventKind.command:
         _onCommand?.call(event.mac, event.arg, event.text);
+      case MirrorEventKind.testAnswer:
+        // Started or refused at once: no "working" for a test.
+        _otaDone(
+            event.mac,
+            event.arg == MirrorOtaAnswer.started
+                ? null
+                : (event.text ?? 'A central recusou.'));
       case MirrorEventKind.otaAnswer:
         final asked = _otaAsked[event.mac];
         if (asked == null) return;

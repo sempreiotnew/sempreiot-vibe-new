@@ -63,6 +63,49 @@ String? mirrorCommandUser(String identityId, String topic) {
 
 // ── remote update ───────────────────────────────────────────────────────────
 
+/// A phone asks the central to start "Testar tudo", or to cancel the one
+/// running (docs/cloud/central-mirror.md §4.9). [id] pairs the central's
+/// `test_answer` with the request; [name] is the label the report shows.
+/// One test at a time: the central refuses while a run is current.
+class MirrorRemoteTest {
+  const MirrorRemoteTest({required this.id, this.cancel = false, this.name});
+  final String id;
+  final bool cancel;
+  final String? name;
+}
+
+String encodeMirrorTestStart({required String id, String? name}) => jsonEncode({
+      'v': mirrorVersion,
+      'type': 'test_start',
+      'id': id,
+      if (name != null && name.isNotEmpty) 'name': name,
+    });
+
+String encodeMirrorTestCancel({required String id, String? name}) =>
+    jsonEncode({
+      'v': mirrorVersion,
+      'type': 'test_cancel',
+      'id': id,
+      if (name != null && name.isNotEmpty) 'name': name,
+    });
+
+/// A `test_start` or `test_cancel`; null = neither, or malformed.
+MirrorRemoteTest? decodeMirrorRemoteTest(String payload) {
+  try {
+    final map = jsonDecode(payload);
+    if (map is! Map || map['id'] is! String) return null;
+    final name = map['name'] is String ? map['name'] as String : null;
+    return switch (map['type']) {
+      'test_start' => MirrorRemoteTest(id: map['id'] as String, name: name),
+      'test_cancel' =>
+        MirrorRemoteTest(id: map['id'] as String, cancel: true, name: name),
+      _ => null,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 /// A phone asks for an Internet update ([all] = "Atualizar tudo", else
 /// [family] at [version] on [units]), or to cancel the one running. [id]
 /// pairs the central's answer with the request; [name] is the label the
@@ -453,9 +496,13 @@ abstract final class MirrorEventKind {
   static const identifyFailed = 'identify_failed';
   static const otaAnswer = 'ota_answer';
   static const command = 'command';
+
+  /// The central's answer to a phone's `test_start` / `test_cancel` (§4.9):
+  /// `arg` as [MirrorOtaAnswer] (started / refused), `text` the reason.
+  static const testAnswer = 'test_answer';
 }
 
-/// [MirrorEventKind.otaAnswer]'s `arg`.
+/// [MirrorEventKind.otaAnswer]'s — and [MirrorEventKind.testAnswer]'s — `arg`.
 abstract final class MirrorOtaAnswer {
   static const refused = 0;
   static const started = 1;
@@ -568,7 +615,23 @@ class MirrorTests {
   final DateTime at;
   final SystemTestRun? running;
   final List<SystemTestRun> recent;
+
+  /// [running] only while the record can still be true. The central writes
+  /// the record on every change and a test ends within its 100 s window,
+  /// so a "running" written longer than [mirrorTestsStaleAfter] ago is a
+  /// record whose end never reached the broker (2026-10-31: one such left
+  /// every phone with ✓✓ on every unit, and would have locked their
+  /// "Testar tudo" for good). Stale = no test runs, nothing lights up.
+  SystemTestRun? runningAt(DateTime now) =>
+      running != null && now.difference(at) < mirrorTestsStaleAfter
+          ? running
+          : null;
 }
+
+/// Older than this, a retained "running" test is stale (see
+/// [MirrorTests.runningAt]): the broadcast window is 100 s, a detector's
+/// wake window 75 s, and the central rewrites the record on every change.
+const mirrorTestsStaleAfter = Duration(minutes: 3);
 
 /// How many past tests ride the retained message (the tablet keeps them
 /// all; a phone sees these).

@@ -269,9 +269,12 @@ final systemTestsViewProvider = Provider<SystemTestsState>((ref) {
   final id = ref.watch(viewedCentralProvider);
   if (id != null) {
     final tests = ref.watch(mirrorTestsProvider(id));
+    // A stale "running" (its end never reached the broker) is no test: it
+    // must not lock this phone's "Testar tudo" nor light its map.
     return tests == null
         ? SystemTestsState.empty
-        : SystemTestsState(running: tests.running, recent: tests.recent);
+        : SystemTestsState(
+            running: tests.runningAt(DateTime.now()), recent: tests.recent);
   }
   return ref.watch(systemTestControllerProvider);
 });
