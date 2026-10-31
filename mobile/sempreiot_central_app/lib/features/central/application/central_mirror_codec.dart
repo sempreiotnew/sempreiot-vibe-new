@@ -634,8 +634,9 @@ class MirrorTests {
 const mirrorTestsStaleAfter = Duration(minutes: 3);
 
 /// How many past tests ride the retained message (the tablet keeps them
-/// all; a phone sees these).
-const mirrorTestsRecent = 10;
+/// all; a phone sees these). Five (was 10, 2026-10-31): the record is
+/// billed in 5 KB steps, and with ten runs it was about to cross one.
+const mirrorTestsRecent = 5;
 
 String encodeMirrorTests({
   required DateTime at,

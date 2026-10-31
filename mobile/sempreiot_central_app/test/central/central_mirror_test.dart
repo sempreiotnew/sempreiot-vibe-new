@@ -709,8 +709,12 @@ void main() {
     test('alarms are sent with nobody watching, retained, once per change', () {
       final alarm = MirrorAlarm(
           mac: leafMac, name: 'Hall', since: DateTime.utc(2026, 10, 3, 21));
+      // One retained write per second per topic (AWS quota): the clock
+      // moves between changes, as it does on the bench.
       publisher.onAlarms(const []);
+      advance(CentralMirrorPublisher.retainedWriteGap);
       publisher.onAlarms([alarm]);
+      advance(CentralMirrorPublisher.retainedWriteGap);
       publisher.onAlarms([alarm]); // the registry moved, the alarms did not
       publisher.onAlarms(const []); // RESET
 
@@ -741,6 +745,7 @@ void main() {
 
       // Every new session writes the retained list again: it is what a
       // phone opening the app later will read.
+      advance(CentralMirrorPublisher.retainedWriteGap);
       publisher.onConnected();
       expect(on(mirrorAlarmTopic(id)), hasLength(2));
     });

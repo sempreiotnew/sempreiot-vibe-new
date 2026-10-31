@@ -396,6 +396,7 @@ void main() {
         'the central writes it retained on every change and on every new '
         'session, with nobody watching', () {
       final sent = <({String topic, String payload, bool retain})>[];
+      var now = t0;
       final publisher = CentralMirrorPublisher(
         identityId: () => 'central-1',
         publish: (topic, payload, {retain = false, qos = 1}) {
@@ -404,13 +405,14 @@ void main() {
         },
         nodes: () => const [],
         link: () => 'connected',
-        clock: () => t0,
+        clock: () => now,
       );
       publisher.onSystemTests(run, [run]);
       expect(sent.single.topic, mirrorTestTopic('central-1'));
       expect(sent.single.retain, isTrue);
       expect(decodeMirrorTests(sent.single.payload)!.running!.id, 'abc');
       // The same again: not written again.
+      now = now.add(CentralMirrorPublisher.retainedWriteGap);
       publisher.onSystemTests(run, [run]);
       expect(sent, hasLength(1));
       // Ended: written (running gone).
@@ -418,6 +420,7 @@ void main() {
       expect(sent, hasLength(2));
       expect(decodeMirrorTests(sent.last.payload)!.running, isNull);
       // A new MQTT session rewrites what the broker holds.
+      now = now.add(CentralMirrorPublisher.retainedWriteGap);
       publisher.onConnected();
       expect(sent.where((m) => m.topic == mirrorTestTopic('central-1')),
           hasLength(3));

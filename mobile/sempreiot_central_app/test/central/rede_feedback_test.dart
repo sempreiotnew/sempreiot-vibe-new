@@ -109,7 +109,8 @@ void main() {
             return c;
           }),
         ],
-        child: const MaterialApp(home: TopologyScreen()),
+        child: const MaterialApp(
+            home: SystemTestReportWatcher(child: TopologyScreen())),
       ),
     );
     await tester.pump(const Duration(milliseconds: 50));

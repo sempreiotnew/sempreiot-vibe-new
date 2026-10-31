@@ -133,6 +133,11 @@ class CentralMirrorPublisher {
   /// left "running" on the broker for hours.
   static const retryEvery = Duration(seconds: 2);
 
+  /// Retained writes to one topic are at least this far apart: the AWS IoT
+  /// quota is one per second per topic, and the broker drops the rest
+  /// (see [_retainedWriteDue]).
+  static const retainedWriteGap = Duration(seconds: 1);
+
   /// About 70 bytes a tick: 50 stay inside one AWS-billed message (5 KB).
   static const maxTicksPerBatch = 50;
 
@@ -195,10 +200,14 @@ class CentralMirrorPublisher {
   SystemTestRun? _testRunning;
   List<SystemTestRun> _testsRecent = const [];
 
-  /// A retained message that still has to be written (see [retryEvery]).
+  /// A retained message that still has to be written (see [retryEvery]
+  /// and [retainedWriteGap]).
   bool _alarmsDirty = false;
   bool _testsDirty = false;
   DateTime? _retryAt;
+
+  /// When each retained topic was last written.
+  final _retainedAt = <String, DateTime>{};
 
   bool _otaHelloPending = false;
   String? _lastOtaBody;
@@ -391,17 +400,11 @@ class CentralMirrorPublisher {
 
   /// Every [pumpEvery]: sends what is due.
   void pump() {
-    // The retained messages first, watched or not: a write that failed is
-    // tried again until it lands (see [retryEvery]).
-    if (_alarmsDirty || _testsDirty) {
-      final now = _clock();
-      final due = _retryAt;
-      if (due == null || !now.isBefore(due)) {
-        _retryAt = now.add(retryEvery);
-        if (_alarmsDirty) _publishAlarms(force: false);
-        if (_testsDirty) _publishTests(force: false);
-      }
-    }
+    // The retained messages first, watched or not: what is dirty — a write
+    // that failed, or one held inside the per-topic gap — goes as soon as
+    // it may (see [retainedWriteGap], [retryEvery]).
+    if (_alarmsDirty) _publishAlarms(force: false);
+    if (_testsDirty) _publishTests(force: false);
     // Phones whose pings stopped: closed, in the background, no signal.
     final before = _watchers.length;
     _watchers.removeWhere((_, w) => !_alive(w.lastPing));
@@ -574,6 +577,7 @@ class CentralMirrorPublisher {
   /// retained alarm list is written again — it may have changed while the
   /// central was offline.
   void onConnected() {
+    _retryAt = null; // a new session: nothing to back off from
     if (_watchers.isNotEmpty) {
       _watchers.clear();
       _onWatchers?.call(const []);
@@ -591,23 +595,48 @@ class CentralMirrorPublisher {
     _publishTests(force: false);
   }
 
+  /// A retained write to [topic] may go now. The broker takes **one
+  /// retained publish per second per topic** (an AWS IoT quota, not
+  /// adjustable) and silently drops the rest: the end of a test, written a
+  /// millisecond after its last tally, was dropped that way and "running"
+  /// stayed on the broker (2026-10-31). Inside the gap the message stays
+  /// dirty and [pump] writes the latest state once the second has passed —
+  /// fewer billed messages (one per second at most, never one the broker
+  /// throws away), and the end never lost.
+  bool _retainedWriteDue(String topic) {
+    final last = _retainedAt[topic];
+    return last == null || _clock().difference(last) >= retainedWriteGap;
+  }
+
+  /// One retained write; false = not written (no session at this instant,
+  /// or inside [retryEvery] after such a failure): the caller stays dirty.
+  bool _retainedWrite(String topic, String payload) {
+    final now = _clock();
+    final retryAt = _retryAt;
+    if (retryAt != null && now.isBefore(retryAt)) return false;
+    final sent = _publish(topic, payload, retain: true, qos: 1);
+    if (sent) {
+      _retainedAt[topic] = now;
+    } else {
+      _retryAt = now.add(retryEvery);
+    }
+    return sent;
+  }
+
   void _publishTests({required bool force}) {
     final signature = mirrorTestsSignature(_testRunning, _testsRecent);
     if (!force && !_testsDirty && signature == _testsSignature) return;
     final id = _identityId();
-    if (id == null) {
-      _testsDirty = true; // no identity yet: [pump] tries again
+    if (id == null || !_retainedWriteDue(mirrorTestTopic(id))) {
+      _testsDirty =
+          true; // no identity yet, or inside the gap: [pump] writes it
       return;
     }
-    final sent = _publish(
+    final sent = _retainedWrite(
       mirrorTestTopic(id),
       encodeMirrorTests(
           at: _clock(), running: _testRunning, recent: _testsRecent),
-      retain: true,
-      qos: 1,
     );
-    // Not sent = no session at this instant: [pump] tries again until it
-    // lands (the end of a test must never stay unwritten).
     _testsDirty = !sent;
     if (sent) _testsSignature = signature;
   }
@@ -616,15 +645,13 @@ class CentralMirrorPublisher {
     final signature = mirrorAlarmsSignature(_alarms);
     if (!force && !_alarmsDirty && signature == _alarmSignature) return;
     final id = _identityId();
-    if (id == null) {
+    if (id == null || !_retainedWriteDue(mirrorAlarmTopic(id))) {
       _alarmsDirty = true;
       return;
     }
-    final sent = _publish(
+    final sent = _retainedWrite(
       mirrorAlarmTopic(id),
       encodeMirrorAlarms(at: _clock(), alarms: _alarms),
-      retain: true,
-      qos: 1,
     );
     _alarmsDirty = !sent;
     if (sent) _alarmSignature = signature;

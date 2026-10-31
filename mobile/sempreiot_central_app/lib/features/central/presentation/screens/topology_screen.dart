@@ -6,7 +6,6 @@ import '../../application/board_sync_provider.dart';
 import '../../application/central_mirror_viewer.dart';
 import '../../application/rede_view_prefs.dart';
 import '../../application/root_election_provider.dart';
-import '../../application/system_test_provider.dart';
 import '../../application/topology_provider.dart';
 import '../widgets/board_sync_banner.dart';
 import '../widgets/device_menu.dart';
@@ -16,7 +15,6 @@ import '../widgets/device_update_rede_line.dart';
 import '../widgets/link_down_banner.dart';
 import '../widgets/network_3d/device_model_sprites.dart';
 import '../widgets/root_election_banner.dart';
-import '../widgets/system_test_sheets.dart';
 
 /// Rede — live map of the fire-alarm mesh (the map itself: [MeshMap]),
 /// with the status strip on top, under it the root election and the board
@@ -42,14 +40,8 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // A test that was running ended: its report opens by itself, on the
-    // tablet and on a phone that was watching alike.
-    ref.listen<SystemTestsState>(systemTestsViewProvider, (prev, next) {
-      final was = prev?.running;
-      if (was == null || next.running != null) return;
-      final ended = next.recent.where((r) => r.id == was.id).firstOrNull;
-      if (ended != null && mounted) showSystemTestReport(context, ended);
-    });
+    // (A test that ended opens its report from SystemTestReportWatcher on
+    // the main screen, whatever tab is open — not from here.)
     // The board (layer 0) is folded into the CENTRAL chip, not drawn as its
     // own node; the mesh (layer 1+) hangs off the central directly.
     final allNodes = ref.watch(topologyProvider);

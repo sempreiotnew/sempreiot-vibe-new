@@ -53,7 +53,7 @@ alarms held on the panel, always** (decided 2026-10-03).
 | `{id}/will` | central → cloud | yes | always (exists) | online / offline, wifi, usb, mesh |
 | `{id}/storage` | central → cloud | yes | always (exists) | disk usage |
 | `{id}/alarm` | central → cloud | **yes** | **always**: every change of the held alarms, and every new MQTT session | the alarms held on the panel (§4.5) |
-| `{id}/test` | central → cloud | **yes** | **always**: every change of the running system test or of the history, and every new MQTT session | the system test running now and the last 10 (§4.7) |
+| `{id}/test` | central → cloud | **yes** | **always**: every change of the running system test or of the history, and every new MQTT session | the system test running now and the last 5 (§4.7); at most one write per second (the AWS quota on retained publishes per topic) |
 | `{id}` | phone → central | no | while a phone has the central open | `watch` ping (§3) |
 | `{id}/state` | central → cloud | no | watched: on hello, then on change | snapshot of every unit (§4.1) |
 | `{id}/frames` | central → cloud | no | watched: every 250 ms if anything moved | frame movements (§4.2) |
@@ -322,7 +322,7 @@ script).
  "recent":[{"id":"…","started":"…","ended":"…","verdict":"passed","units":[…]}, …]}
 ```
 
-`running` (absent = no test runs) and `recent` (the last 10, newest first) are `SystemTestRun`
+`running` (absent = no test runs) and `recent` (the last 5, newest first) are `SystemTestRun`
 (`domain/system_test/system_test_run.dart`): `verdict` = `running` / `passed` / `failed` /
 `cancelled`; a unit's `outcome` = `pending` / `pendingWake` (a battery detector, on its next wake) /
 `confirmed` / `noAnswer` / `missing` (offline when the test started) / `cancelled`; `by` = the phone
@@ -332,25 +332,42 @@ central, or is reloaded, in the middle of a test reads it the moment it subscrib
 timing of `state` and `frames`. On the phone it **seeds the command tracker** (the map's clocks and
 ticks, the Central's tally) through the same door as the `command` events, so nothing already passed
 goes back; the Central's popover lists it under "Últimos testes" and the report sheet opens by
-itself when a running test ends, on the tablet and on the phone alike. A phone's Administrador may
-start and cancel it too (§4.9).
+itself when a running test ends, on the tablet and on the phone alike — from the main screen,
+whatever tab is open (`SystemTestReportWatcher`; until 2026-10-31 it opened only for a user who was
+on Rede at that moment, the other tabs' screens being destroyed by the tab switcher). A phone's
+Administrador may start and cancel it too (§4.9).
 
 **The record must be true (2026-10-31).** It is the lock every phone reads: `running` present =
 nobody may start another test. Two rules keep it honest:
 
+- **One retained write per second per topic (2026-10-31).** AWS IoT Core accepts **one retained
+  publish per second per topic** (a fixed quota) and silently drops the rest. The central wrote the
+  record on every change: the last tally and the end of a test, a millisecond apart, and the broker
+  kept the tally — the three stuck "running" records of 2026-10-31 (`65f28dfc942f3`, `65f29e1d0ec49`,
+  `65f2a1d0c1401`). Now a change inside the gap leaves the message dirty and the pump writes the
+  **latest** state once the second has passed (`retainedWriteGap`). Intermediate tallies may be
+  skipped; the end never is. Same for `alarm`. It is also the cheaper way: at most one billed write
+  per second during a test, never one the broker throws away.
 - **The central retries until it lands.** A write that fails (no session at that instant, no
   identity yet at start-up) marks the message dirty and the publisher's pump tries again every 2 s,
   watched or not, until the broker has it — the same for `alarm`. Before this, a lost write waited
   for the next change of the test state, which is the next test: the end of a test lost that way left
   `running` on the broker for hours, every phone showed ✓✓ on every unit while the central was clean,
   and their "Testar tudo" would have stayed locked.
+- **The MQTT client keeps a packet that spans two WebSocket frames (2026-10-31).** The stream does
+  not respect frame boundaries; the client used to drop the tail of a frame holding the start of a
+  packet and misread the next frame, so the largest messages were lost at random — the end record of
+  a test is the largest on the link, and a phone that lost it kept "Cancelar teste" and ✓✓ on every
+  unit while the broker already held the end (seen on the bench, run `65f29b5c4b486`). Tablet and
+  phones share the client (`iot_mqtt_repository_impl.dart`, `mqttPacketBounds`).
 - **A phone distrusts an old "running".** The central rewrites the record on every change and a test
   ends inside its 100 s window, so a `running` whose `at` is older than **3 min**
   (`mirrorTestsStaleAfter`) is a record whose end never arrived: the phone treats it as no test —
   nothing lights up, the button is free. `MirrorTests.runningAt(now)`.
 
-Size: about 90 bytes per unit per run — 11 runs × 50 units ≈ 50 KB (AWS limit 128 KB; the tablet
-keeps every run in its database, the message carries the last 10).
+Size: about 90 bytes per unit per run — 6 runs × 50 units ≈ 27 KB (AWS limit 128 KB; the tablet
+keeps every run in its database, the message carries the last 5 — was 10 until 2026-10-31: billed in
+5 KB steps, the record was about to cross one on the bench).
 
 ### 4.9 Testar tudo from a phone (`{id}/cmd/{user}`) — 2026-10-31
 

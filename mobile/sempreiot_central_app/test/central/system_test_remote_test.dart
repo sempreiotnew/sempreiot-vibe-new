@@ -139,6 +139,7 @@ void main() {
       connected = false;
       final ended =
           run.copyWith(verdict: SystemTestVerdict.failed, endedAt: now);
+      now = now.add(CentralMirrorPublisher.retainedWriteGap);
       publisher.onSystemTests(null, [ended]);
       publisher.pump();
       expect(tests(), hasLength(1), reason: 'nothing could be written');
@@ -154,6 +155,35 @@ void main() {
       expect(sent.last.retain, isTrue);
       // Landed: the pump has nothing more to write.
       now = now.add(CentralMirrorPublisher.retryEvery);
+      publisher.pump();
+      expect(tests(), hasLength(2));
+    });
+
+    test(
+        'a tally and the end in the same second: one write, the end, once '
+        'the second has passed (AWS: one retained publish per second per '
+        'topic)', () {
+      final run = running();
+      publisher.onSystemTests(run, [run]);
+      expect(tests(), hasLength(1));
+      // 300 ms later the last unit confirms: the tally, then the end, a
+      // millisecond apart. Neither goes out now.
+      now = now.add(const Duration(milliseconds: 300));
+      publisher.onSystemTests(run.copyWith(boardAcked: true), [run]);
+      final ended =
+          run.copyWith(verdict: SystemTestVerdict.passed, endedAt: now);
+      publisher.onSystemTests(null, [ended]);
+      publisher.pump();
+      expect(tests(), hasLength(1),
+          reason: 'inside the gap: held, not dropped');
+      // The second has passed: one write, with the latest state — the end.
+      now = now.add(const Duration(milliseconds: 700));
+      publisher.pump();
+      expect(tests(), hasLength(2));
+      expect(tests().last.running, isNull);
+      expect(tests().last.recent.single.verdict, SystemTestVerdict.passed);
+      // Nothing more to write.
+      now = now.add(const Duration(seconds: 2));
       publisher.pump();
       expect(tests(), hasLength(2));
     });

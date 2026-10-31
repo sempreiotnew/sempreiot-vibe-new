@@ -471,7 +471,7 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
     if (asked == null) return;
     asked.timer?.cancel();
     if (!asked.done.isCompleted) asked.done.complete(refused);
-    MqttLog.event('mirror ota request $id: ${refused ?? 'ok'}');
+    MqttLog.event('mirror request $id: ${refused ?? 'ok'}');
   }
 
   void _identifyDone(String mac, MirrorIdentifyOutcome outcome) {

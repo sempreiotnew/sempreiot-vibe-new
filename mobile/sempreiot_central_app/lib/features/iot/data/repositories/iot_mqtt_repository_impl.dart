@@ -105,6 +105,7 @@ class IotMqttRepositoryImpl implements IIotMqttRepository {
     _publishCtrl?.close();
     _publishCtrl = null;
     _pendingSubs.clear();
+    _rxCarry = Uint8List(0);
 
     final creds = await _credentialsService.fetch();
     _identityId = creds.identityId;
@@ -191,6 +192,7 @@ class IotMqttRepositoryImpl implements IIotMqttRepository {
     _publishCtrl?.close();
     _publishCtrl = null;
     _pendingSubs.clear();
+    _rxCarry = Uint8List(0);
     debugPrint('[IoT] disconnected');
   }
 
@@ -241,22 +243,76 @@ class IotMqttRepositoryImpl implements IIotMqttRepository {
   // repeats forever. Walking every packet in the buffer fixes both the
   // lost message and the disconnect loop.
   void _onData(dynamic raw) {
-    final Uint8List data;
+    final Uint8List chunk;
     if (raw is Uint8List) {
-      data = raw;
+      chunk = raw;
     } else if (raw is List<int>) {
-      data = Uint8List.fromList(raw);
+      chunk = Uint8List.fromList(raw);
     } else {
       return;
     }
-    if (data.isEmpty) return;
+    if (chunk.isEmpty) return;
 
+    // The MQTT stream does not respect WebSocket frame boundaries: a packet
+    // may end in the next frame. Until 2026-10-31 the tail of a frame that
+    // held the start of such a packet was dropped ("wait for more data"
+    // without keeping anything) and the next frame, starting mid-packet,
+    // parsed as garbage — so the largest messages were the ones lost, at
+    // random: the system test's end record (the biggest on the link) never
+    // reached a phone that then showed "Cancelar teste" and ✓✓ on every
+    // unit for a test the central had finished. The remainder is kept now
+    // and the next frame is read after it.
+    final data = _rxCarry.isEmpty
+        ? chunk
+        : (Uint8List(_rxCarry.length + chunk.length)
+          ..setRange(0, _rxCarry.length, _rxCarry)
+          ..setRange(_rxCarry.length, _rxCarry.length + chunk.length, chunk));
+    final (packets, rest) = mqttPacketBounds(data);
+    for (final (start, _) in packets) {
+      _handlePacket(data, start);
+    }
+    _rxCarry = rest;
+  }
+
+  /// Bytes of a packet that has not ended in the frames received so far.
+  Uint8List _rxCarry = Uint8List(0);
+
+  /// Where the complete MQTT packets in [data] start and end, and what is
+  /// left after the last complete one (the start of a packet that goes on
+  /// in the next frame, to be fed again in front of it). Pure, so it can be
+  /// tested without a socket.
+  @visibleForTesting
+  static (List<(int start, int end)> packets, Uint8List rest) mqttPacketBounds(
+      Uint8List data) {
+    final packets = <(int, int)>[];
     var offset = 0;
     while (offset < data.length) {
-      final consumed = _handlePacket(data, offset);
-      if (consumed <= 0) break; // incomplete trailing packet — wait for more data
-      offset += consumed;
+      final end = _packetEnd(data, offset);
+      if (end == null) break;
+      packets.add((offset, end));
+      offset = end;
     }
+    return (
+      packets,
+      offset == data.length ? Uint8List(0) : data.sublist(offset),
+    );
+  }
+
+  /// The end of the packet at [start] (fixed header, remaining length,
+  /// body), or null when [data] does not hold all of it yet.
+  static int? _packetEnd(Uint8List data, int start) {
+    var i = start + 1;
+    var multiplier = 1;
+    var remLen = 0;
+    int lenByte;
+    do {
+      if (i >= data.length) return null;
+      lenByte = data[i++];
+      remLen += (lenByte & 0x7F) * multiplier;
+      multiplier *= 128;
+    } while ((lenByte & 0x80) != 0);
+    final end = i + remLen;
+    return end > data.length ? null : end;
   }
 
   /// Handles one MQTT packet starting at [start] and returns how many bytes

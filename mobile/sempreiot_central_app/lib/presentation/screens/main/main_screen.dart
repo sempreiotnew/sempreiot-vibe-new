@@ -24,6 +24,7 @@ import '../../../features/central/presentation/screens/topology_screen.dart';
 import '../../../features/central/presentation/widgets/latched_alarm_banner.dart';
 import '../../../features/central/presentation/widgets/mirror_status_strip.dart';
 import '../../../features/central/presentation/widgets/remote_alarm_banner.dart';
+import '../../../features/central/presentation/widgets/system_test_sheets.dart';
 import 'main_tab.dart';
 import 'status_panel_style_provider.dart';
 import 'widgets/comm_status_gadget.dart';
@@ -197,7 +198,13 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                   onTabSelected: _handleTabChange,
                   centralId: widget.centralId,
                 ),
-          body: _TabBody(currentTab: _currentTab, centralId: widget.centralId),
+          // A test that ended opens its report here, whatever tab is open
+          // (the tab switcher destroys the other tabs' screens).
+          body: SystemTestReportWatcher(
+            centralId: widget.centralId,
+            child:
+                _TabBody(currentTab: _currentTab, centralId: widget.centralId),
+          ),
           bottomNavigationBar: AnimatedSwitcher(
             duration: const Duration(milliseconds: 420),
             transitionBuilder: (child, animation) {

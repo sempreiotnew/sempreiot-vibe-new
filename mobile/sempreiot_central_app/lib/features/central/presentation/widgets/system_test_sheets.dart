@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
+import '../../application/central_mirror_viewer.dart';
 import '../../application/system_test_provider.dart';
 import '../../domain/system_test/system_test_run.dart';
 
@@ -16,6 +17,40 @@ Future<void> showSystemTestReport(BuildContext context, SystemTestRun run) =>
       backgroundColor: Colors.transparent,
       builder: (_) => SystemTestReportSheet(run: run),
     );
+
+/// Opens the report by itself when a running test ends — on the tablet and
+/// on a phone watching the central alike. Mount it once, around the tabs,
+/// on a screen that lives for as long as the central is open: until
+/// 2026-10-31 this rule sat in the Rede screen, which the tab switcher
+/// destroys when another tab is selected, so the report appeared only for
+/// a user who happened to be on Rede at that moment.
+class SystemTestReportWatcher extends ConsumerWidget {
+  const SystemTestReportWatcher(
+      {super.key, this.centralId, required this.child});
+
+  /// The central this screen shows (a phone: the one pushed over the list
+  /// of centrais; the tablet and the list itself: null). A phone has two
+  /// main screens on its navigator while a central is open, and both
+  /// watched the same provider: the report opened twice (2026-10-31). Only
+  /// the screen whose central is the viewed one opens it.
+  final String? centralId;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mine = ref.watch(viewedCentralProvider) == centralId;
+    ref.listen<SystemTestsState>(systemTestsViewProvider, (prev, next) {
+      if (!mine) return;
+      final was = prev?.running;
+      if (was == null || next.running != null) return;
+      final ended = next.recent.where((r) => r.id == was.id).firstOrNull;
+      if (ended != null && context.mounted) {
+        showSystemTestReport(context, ended);
+      }
+    });
+    return child;
+  }
+}
 
 /// The last tests, newest first; a tap opens the report.
 Future<void> showSystemTestHistory(BuildContext context) =>
