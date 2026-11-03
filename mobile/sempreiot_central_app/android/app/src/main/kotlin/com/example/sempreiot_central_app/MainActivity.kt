@@ -1,5 +1,7 @@
 package com.example.sempreiot_central_app
 
+import android.content.Context
+import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -7,6 +9,7 @@ import android.net.NetworkRequest
 import android.net.wifi.WifiNetworkSpecifier
 import android.os.Build
 import android.os.Environment
+import android.os.PowerManager
 import android.os.StatFs
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -25,11 +28,20 @@ import io.flutter.plugin.common.MethodChannel
  * settings via app_settings), UNAVAILABLE (dialog dismissed, SSID not found,
  * passphrase rejected, or the 30 s request timed out), PERMISSION (the manifest
  * lost CHANGE_NETWORK_STATE — a build problem, not something the operator can fix).
+ *
+ * KEEPALIVE_CHANNEL: central mode only. "start" / "stop" run [CentralLinkService],
+ * the foreground service that keeps the USB and MQTT links alive behind a locked
+ * screen; "status" answers `{running, batteryExempt}` — `batteryExempt` false means
+ * `tools/prepare_tablet.sh` was not run on this tablet and Doze will cut the network
+ * when it is unplugged with the screen off. Nothing here ever shows a dialog.
+ * Errors: START_FAILED (Android refused the foreground start — the app was not on
+ * screen, which cannot happen from the central's own start-up).
  */
 class MainActivity : FlutterActivity() {
     companion object {
         private const val STORAGE_CHANNEL = "com.sempreiot.central/storage"
         private const val WIFI_CHANNEL = "com.sempreiot.central/wifi"
+        private const val KEEPALIVE_CHANNEL = "com.sempreiot.central/keepalive"
     }
 
     private var wifiNetworkCallback: ConnectivityManager.NetworkCallback? = null
@@ -79,6 +91,43 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, KEEPALIVE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "start" -> {
+                        try {
+                            val intent = Intent(this, CentralLinkService::class.java)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                startForegroundService(intent)
+                            } else {
+                                startService(intent)
+                            }
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("START_FAILED", e.message, null)
+                        }
+                    }
+                    "stop" -> {
+                        stopService(Intent(this, CentralLinkService::class.java))
+                        result.success(null)
+                    }
+                    "status" -> result.success(
+                        mapOf(
+                            "running" to CentralLinkService.running,
+                            "batteryExempt" to isBatteryExempt(),
+                        )
+                    )
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    /** Whether Doze leaves this app alone (set by `tools/prepare_tablet.sh`). */
+    private fun isBatteryExempt(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+        return power.isIgnoringBatteryOptimizations(packageName)
     }
 
     private fun connectToSoftAp(ssid: String, password: String, result: MethodChannel.Result) {

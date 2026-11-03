@@ -2,6 +2,7 @@ import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/utils/app_lifecycle.dart';
 import '../../auth/application/auth_provider.dart';
 import '../data/repositories/iot_mqtt_repository_impl.dart';
 import '../domain/entities/mqtt_message_entity.dart';
@@ -32,12 +33,28 @@ class IotConnectionNotifier extends AsyncNotifier<bool> {
         ref.read(iotMqttRepositoryProvider).disconnect();
       }
     });
+    // Back on screen after the phone slept or another app was up: find out
+    // at once whether the session survived, instead of waiting for the next
+    // ping round or the 5 s retry.
+    final lifecycle = onAppResumed(_onResume);
     ref.onDispose(() {
+      lifecycle?.dispose();
       _disposed = true;
       _shouldReconnect = false;
       ref.read(iotMqttRepositoryProvider).disconnect();
     });
     return false;
+  }
+
+  void _onResume() {
+    if (!_shouldReconnect || _disposed) return;
+    final repo = ref.read(iotMqttRepositoryProvider);
+    if (repo.isConnected) {
+      repo.probe();
+    } else if (!_connecting) {
+      debugPrint('[IoT] app resumed without a session — reconnecting now');
+      _doConnect();
+    }
   }
 
   Future<void> connect() async {
@@ -65,10 +82,12 @@ class IotConnectionNotifier extends AsyncNotifier<bool> {
       final id = repo.identityId;
       if (id != null) {
         repo.subscribe('$id/#').listen(
-          (msg) => debugPrint('[IoT] ← [${msg.topic}]: ${msg.payload}'),
-          onError: (e) => debugPrint('[IoT] own-topic subscription error: $e'),
-          onDone: () => debugPrint('[IoT] own-topic subscription stream closed'),
-        );
+              (msg) => debugPrint('[IoT] ← [${msg.topic}]: ${msg.payload}'),
+              onError: (e) =>
+                  debugPrint('[IoT] own-topic subscription error: $e'),
+              onDone: () =>
+                  debugPrint('[IoT] own-topic subscription stream closed'),
+            );
       }
     } on SessionExpiredException {
       // Refresh token has expired — stop retrying. AuthNotifier's background
@@ -95,7 +114,7 @@ class IotConnectionNotifier extends AsyncNotifier<bool> {
 
   void _scheduleReconnect() {
     if (!_shouldReconnect) return;
-    
+
     debugPrint('[IoT] reconnecting in ${_retryInterval.inSeconds}s…');
     Future.delayed(_retryInterval, _doConnect);
   }

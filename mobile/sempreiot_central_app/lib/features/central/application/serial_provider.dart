@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleListener;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:usb_serial/usb_serial.dart';
 
+import '../../../core/utils/app_lifecycle.dart';
 import '../domain/safr/safr_v2_frame.dart';
 
 enum SerialStatus { disconnected, connecting, connected, error }
@@ -12,6 +14,7 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
   SerialNotifier()
       : baudSilence = defaultBaudSilence,
         baudSettle = defaultBaudSettle,
+        _detached = false,
         super(SerialStatus.disconnected) {
     _init();
   }
@@ -23,7 +26,11 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
   SerialNotifier.detached({
     this.baudSilence = defaultBaudSilence,
     this.baudSettle = defaultBaudSettle,
-  }) : super(SerialStatus.disconnected);
+  })  : _detached = true,
+        super(SerialStatus.disconnected);
+
+  /// No USB plugin behind this notifier (tests): [reopen] does nothing.
+  final bool _detached;
 
   /// The speed every port opens at, and the one both ends fall back to
   /// (docs/safr/protocol-safr-v3.md §13.3).
@@ -47,6 +54,7 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
 
   StreamSubscription<UsbEvent>? _usbEventSub;
   StreamSubscription<Uint8List?>? _inputSub;
+  AppLifecycleListener? _lifecycle;
   UsbPort? _port;
   String? _connectedDeviceId;
   final _byteBuffer = <int>[];
@@ -92,6 +100,8 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
 
   Future<void> _init() async {
     if (kIsWeb) return;
+
+    _lifecycle = onAppResumed(_onResume);
 
     try {
       _usbEventSub = UsbSerial.usbEventStream?.listen((UsbEvent event) {
@@ -193,6 +203,25 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
       debugPrint('[Serial] Connection error: $e\n$st');
       if (mounted) state = SerialStatus.error;
     }
+  }
+
+  /// The screen unlocked or the app came back to the front: a port that was
+  /// lost while the process was away is looked for now, not at the next USB
+  /// attach event (which may never come — the adapter never left).
+  void _onResume() {
+    if (_port != null || state == SerialStatus.connecting) return;
+    debugPrint('[Serial] app resumed without a port: looking for the board');
+    _connect();
+  }
+
+  /// Closes the port and opens it again, at the default speed as always.
+  /// The way back from a read that never completes: asked by the link
+  /// watchdog when the board is silent behind a port that stayed open
+  /// (serial_link_provider.dart). Nothing on a detached notifier.
+  Future<void> reopen() async {
+    if (_detached || kIsWeb) return;
+    debugPrint('[Serial] re-opening the port');
+    await _connect();
   }
 
   /// A port that just opened: default speed, empty counters.
@@ -387,6 +416,15 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
   @visibleForTesting
   void debugReceive(Uint8List bytes) => _onBytes(bytes);
 
+  /// The port closed and opened again by [reopen], as the plugin shows it:
+  /// `connecting`, then `connected` with fresh counters.
+  @visibleForTesting
+  void debugReopen() {
+    state = SerialStatus.connecting;
+    _resetSession();
+    state = SerialStatus.connected;
+  }
+
   /// The port opened (at the default speed) or closed.
   @visibleForTesting
   void debugSetConnected(bool connected) {
@@ -415,6 +453,7 @@ class SerialNotifier extends StateNotifier<SerialStatus> {
 
   @override
   void dispose() {
+    _lifecycle?.dispose();
     _usbEventSub?.cancel();
     _inputSub?.cancel();
     _baudWatchdog?.cancel();

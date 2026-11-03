@@ -12,6 +12,15 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <!-- Central mode: CentralLinkService keeps the process (USB reader, Dart timers,
+         MQTT socket) alive behind a locked screen. FOREGROUND_SERVICE_CONNECTED_DEVICE
+         is the Android 14 permission for its type; WAKE_LOCK for its partial wake lock.
+         All normal permissions, no runtime prompt. POST_NOTIFICATIONS is deliberately
+         absent: the app never asks, and the service runs the same without it (its
+         notification is just hidden on Android 13+). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <application
         android:label="sempreiot_central_app"
         android:name="${applicationName}"
@@ -52,6 +61,13 @@
                 android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
                 android:resource="@xml/device_filter" />
         </activity>
+        <!-- Keeps the central alive behind a locked screen (central mode only;
+             started by MainActivity's keepalive channel). connectedDevice = the
+             USB link to the board; no time limit, unlike dataSync on Android 15. -->
+        <service
+            android:name=".CentralLinkService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

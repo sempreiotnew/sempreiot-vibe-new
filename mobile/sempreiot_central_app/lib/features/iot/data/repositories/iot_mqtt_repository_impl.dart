@@ -160,17 +160,23 @@ class IotMqttRepositoryImpl implements IIotMqttRepository {
 
     // Ping at half the keep-alive interval so one lost PINGREQ still leaves
     // a second one inside the broker's 1.5× keep-alive window.
-    _pingTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (!_connected) return;
-      _channel?.sink.add(Uint8List.fromList(const [0xC0, 0x00]));
-      _pingRespTimer?.cancel();
-      final pingGen = _generation;
-      _pingRespTimer = Timer(
-        const Duration(seconds: 10),
-        () => _onPingTimeout(pingGen),
-      );
-    });
+    _pingTimer =
+        Timer.periodic(const Duration(seconds: 15), (_) => _sendPing());
   }
+
+  void _sendPing() {
+    if (!_connected) return;
+    _channel?.sink.add(Uint8List.fromList(const [0xC0, 0x00]));
+    _pingRespTimer?.cancel();
+    final pingGen = _generation;
+    _pingRespTimer = Timer(
+      const Duration(seconds: 10),
+      () => _onPingTimeout(pingGen),
+    );
+  }
+
+  @override
+  void probe() => _sendPing();
 
   @override
   void disconnect() {

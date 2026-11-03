@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/app_database.dart';
+import '../../../core/utils/app_lifecycle.dart';
 import '../../iot/application/presence_provider.dart';
 import '../../iot/data/repositories/iot_mqtt_repository_impl.dart';
 import '../../iot/domain/entities/mqtt_message_entity.dart';
@@ -59,7 +60,13 @@ class CentralIotConnectionNotifier extends AsyncNotifier<bool> {
     // The machine MQTT session must run regardless of lock state.
     Future.microtask(_doConnect);
 
+    // The tablet unlocked: find out at once whether the session survived
+    // the time away (a frozen process, Doze), instead of waiting for the
+    // next ping round or the 5 s retry.
+    final lifecycle = onAppResumed(_onResume);
+
     ref.onDispose(() {
+      lifecycle?.dispose();
       _disposed = true;
       _shouldReconnect = false;
       _cancelSubs();
@@ -79,6 +86,17 @@ class CentralIotConnectionNotifier extends AsyncNotifier<bool> {
     });
 
     return false;
+  }
+
+  void _onResume() {
+    if (!_shouldReconnect || _disposed) return;
+    final repo = ref.read(centralMqttRepositoryProvider);
+    if (repo.isConnected) {
+      repo.probe();
+    } else if (!_connecting) {
+      debugPrint('[Central] app resumed without a session — reconnecting now');
+      _doConnect();
+    }
   }
 
   void _cancelSubs() {

@@ -17,6 +17,13 @@ abstract interface class IIotMqttRepository {
     MqttWill Function(String identityId)? will,
   });
   void disconnect();
+
+  /// Sends a PINGREQ now, outside the 15 s rhythm, with the usual 10 s
+  /// response watchdog: a socket that died while the app was away is found
+  /// out in 10 s instead of up to 25, and [connect]'s `onDisconnected` runs.
+  /// Nothing when not connected.
+  void probe();
+
   /// [qos] 1 (the default) is acknowledged by the broker; 0 is sent once —
   /// for streams where the next message replaces a lost one.
   void publish(String topic, String payload, {bool retain = false, int qos = 1});

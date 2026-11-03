@@ -33,6 +33,9 @@ class FakeMqttRepo implements IIotMqttRepository {
   void disconnect() {}
 
   @override
+  void probe() {}
+
+  @override
   void publish(String topic, String payload,
           {bool retain = false, int qos = 1}) =>
       published.add((topic: topic, payload: payload));

@@ -13,6 +13,7 @@ import 'core/database/app_database.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_provider.dart';
 import 'features/app/application/app_init_provider.dart';
+import 'features/central/application/central_keep_alive_provider.dart';
 import 'features/central/application/ota_rollout_controller.dart';
 import 'features/central/application/safr_ingest_provider.dart';
 import 'features/central/application/supervision_provider.dart';
@@ -90,6 +91,10 @@ final centralInitProvider = FutureProvider<void>((ref) async {
   if (AppConfig.hasFactory) {
     await FactoryInitService.applyFactory(db, AppConfig.factoryJson);
   }
+
+  // The process stays alive behind a locked screen (foreground service):
+  // the pipeline below runs the same with the screen off.
+  ref.read(centralKeepAliveProvider);
 
   // SAFR pipeline: ingest (parse + persist + ACK), supervision watchdog
   // and downlink (TIME_SYNC on link-up).
