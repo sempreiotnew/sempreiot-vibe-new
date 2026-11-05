@@ -443,6 +443,13 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
   Future<String?> sendTestCancel() =>
       _sendOta((id) => encodeMirrorTestCancel(id: id, name: _who()));
 
+  /// Asks the central to send TESTAR to the unit [mac] (§4.10). Null when
+  /// the board took it; otherwise why not, as the central worded it. What
+  /// follows — the unit's own ACK, its test event — arrives as the
+  /// central's `command` events, as when the tablet's own menu sends it.
+  Future<String?> sendUnitTest(String mac) =>
+      _sendOta((id) => encodeMirrorUnitTest(id: id, mac: mac, name: _who()));
+
   /// One request on this phone's own command topic, answered by an
   /// `ota_answer` / `test_answer` event that carries the same id.
   Future<String?> _sendOta(String Function(String id) payload) {

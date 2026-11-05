@@ -39,8 +39,9 @@ Rect deviceAnchorOf(BuildContext context) {
 /// unit when the unit confirms (device_command_provider.dart).
 ///
 /// On a user's phone viewing a central (the mirror) there are the facts,
-/// Dispositivo and Identificar — asked to the central, which sends it.
-/// Nothing else is commanded from a phone.
+/// Dispositivo, Identificar and Testar — asked to the central, which sends
+/// them. Testar is an Administrador's (central-mirror.md §4.10): everyone
+/// else sees it disabled, and why. Nothing else is commanded from a phone.
 Future<void> showDeviceMenu({
   required BuildContext context,
   required WidgetRef ref,
@@ -370,6 +371,9 @@ class _DevicePopover extends ConsumerWidget {
     final node = all.where((n) => n.mac == mac).firstOrNull ?? initial;
     final election = ref.watch(rootElectionProvider);
     final viewOnly = ref.watch(mirrorViewOnlyProvider);
+    // A phone: only an Administrador of this central tests a unit, as for
+    // "Testar tudo". The central checks it again on its side.
+    final canTest = !viewOnly || ref.watch(mirrorCanUpdateProvider);
     final command = ref.watch(deviceCommandProvider)[mac];
     final silenced =
         !viewOnly && ref.watch(deviceSoundProvider).contains(node.mac);
@@ -410,6 +414,7 @@ class _DevicePopover extends ConsumerWidget {
           final commands = _Commands(
             node: node,
             viewOnly: viewOnly,
+            canTest: canTest,
             silenced: silenced,
             command: command,
           );
@@ -936,11 +941,15 @@ class _Commands extends StatelessWidget {
   const _Commands({
     required this.node,
     required this.viewOnly,
+    required this.canTest,
     required this.silenced,
     required this.command,
   });
   final TopologyNode node;
   final bool viewOnly;
+
+  /// The tablet, or a phone whose user is an Administrador of the central.
+  final bool canTest;
   final bool silenced;
   final DeviceCommandStatus? command;
 
@@ -959,12 +968,12 @@ class _Commands extends StatelessWidget {
           enabled: online && !busy,
           onTap: () => run(DeviceCommandKind.identify),
         ),
-      if (!viewOnly && !node.isLeaf)
+      if (!node.isLeaf)
         _CommandButton(
           icon: Icons.fact_check_outlined,
           label: 'Testar',
-          hint: 'gera um evento de teste',
-          enabled: online && !busy,
+          hint: canTest ? 'gera um evento de teste' : 'só para Administrador',
+          enabled: canTest && online && !busy,
           onTap: () => run(DeviceCommandKind.test),
         ),
       if (!viewOnly)

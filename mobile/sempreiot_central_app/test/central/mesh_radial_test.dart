@@ -338,7 +338,7 @@ void main() {
             serialProvider.overrideWith((ref) => SerialNotifier.detached()),
             deviceCommandProvider.overrideWith((ref) => tracker =
                 DeviceCommandTracker(
-                    askCentral: (_) async => null,
+                    askCentral: (_, __) async => null,
                     traffic: ref.watch(safrTrafficProvider).stream)),
           ],
           child: MaterialApp(

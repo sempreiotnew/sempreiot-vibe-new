@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/app_database.dart';
 import '../../access/application/central_access_provider.dart';
-import '../../access/domain/entities/access_level.dart';
 import '../../access/domain/entities/access_relation.dart';
 import '../domain/safr/safr_product.dart';
 import 'central_mirror_codec.dart';
@@ -33,7 +32,7 @@ class RemoteOta {
 
   /// Null = done; otherwise why not, in words for the phone.
   Future<String?> handle(String userIdentityId, MirrorRemoteOta command) async {
-    final user = _userOf(userIdentityId);
+    final user = await _userOf(userIdentityId);
     final by = 'remote:${command.name ?? user?.userSubId ?? userIdentityId}';
     final refused = user == null
         ? 'Só um Administrador desta central pode atualizar pela internet.'
@@ -57,17 +56,11 @@ class RemoteOta {
     return refused;
   }
 
-  /// The accepted Administrador or Master relation of [userIdentityId].
-  AccessRelation? _userOf(String userIdentityId) {
-    for (final r in _ref.read(centralAccessRelationsProvider)) {
-      if (r.userIdentityId == userIdentityId &&
-          r.isAccepted &&
-          (r.level == AccessLevel.level4 || r.level == AccessLevel.master)) {
-        return r;
-      }
-    }
-    return null;
-  }
+  /// The accepted Administrador or Master relation of [userIdentityId],
+  /// once the central's list of users has been read.
+  Future<AccessRelation?> _userOf(String userIdentityId) => _ref
+      .read(centralAccessRelationsProvider.notifier)
+      .adminOf(userIdentityId);
 
   Future<String?> _cancel() async {
     final run = _ref.read(deviceUpdateProvider);

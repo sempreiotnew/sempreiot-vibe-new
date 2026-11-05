@@ -28,6 +28,19 @@ class CentralAccessRelationsNotifier extends StateNotifier<List<AccessRelation>>
   ProviderSubscription<AsyncValue<bool>>? _connectionSub;
   Timer? _syncDebounce;
 
+  /// The copy this tablet keeps has been read. Null on a notifier that
+  /// never loads (a test's).
+  Future<void>? _localRead;
+
+  /// The backend's list has been read since the app started: from then on
+  /// the list is kept live, and a user who is not in it is not in it.
+  bool _synced = false;
+  Future<bool>? _syncing;
+
+  /// How long a request from a phone waits for the backend's list before
+  /// it is answered from what is known (the phone gives up after 8 s).
+  static const firstSyncWait = Duration(seconds: 5);
+
   // Must stay synchronous — ref.listen() has to run during the provider's
   // synchronous construction. An `await` before it (as this used to have)
   // pushes the calls past that window, and the listeners silently never
@@ -48,17 +61,58 @@ class CentralAccessRelationsNotifier extends StateNotifier<List<AccessRelation>>
       },
     );
 
-    _loadInitial();
+    final local = Completer<void>();
+    _localRead = local.future;
+    _loadInitial(local);
   }
 
-  Future<void> _loadInitial() async {
-    final db = _ref.read(appDatabaseProvider);
-    final cached = await _loadFromLocal(db);
-    if (cached.isNotEmpty) state = cached;
+  Future<void> _loadInitial(Completer<void> localRead) async {
+    try {
+      final db = _ref.read(appDatabaseProvider);
+      final cached = await _loadFromLocal(db);
+      if (cached.isNotEmpty && mounted) state = cached;
+    } catch (e) {
+      debugPrint('[CentralAccess] local copy not read: $e');
+    } finally {
+      localRead.complete();
+    }
 
-    if (_ref.read(centralIotConnectionProvider).valueOrNull == true) {
+    if (mounted &&
+        _ref.read(centralIotConnectionProvider).valueOrNull == true) {
       await _syncFromBackend();
     }
+  }
+
+  /// The accepted Administrador or Master relation of [userIdentityId] —
+  /// who may command this central from a phone (an update, a test).
+  ///
+  /// The list starts empty and is read only after the provider is first
+  /// used: asked before that, it said "not an Administrador" to everyone
+  /// (the first "Testar tudo" from a phone after the tablet started was
+  /// refused that way). So "no" is never answered from a list that was
+  /// not read: this waits for the tablet's own copy and, when the user is
+  /// not in it and the backend's list was not read yet, for that one —
+  /// [firstSyncWait] at most.
+  Future<AccessRelation?> adminOf(String userIdentityId) async {
+    await _localRead;
+    final known = _adminIn(userIdentityId);
+    if (known != null || _synced) return known;
+    // Several phones asking at once share one read.
+    final sync = _syncing ??=
+        _syncFromBackend().whenComplete(() => _syncing = null);
+    await sync.timeout(firstSyncWait, onTimeout: () => false);
+    return _adminIn(userIdentityId);
+  }
+
+  AccessRelation? _adminIn(String userIdentityId) {
+    for (final r in state) {
+      if (r.userIdentityId == userIdentityId &&
+          r.isAccepted &&
+          (r.level == AccessLevel.level4 || r.level == AccessLevel.master)) {
+        return r;
+      }
+    }
+    return null;
   }
 
   Future<List<AccessRelation>> _loadFromLocal(AppDatabase db) async {
@@ -100,7 +154,9 @@ class CentralAccessRelationsNotifier extends StateNotifier<List<AccessRelation>>
         getToken: service.getIdToken,
       );
       final relations = items.map(AccessRelation.fromMap).toList();
+      if (!mounted) return false;
       state = relations;
+      _synced = true;
       await _persist(relations);
       return true;
     } catch (e) {

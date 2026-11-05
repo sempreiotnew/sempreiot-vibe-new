@@ -4,12 +4,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sempreiot_central_app/features/central/application/central_mirror_codec.dart';
 import 'package:sempreiot_central_app/features/central/application/central_mirror_publisher.dart';
 import 'package:sempreiot_central_app/features/central/application/central_mirror_viewer.dart';
+import 'package:sempreiot_central_app/features/central/application/device_command_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/device_led_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/device_update_controller.dart';
 import 'package:sempreiot_central_app/features/central/application/device_update_state.dart';
 import 'package:sempreiot_central_app/features/central/application/firmware_library_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_controller.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_rollout_controller.dart';
+import 'package:sempreiot_central_app/features/central/application/remote_system_test.dart';
 import 'package:sempreiot_central_app/features/central/application/safr_traffic_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/serial_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/supervision_provider.dart';
@@ -114,6 +116,14 @@ void main() {
       // As centralMirrorProvider wires it.
       onIdentify: (mac, seconds) =>
           container.read(deviceLedProvider).identify(mac, seconds),
+      onCommand: (mac, wire, by, {note}) {
+        final s =
+            DeviceCommandStatus.fromWire(mac, wire, by: by, at: DateTime.now());
+        if (s == null) return;
+        container
+            .read(deviceCommandProvider.notifier)
+            .applyRemote(note == null ? s : s.copyWith(note: note));
+      },
     );
     container = ProviderContainer(overrides: [
       centralMirrorProvider.overrideWith((ref) => viewer),
@@ -220,12 +230,20 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.text('Abrir dispositivo'), findsOneWidget);
       // In alarm on the tablet — and still nothing to reset from here.
-      for (final action in ['Testar', 'Rearmar', 'Som']) {
+      for (final action in ['Rearmar', 'Som']) {
         expect(find.textContaining(action), findsNothing, reason: action);
       }
+      // Testar is an Administrador's: this user sees it, disabled, and why.
+      expect(find.text('só para Administrador'), findsOneWidget);
+      final before = repo.published.length;
+      await tester.tap(find.text('Testar'));
+      await tester.pump();
+      expect(repo.published, hasLength(before), reason: 'nothing is asked');
+      expect(find.text('Abrir dispositivo'), findsOneWidget,
+          reason: 'the popover stays');
 
-      // The one command of a phone: asked to the central, and the LED on
-      // screen blinks blue once the central says the root confirmed.
+      // What any user's phone may ask the central for: the LED on screen
+      // blinks blue once the central says the root confirmed.
       await tester.tap(find.text('Identificar'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
@@ -265,6 +283,120 @@ void main() {
       }
       expect(seen, contains(LedColor.blue));
       expectNothingOfThePhoneStarted();
+      await leave(tester);
+    });
+
+    testWidgets(
+        'Rede: an Administrador tests one unit through the central — '
+        '${s.key}', (tester) async {
+      await pump(
+          tester, s.value, const Scaffold(body: TopologyScreen(embedded: true)),
+          level: AccessLevel.level4);
+      await tester.tap(find.text('Sirene Corredor'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.takeException(), isNull);
+      expect(find.text('gera um evento de teste'), findsOneWidget);
+      for (final action in ['Rearmar', 'Som']) {
+        expect(find.textContaining(action), findsNothing, reason: action);
+      }
+
+      await tester.tap(find.text('Testar'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      // Asked on this user's own topic — the one AWS proves — never on
+      // the open one.
+      final sent = repo.published.last;
+      expect(sent.topic, mirrorUserCommandTopic(id, repo.identityId!));
+      final asked = decodeMirrorRemoteTest(sent.payload)!;
+      expect(asked.mac, sirenMac);
+      DeviceCommandStatus? status() =>
+          container.read(deviceCommandProvider)[sirenMac];
+      expect(status()!.kind, DeviceCommandKind.test);
+      expect(status()!.step, DeviceCommandStep.sending);
+
+      // The central: the board took it; then the unit's own ACK and its
+      // test event, as the central's steps.
+      var seq = 0;
+      Future<void> central(List<MirrorEvent> events) async {
+        repo.deliver(
+          mirrorFramesTopic(id),
+          encodeMirrorFrames(
+              seq: ++seq, t0: DateTime.now(), ticks: const [], events: events),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+
+      MirrorEvent step(DeviceCommandStep step) => (
+            kind: MirrorEventKind.command,
+            mac: sirenMac,
+            arg: DeviceCommandStatus(
+              mac: sirenMac,
+              kind: DeviceCommandKind.test,
+              step: step,
+              startedAt: DateTime.now(),
+            ).wire,
+            text: 'Ana',
+          );
+
+      await central([
+        (
+          kind: MirrorEventKind.testAnswer,
+          mac: asked.id,
+          arg: MirrorOtaAnswer.started,
+          text: null
+        ),
+      ]);
+      expect(status()!.step, DeviceCommandStep.boardAck);
+      await central([step(DeviceCommandStep.delivered)]);
+      expect(status()!.step, DeviceCommandStep.delivered);
+      await central([step(DeviceCommandStep.answered)]);
+      expect(status()!.step, DeviceCommandStep.answered);
+      expect(find.byType(SnackBar), findsNothing);
+      expect(tester.takeException(), isNull);
+      expectNothingOfThePhoneStarted();
+      await leave(tester);
+    });
+
+    testWidgets(
+        'Rede: the central refuses a unit\'s test — red beside the unit, '
+        'with its reason — ${s.key}', (tester) async {
+      await pump(
+          tester, s.value, const Scaffold(body: TopologyScreen(embedded: true)),
+          level: AccessLevel.master);
+      await tester.tap(find.text('Sirene Corredor'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.text('Testar'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final asked = decodeMirrorRemoteTest(repo.published.last.payload)!;
+      repo.deliver(
+        mirrorFramesTopic(id),
+        encodeMirrorFrames(
+          seq: 1,
+          t0: DateTime.now(),
+          ticks: const [],
+          events: [
+            (
+              kind: MirrorEventKind.testAnswer,
+              mac: asked.id,
+              arg: MirrorOtaAnswer.refused,
+              text: RemoteSystemTest.unitTestRunning
+            ),
+          ],
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      final status = container.read(deviceCommandProvider)[sirenMac]!;
+      expect(status.step, DeviceCommandStep.failed);
+      expect(status.note, RemoteSystemTest.unitTestRunning);
+      expect(find.byKey(CommandTicks.keyFailed), findsWidgets);
+      expect(tester.takeException(), isNull);
       await leave(tester);
     });
 

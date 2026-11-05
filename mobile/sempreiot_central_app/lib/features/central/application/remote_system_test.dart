@@ -3,23 +3,25 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/app_database.dart';
 import '../../access/application/central_access_provider.dart';
-import '../../access/domain/entities/access_level.dart';
 import '../../access/domain/entities/access_relation.dart';
 import '../domain/system_test/system_test_run.dart';
 import 'central_mirror_codec.dart';
+import 'device_command_provider.dart';
 import 'root_election_provider.dart';
 import 'system_test_provider.dart';
+import 'topology_provider.dart';
 
-/// A phone's "Testar tudo", carried out on the tablet
-/// (docs/cloud/central-mirror.md §4.9). The same run as the tablet's own —
-/// only the checks before it are the phone's:
+/// A phone's "Testar tudo" and a phone's "Testar" of one unit, carried out
+/// on the tablet (docs/cloud/central-mirror.md §4.9, §4.10). The same run
+/// as the tablet's own — only the checks before it are the phone's:
 ///
 /// 1. who asked is the Identity ID in the command's topic (AWS lets a user
 ///    publish only under its own), and that user must be an accepted
 ///    **Administrador** (or Master) of this central, as for an update;
 /// 2. **one test at a time** (decided 2026-10-31): the controller refuses
 ///    while a run is current, whoever started it, so two tests never
-///    overlap on the central, on the tablet or on any phone;
+///    overlap on the central, on the tablet or on any phone — and one
+///    unit is not tested while the system test runs;
 /// 3. the board must be on the link.
 ///
 /// Cancelling is the tablet's, and the phone account that started the run.
@@ -41,11 +43,38 @@ class RemoteSystemTest {
   static const refusedNotYours =
       'Só a central, ou quem iniciou o teste, pode cancelá-lo.';
 
+  // One unit (§4.10). Short, no full stop: the phone writes them beside
+  // the unit, after "Testar ·".
+  static const unitNotAdmin = 'Só para Administrador';
+  static const unitTestRunning = 'Teste do sistema em andamento';
+  static const unitNoLink = 'Central sem a placa';
+  static const unitUnreachable = 'Sem comunicação';
+  static const unitIsBattery = 'Não disponível para detector a bateria';
+  static const unitBusy = 'Outro comando em andamento';
+  static const unitNoBoardAck = 'A placa não confirmou';
+
   /// Null = done; otherwise why not, in words for the phone.
   Future<String?> handle(
       String userIdentityId, MirrorRemoteTest command) async {
-    final user = _userOf(userIdentityId);
+    final user = await _userOf(userIdentityId);
     final by = 'remote:${command.name ?? user?.userSubId ?? userIdentityId}';
+    final mac = command.mac;
+    if (mac != null) {
+      final refused =
+          user == null ? unitNotAdmin : await _unit(mac, _whoOf(by));
+      _audit(
+        by,
+        refused == null
+            ? 'unit_test_remote_started'
+            : 'unit_test_remote_refused',
+        {
+          'user': userIdentityId,
+          'mac': mac,
+          if (refused != null) 'reason': refused,
+        },
+      );
+      return refused;
+    }
     final refused = user == null
         ? refusedNotAdmin
         : command.cancel
@@ -65,17 +94,40 @@ class RemoteSystemTest {
     return refused;
   }
 
-  /// The accepted Administrador or Master relation of [userIdentityId].
-  AccessRelation? _userOf(String userIdentityId) {
-    for (final r in _ref.read(centralAccessRelationsProvider)) {
-      if (r.userIdentityId == userIdentityId &&
-          r.isAccepted &&
-          (r.level == AccessLevel.level4 || r.level == AccessLevel.master)) {
-        return r;
-      }
+  /// The accepted Administrador or Master relation of [userIdentityId],
+  /// once the central's list of users has been read.
+  Future<AccessRelation?> _userOf(String userIdentityId) => _ref
+      .read(centralAccessRelationsProvider.notifier)
+      .adminOf(userIdentityId);
+
+  /// TESTAR to one unit, through the same door as the tablet's own popover
+  /// (device_command_provider): the command goes down, its steps go to
+  /// every phone as `command` events. Null = the board took it.
+  Future<String?> _unit(String mac, String who) async {
+    if (_ref.read(systemTestControllerProvider).running != null) {
+      return unitTestRunning;
     }
-    return null;
+    if (!_ref.read(boardLinkUpProvider)) return unitNoLink;
+    final node =
+        _ref.read(topologyProvider).where((n) => n.mac == mac).firstOrNull;
+    if (node == null || node.layer <= 0 || !node.online) {
+      return unitUnreachable;
+    }
+    // The tablet's own popover does not offer it for a battery detector
+    // either: its firmware takes TEST and raises no test event yet.
+    if (node.isLeaf) return unitIsBattery;
+    final commands = _ref.read(deviceCommandProvider);
+    if (commands[mac]?.inFlight == true ||
+        commands[safrBroadcastMac]?.broadcastRunning == true) {
+      return unitBusy;
+    }
+    final ok = await _ref
+        .read(deviceCommandProvider.notifier)
+        .run(mac, DeviceCommandKind.test, by: who);
+    return ok ? null : unitNoBoardAck;
   }
+
+  static String _whoOf(String by) => by.replaceFirst('remote:', '');
 
   Future<String?> _start(String userIdentityId, String by) async {
     final tests = _ref.read(systemTestControllerProvider.notifier);

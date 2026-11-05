@@ -193,13 +193,14 @@ const identifyBlinkSeconds = 10;
 /// unit confirms) and in the device popover.
 ///
 /// On the tablet it sends the command itself; on a phone viewing a central
-/// it asks the central for IDENTIFY and follows the steps the central
-/// publishes (central mirror `command` events).
+/// it asks the central — for IDENTIFY, and an Administrador for TESTAR —
+/// and follows the steps the central publishes (central mirror `command`
+/// events).
 class DeviceCommandTracker
     extends StateNotifier<Map<String, DeviceCommandStatus>> {
   DeviceCommandTracker({
     Future<bool> Function(String mac, DeviceCommandKind kind)? send,
-    Future<String?> Function(String mac)? askCentral,
+    Future<String?> Function(String mac, DeviceCommandKind kind)? askCentral,
     void Function(String mac, DeviceCommandKind kind)? onConfirmed,
     Stream<String>? deliveries,
     Stream<SafrTrafficTick>? traffic,
@@ -219,8 +220,17 @@ class DeviceCommandTracker
 
   final Future<bool> Function(String mac, DeviceCommandKind kind)? _send;
 
-  /// Phone: asks the central for IDENTIFY; null = it went, else why not.
-  final Future<String?> Function(String mac)? _askCentral;
+  /// Phone: asks the central to send the command ([phoneMayAsk]); null =
+  /// the board took it at least, else why not.
+  final Future<String?> Function(String mac, DeviceCommandKind kind)?
+      _askCentral;
+
+  /// What a phone may ask the central for. Everything else is commanded
+  /// on site.
+  static const phoneMayAsk = {
+    DeviceCommandKind.identify,
+    DeviceCommandKind.test
+  };
 
   /// The UNIT confirmed a command to it (its own ACK came back up): what
   /// follows from the unit having it — the IDENTIFY blink on its LED —
@@ -339,11 +349,11 @@ class DeviceCommandTracker
       return ok;
     }
     final ask = _askCentral;
-    if (ask == null || kind != DeviceCommandKind.identify) {
+    if (ask == null || !phoneMayAsk.contains(kind)) {
       _advance(mac, DeviceCommandStep.failed);
       return false;
     }
-    final refused = await ask(mac);
+    final refused = await ask(mac, kind);
     if (!identical(_startOf(mac), started.startedAt)) return refused == null;
     if (refused == null) {
       _advance(mac, DeviceCommandStep.boardAck);
@@ -928,9 +938,12 @@ final deviceCommandProvider = StateNotifierProvider<DeviceCommandTracker,
   if (viewed != null) {
     final tracker = DeviceCommandTracker(
       traffic: traffic,
-      askCentral: (mac) async {
-        final outcome =
-            await ref.read(centralMirrorProvider.notifier).sendIdentify(mac);
+      askCentral: (mac, kind) async {
+        final mirror = ref.read(centralMirrorProvider.notifier);
+        // TESTAR: on this phone's own topic, the central checks who asks
+        // and answers when the board took it, or why not.
+        if (kind == DeviceCommandKind.test) return mirror.sendUnitTest(mac);
+        final outcome = await mirror.sendIdentify(mac);
         return switch (outcome) {
           MirrorIdentifyOutcome.confirmed => null,
           MirrorIdentifyOutcome.notConfirmed => 'Sem confirmação',

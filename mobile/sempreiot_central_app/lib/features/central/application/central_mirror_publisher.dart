@@ -82,10 +82,13 @@ final mirrorWatchersProvider =
 /// - The firmware update (the run on "Atualizar dispositivos" and the image
 ///   on its way to the board) goes on a `hello` and when it changes, looked
 ///   at once a second; the history only when a phone asks for it.
-/// - IDENTIFY is the one command a watching phone may ask for: the central
-///   sends it as its own menu does, and every IDENTIFY blink that starts —
-///   asked from a phone or from the tablet — goes to the phones as an
-///   event, so their LEDs blink with the unit's.
+/// - IDENTIFY is what any watching phone may ask for: the central sends it
+///   as its own menu does, and every IDENTIFY blink that starts — asked
+///   from a phone or from the tablet — goes to the phones as an event, so
+///   their LEDs blink with the unit's.
+/// - An Administrador's phone may also ask, on its own topic, for an
+///   update, for "Testar tudo" and for TESTAR of one unit (§4.6, §4.9,
+///   §4.10); the central checks who asks.
 ///
 /// No timer of its own: the provider calls [pump]. Never in the fire path:
 /// a failed publish is dropped, nothing waits for it.
@@ -275,8 +278,9 @@ class CentralMirrorPublisher {
 
   /// A message on a user's own command topic (`{id}/cmd/<user's Identity
   /// ID>`): AWS lets only that user publish there, so [userIdentityId] is
-  /// who asked. Today: an Internet update, or cancelling it
-  /// (docs/ota/ota-internet-plan.md §5.4).
+  /// who asked. Today: an Internet update or cancelling it
+  /// (docs/ota/ota-internet-plan.md §5.4), "Testar tudo" or cancelling it,
+  /// and TESTAR of one unit (docs/cloud/central-mirror.md §4.9, §4.10).
   void onUserCommand(String userIdentityId, String payload) {
     final test = decodeMirrorRemoteTest(payload);
     if (test != null) {
@@ -306,11 +310,13 @@ class CentralMirrorPublisher {
     }());
   }
 
-  /// A phone's "Testar tudo" / "Cancelar teste" (§4.9). The test starts at
-  /// once or is refused at once (one at a time), so there is no "working":
-  /// the answer is `started` or `refused` with the reason. The record of
-  /// the run itself reaches every phone through the retained `test`
-  /// message, as when the tablet starts it.
+  /// A phone's "Testar tudo" / "Cancelar teste" (§4.9), or its "Testar" of
+  /// one unit (§4.10). The test starts or is refused within seconds (one
+  /// at a time; the board takes the command or does not), so there is no
+  /// "working": the answer is `started` or `refused` with the reason. The
+  /// record of a system test reaches every phone through the retained
+  /// `test` message, one unit's steps through the `command` events — as
+  /// when the tablet starts them.
   void _userTest(String userIdentityId, MirrorRemoteTest command) {
     final handle = _remoteTest;
     if (handle == null) {

@@ -64,13 +64,18 @@ String? mirrorCommandUser(String identityId, String topic) {
 // ── remote update ───────────────────────────────────────────────────────────
 
 /// A phone asks the central to start "Testar tudo", or to cancel the one
-/// running (docs/cloud/central-mirror.md §4.9). [id] pairs the central's
-/// `test_answer` with the request; [name] is the label the report shows.
+/// running (docs/cloud/central-mirror.md §4.9) — or, with [mac], to send
+/// TESTAR to that one unit (§4.10). [id] pairs the central's `test_answer`
+/// with the request; [name] is the label the report shows.
 /// One test at a time: the central refuses while a run is current.
 class MirrorRemoteTest {
-  const MirrorRemoteTest({required this.id, this.cancel = false, this.name});
+  const MirrorRemoteTest(
+      {required this.id, this.cancel = false, this.mac, this.name});
   final String id;
   final bool cancel;
+
+  /// One unit's test (`unit_test`); null = the system test.
+  final String? mac;
   final String? name;
 }
 
@@ -89,16 +94,32 @@ String encodeMirrorTestCancel({required String id, String? name}) =>
       if (name != null && name.isNotEmpty) 'name': name,
     });
 
-/// A `test_start` or `test_cancel`; null = neither, or malformed.
+/// Phone → central, on the phone's own command topic: send TESTAR to the
+/// unit [mac] (§4.10). Administrador only, as "Testar tudo".
+String encodeMirrorUnitTest(
+        {required String id, required String mac, String? name}) =>
+    jsonEncode({
+      'v': mirrorVersion,
+      'type': 'unit_test',
+      'id': id,
+      'mac': mac,
+      if (name != null && name.isNotEmpty) 'name': name,
+    });
+
+/// A `test_start`, a `test_cancel` or a `unit_test`; null = none of them,
+/// or malformed.
 MirrorRemoteTest? decodeMirrorRemoteTest(String payload) {
   try {
     final map = jsonDecode(payload);
     if (map is! Map || map['id'] is! String) return null;
     final name = map['name'] is String ? map['name'] as String : null;
+    final mac = map['mac'];
     return switch (map['type']) {
       'test_start' => MirrorRemoteTest(id: map['id'] as String, name: name),
       'test_cancel' =>
         MirrorRemoteTest(id: map['id'] as String, cancel: true, name: name),
+      'unit_test' when mac is String && mac.isNotEmpty =>
+        MirrorRemoteTest(id: map['id'] as String, mac: mac, name: name),
       _ => null,
     };
   } catch (_) {
@@ -262,8 +283,9 @@ bool isMirrorOtaHistoryRequest(String payload) {
   }
 }
 
-/// Phone → central: make this unit blink (IDENTIFY). The one command a
-/// phone may ask for: it lights an LED and changes nothing else.
+/// Phone → central: make this unit blink (IDENTIFY). Any user watching may
+/// ask for it: it lights an LED and changes nothing else. (TESTAR of a
+/// unit is an Administrador's, on the phone's own topic: `unit_test`.)
 String encodeMirrorIdentify(String mac, {String? sub, String? name}) =>
     jsonEncode({
       'v': mirrorVersion,

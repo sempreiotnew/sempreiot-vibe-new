@@ -136,7 +136,7 @@ void main() {
   test('phone: asks the central, then follows the steps it publishes', () {
     fakeAsync((async) {
       final answer = Completer<String?>();
-      final t = DeviceCommandTracker(askCentral: (_) => answer.future);
+      final t = DeviceCommandTracker(askCentral: (_, __) => answer.future);
       t.run(unit, DeviceCommandKind.identify, by: 'ana@x.com');
       expect(t.state[unit]!.step, DeviceCommandStep.sending);
 
@@ -163,11 +163,87 @@ void main() {
   test('phone: the central did not answer — said so', () {
     fakeAsync((async) {
       final t = DeviceCommandTracker(
-          askCentral: (_) async => 'A central não respondeu');
+          askCentral: (_, __) async => 'A central não respondeu');
       t.run(unit, DeviceCommandKind.identify);
       async.flushMicrotasks();
       expect(t.state[unit]!.step, DeviceCommandStep.failed);
       expect(t.state[unit]!.note, 'A central não respondeu');
+      t.dispose();
+    });
+  });
+
+  test(
+      'phone: TESTAR is asked to the central too — its answer is the board\'s '
+      '✓, the unit\'s ✓✓ and the test come as the central\'s steps', () {
+    fakeAsync((async) {
+      final asked = <(String, DeviceCommandKind)>[];
+      final answer = Completer<String?>();
+      final t = DeviceCommandTracker(askCentral: (mac, kind) {
+        asked.add((mac, kind));
+        return answer.future;
+      });
+      t.run(unit, DeviceCommandKind.test);
+      expect(asked, [(unit, DeviceCommandKind.test)]);
+      expect(t.state[unit]!.step, DeviceCommandStep.sending);
+
+      answer.complete(null); // the board took it
+      async.flushMicrotasks();
+      expect(t.state[unit]!.step, DeviceCommandStep.boardAck);
+
+      DeviceCommandStatus step(DeviceCommandStep s) =>
+          DeviceCommandStatus.fromWire(
+            unit,
+            DeviceCommandStatus(
+                    mac: unit,
+                    kind: DeviceCommandKind.test,
+                    step: s,
+                    startedAt: _t0)
+                .wire,
+            at: DateTime.now(),
+          )!;
+      t.applyRemote(step(DeviceCommandStep.delivered));
+      expect(t.state[unit]!.step, DeviceCommandStep.delivered);
+      expect(t.state[unit]!.inFlight, isTrue, reason: 'waits for the test');
+      t.applyRemote(step(DeviceCommandStep.answered));
+      expect(t.state[unit]!.step, DeviceCommandStep.answered);
+      t.dispose();
+    });
+  });
+
+  test('phone: the central refuses a TESTAR — red, with its reason', () {
+    fakeAsync((async) {
+      final t = DeviceCommandTracker(
+          askCentral: (_, __) async => 'Teste do sistema em andamento');
+      var ok = true;
+      t.run(unit, DeviceCommandKind.test).then((v) => ok = v);
+      async.flushMicrotasks();
+      expect(ok, isFalse);
+      expect(t.state[unit]!.step, DeviceCommandStep.failed);
+      expect(t.state[unit]!.note, 'Teste do sistema em andamento');
+      t.dispose();
+    });
+  });
+
+  test('phone: nothing but Identificar and Testar is ever asked', () {
+    fakeAsync((async) {
+      var asked = 0;
+      final t = DeviceCommandTracker(askCentral: (_, __) async {
+        asked++;
+        return null;
+      });
+      for (final kind in [
+        DeviceCommandKind.soundOff,
+        DeviceCommandKind.soundOn,
+        DeviceCommandKind.reset,
+      ]) {
+        var ok = true;
+        t.run(unit, kind).then((v) => ok = v);
+        async.flushMicrotasks();
+        expect(ok, isFalse, reason: kind.name);
+        expect(t.state[unit]!.step, DeviceCommandStep.failed);
+        async.elapse(const Duration(seconds: 11));
+      }
+      expect(asked, 0);
       t.dispose();
     });
   });
@@ -846,7 +922,7 @@ void main() {
       fakeAsync((async) {
         const a = 'AA:00:00:00:00:0A', b = 'AA:00:00:00:00:0B';
         final t = DeviceCommandTracker(
-          askCentral: (_) async => null,
+          askCentral: (_, __) async => null,
           traffic: traffic.stream,
         );
         // The record came first (the phone showed nothing then).
@@ -892,7 +968,7 @@ void main() {
       fakeAsync((async) {
         const a = 'AA:00:00:00:00:0A';
         final t = DeviceCommandTracker(
-          askCentral: (_) async => null,
+          askCentral: (_, __) async => null,
           traffic: traffic.stream,
         );
         t.closeFromRun(SystemTestRun(
@@ -929,7 +1005,7 @@ void main() {
     test('a phone shows the central\'s verdict, never one of its own', () {
       fakeAsync((async) {
         final t = DeviceCommandTracker(
-          askCentral: (_) async => null,
+          askCentral: (_, __) async => null,
           traffic: traffic.stream,
         );
         t.run(unit, DeviceCommandKind.identify);

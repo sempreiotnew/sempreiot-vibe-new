@@ -25,12 +25,15 @@ alarms held on the panel, always** (decided 2026-10-03).
    not, and retained — a user who opens the app after an alarm started gets it at once, even if
    the central has gone offline since.
 2. **A mirror, not a second panel.** The phone shows; it does not command. Nothing is reset,
-   silenced, renamed or retired from a phone. **Two exceptions:**
+   silenced, renamed or retired from a phone. **The exceptions:**
    - **Identificar** (decided 2026-10-03): it lights a unit's LED and changes nothing else (§3.3).
    - **An Internet update** (decided 2026-10-05, replacing "a firmware update is never started from
      the cloud"): an **Administrador** may start one from the phone and cancel it (§4.6). Only a
      version **published** for that central, never a file chosen on the tablet. Never over a held
      alarm. The tablet shows who started it and can pause or cancel it at any moment.
+   - **A test** (decided 2026-10-31 for "Testar tudo", 2026-11-05 for one unit): an
+     **Administrador** may start the system test from the phone (§4.9) and send **Testar** to one
+     unit (§4.10). A test raises a test event and changes nothing else.
 3. **Never in the fire path.** Publishing runs beside the SAFR pipeline and never delays an ACK, a
    latch or a siren. If publishing fails, the tablet carries on.
 4. **Never stale as live.** Every message carries a sequence number and a time. The phone shows the
@@ -63,6 +66,7 @@ alarms held on the panel, always** (decided 2026-10-03).
 | `{id}/release` | cloud → this central | **yes** | when `ota_release.sh --central` publishes | this central's own catalog (§4.4) |
 | `{id}/cmd/{user}` | phone → central | no | an Administrador taps Atualizar / Cancelar | `ota_start` / `ota_cancel` (§4.6); `{user}` = the phone's Identity ID, which AWS lets only that user publish under |
 | `{id}/cmd/{user}` | phone → central | no | an Administrador taps Testar tudo / Cancelar teste | `test_start` / `test_cancel` (§4.9), answered by a `test_answer` event |
+| `{id}/cmd/{user}` | phone → central | no | an Administrador taps Testar on a unit | `unit_test` (§4.10), answered by a `test_answer` event; its steps follow as `command` events |
 | `{id}/cmd/{user}` *(planned 2026-10-28)* | phone → central | no | an Administrador edits Causa e efeito | `label_set` / `label_del` / `rule_set` / `rule_del` (§4.8) |
 | `{id}/rules` *(planned)* | central → cloud | no | watched: on hello, then on change | the label tables and the rule table **as the board confirmed them** (§4.8) |
 | `{id}/mesh/up` · `{id}/mesh/down` *(planned, names to settle — Phase C)* | island root ↔ central | no | always while an island exists | SAFR frames, end-to-end authenticated, tunnelled over MQTT (`phase4-cause-and-effect-brief.md` §2.4) |
@@ -163,10 +167,12 @@ kind 0 Identificar · 1 Testar · 2 Silenciar · 3 Ligar som · 4 Rearmar (5–7
 it · 2 the unit confirmed it (its own ACK) · 3 the test came back · 4 no confirmation; `who` = the
 phone user who asked, absent for the tablet. The phone puts it into its own tracker — learning a system test's membership from the events themselves (the broadcast's `sending` opens the list, every unit status of the same command joins it), so outcomes stay for the whole test, the tally counts them and they leave together, as on the tablet; a phone never invents a verdict past the window, it waits for the tablet's — so its Rede map
 draws the same pill, checks and rings as the tablet; the command packets themselves arrive as ticks
-(a COMMAND going down, the unit's ACK coming up). A phone still asks only for Identificar, as above;
-the `identify*` events stay for phones of older builds.
+(a COMMAND going down, the unit's ACK coming up). On this open topic a phone asks only for
+Identificar, as above; the `identify*` events stay for phones of older builds. **Testar** of one unit
+is asked on the phone's own topic, by an Administrador (§4.10).
 
-The level of the user is not checked: any accepted user may identify (open decision D3).
+The level of the user is not checked for Identificar: any accepted user may identify (open
+decision D3).
 
 ---
 
@@ -397,6 +403,51 @@ keeps every run in its database, the message carries the last 5 — was 10 until
   `remote_system_test.dart` (the central), `central_mirror_viewer.dart` `sendTestStart` /
   `sendTestCancel` (the phone), `device_menu.dart`. Tests: `test/central/system_test_remote_test.dart`.
 
+### 4.10 Testar one unit from a phone (`{id}/cmd/{user}`) — 2026-11-05
+
+```json
+{"v":1,"type":"unit_test","id":"muvia60t-2","mac":"AA:BB:CC:DD:EE:FF","name":"…"}
+```
+
+The unit popover's **Testar**, from a phone: the central sends `COMMAND TEST` (protocol §7.6) to
+that unit exactly as its own popover does (`DeviceCommandTracker.run`), and the unit answers with
+its `MANUAL_TEST` event.
+
+- **Who is asking / who may.** As §4.6 and §4.9: the topic's last level is the phone's Identity ID;
+  it must be an accepted Administrador (`LEVEL_4`) or Master of this central. Never taken from the
+  open `{id}` topic, where nobody is proven.
+- **The checks after that**, each refused with a short reason the phone writes beside the unit
+  ("Testar · …"): no system test running ("Teste do sistema em andamento" — one test at a time,
+  §4.9) · the board on the link ("Central sem a placa") · a unit the central knows and hears ("Sem
+  comunicação") · a mains unit ("Não disponível para detector a bateria": the tablet's popover does
+  not offer it either — a detector's firmware takes TEST and raises no test event yet) · no other
+  command on its way to that unit ("Outro comando em andamento").
+- **The answer.** A `test_answer` event on `frames` with the request's `id`: `started` when **the
+  board took the command**, `refused` plus the reason otherwise ("A placa não confirmou" after the
+  tablet's three tries, ≈ 6 s). The phone waits up to 8 s, then says "A central não respondeu" —
+  the central is offline, or its app is a build without this. **Both apps must carry it.**
+- **What follows** is not in the answer: the unit's own ACK (✓✓) and its test event ("Teste
+  recebido") reach every phone as the `command` events of §3.3 (kind 1), with who asked; the test
+  frame itself arrives as a tick, so the unit's LED on the phone goes blue then cyan as the unit's
+  does. The phone never gives a verdict of its own.
+- **Audit.** `unit_test_remote_started` / `unit_test_remote_refused`, with the user's Identity ID
+  and the unit's MAC.
+- **On the phone.** The unit popover (Rede → a unit) shows **Testar** beside Identificar for a mains
+  unit; for anyone who is not an Administrador of this central the button is there but disabled,
+  with "só para Administrador" under it. No snackbar: the answer is drawn on the map, as on the
+  tablet. Code: `remote_system_test.dart` (the central), `central_mirror_viewer.dart`
+  `sendUnitTest` and `device_command_provider.dart` (the phone), `device_menu.dart`. Tests:
+  `test/central/unit_test_remote_test.dart`, `central_mirror_screen_test.dart`,
+  `device_command_test.dart`.
+
+**The list of users is read before anyone is refused (2026-11-05).** The central's list of users
+(`centralAccessRelationsProvider`) is built the first time something reads it and starts empty; the
+checks of §4.6, §4.9 and §4.10 read it at once, so the **first** request after the tablet's app
+started was refused — "Só um Administrador desta central pode testar pela internet" — to an
+Administrador, and the second went through. Now the check (`adminOf`) waits for the tablet's own
+copy of the list and, when the user is not in it and the backend's list was not read yet in this
+run of the app, for that one (5 s at most) — "no" is never answered from a list that was not read.
+
 ### 4.8 Causa e efeito from a phone (`{id}/cmd/{user}`) — planned 2026-10-28
 
 The third exception to rule 2 (after Identificar and the Internet update), decided 2026-10-28:
@@ -465,8 +516,9 @@ Menu and actions — what a user gets:
 | **Bloquear central** (lock button, PIN) | hidden | locks the tablet's own screen |
 | Acessos | hidden | the operator at the tablet grants access |
 | Identificar | **shown** — asked to the central, which sends it (§3.3) | lights an LED, changes nothing |
-| Other unit actions (rename, zone, test, RESET / Rearmar, silence, retire, Sincronizar com a placa) | hidden | rule 2: no command from a phone |
-| A tap on a unit | its basics, Identificar and the Dispositivo screen, read only | — |
+| Testar (a mains unit) | **shown** — an Administrador's, asked to the central (§4.10); disabled for everyone else, with why | raises a test event, changes nothing |
+| Other unit actions (rename, zone, RESET / Rearmar, silence, retire, Sincronizar com a placa) | hidden | rule 2: no command from a phone |
+| A tap on a unit | its basics, Identificar, Testar and the Dispositivo screen, read only | — |
 
 What cannot be mirrored, as on the tablet: survey blinks, setup, button hold — they never cross the
 wire (see the header of `device_led_provider.dart`). The **IDENTIFY blink** is mirrored: the
@@ -534,7 +586,7 @@ Left for later: an IAM user with limited rights for cloud administration (today 
 |---|---|---|
 | D1 | Alarms with nobody watching | **Decided 2026-10-03: always published, retained** (§4.5) |
 | D2 | The menu of §5 | **Decided 2026-10-03: Instalação, Logs seriais, Bloquear central (and Acessos, unit actions) are hidden** |
-| D3 | Do access levels (1–4) change what a user sees, and who may Identificar? | Open — every accepted user sees the same and may identify |
+| D3 | Do access levels (1–4) change what a user sees, and who may Identificar? | Open — every accepted user sees the same and may identify. (Starting an update or a test, and Testar of a unit, are an Administrador's: §4.6, §4.9, §4.10) |
 | D4 | A history of frames in the cloud (replay, audit) — needs always-on publishing and its cost | Open — none |
 | D5 | A notification on the phone with the app closed (push) when an alarm latches — needs a cloud rule on `alarm` and a push service | Open — today the alarm is shown when the app is opened |
 
@@ -556,3 +608,5 @@ Left for later: an IAM user with limited rights for cloud administration (today 
 
 5. **Releases and the Internet update from a phone** (§4.4, §4.6). **In code 2026-10-05**, not run
    on devices yet.
+6. **Testar one unit from a phone** (§4.10), and the list of users read before a request is
+   refused. **In code 2026-11-05**, tested in the app's suite, not run on devices yet.
