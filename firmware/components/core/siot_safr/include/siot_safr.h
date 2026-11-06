@@ -154,6 +154,7 @@ extern "C" {
 #define SAFR_CMD_GET_ROLLOUT      0x1C /* v3.5 -- board only: page u8 (0 = all) */
 #define SAFR_CMD_OTA_CONTROL      0x1D /* v3.5 -- board only: start / pause / resume / abort */
 #define SAFR_CMD_SET_LINKS        0x1E /* v3.8 §14.5 -- board → one unit: its own cause list (Phase B) */
+#define SAFR_CMD_ROOT_YIELD       0x1F /* v3.9 §7.6 -- board → a unit attached to it that is not the root: root_mac[6] */
 #define SAFR_CMD_SET_LABEL        0x20 /* v3.8 §14.2 -- board only: kind ‖ id ‖ name_len ‖ name */
 #define SAFR_CMD_DEL_LABEL        0x21 /* v3.8 -- board only: kind ‖ id */
 #define SAFR_CMD_GET_LABELS       0x22 /* v3.8 -- board only: kind (0 = both) ‖ page (0 = all) */

@@ -1530,6 +1530,72 @@ void main() {
       expect(map, hasLength(2)); // still drawn
       expect(map.any((n) => n.online || n.heard), isFalse);
     });
+
+    test(
+        'a unit keeps everything the snapshot said of it: after a frame of '
+        'it, and when the picture is not live (2026-11-06)', () async {
+      // The phone re-makes a unit on every frame of it (heard now) and
+      // every unit when the picture is not live (none alive). What it left
+      // out was lost: a unit never heard ("aguardando o primeiro sinal",
+      // layer -1, not on the map) was drawn on the map, and a weak link
+      // lost its mark until the next snapshot.
+      const waitingMac = 'DD:00:00:00:00:04';
+      TopologyNode unit(String mac, int layer,
+              {bool awaiting = false, int? dlHeard, bool degraded = false}) =>
+          TopologyNode(
+            mac: mac,
+            role: layer == 1 ? SafrNodeRole.root : SafrNodeRole.node,
+            layer: layer,
+            parentMac: boardMac,
+            rssi: -60,
+            batteryPct: null,
+            online: !awaiting,
+            lastSeenAt: DateTime.utc(2026, 10, 3, 20),
+            alarmLatched: false,
+            awaitingSignal: awaiting,
+            dlHeard: dlHeard,
+            linkDegraded: degraded,
+          );
+      final container = ProviderContainer(overrides: [
+        centralMirrorProvider.overrideWith((ref) => viewer),
+      ]);
+      addTearDown(container.dispose);
+      container.read(viewedCentralProvider.notifier).state = id;
+      viewer.onConnected();
+      viewer.setCentralOnline(true);
+      repo.deliver(
+        mirrorStateTopic(id),
+        encodeMirrorState(seq: 1, at: now, link: 'connected', nodes: [
+          node(boardMac, SafrNodeRole.root, 0),
+          unit(rootMac, 1, dlHeard: 5, degraded: true),
+          unit(waitingMac, -1, awaiting: true),
+        ]),
+      );
+      await pumpEventQueue();
+      TopologyNode of(String mac) =>
+          container.read(topologyProvider).firstWhere((n) => n.mac == mac);
+
+      // A heartbeat of the root, and a first frame of the unit never heard
+      // (the central's next snapshot is what places it).
+      repo.deliver(
+        mirrorFramesTopic(id),
+        encodeMirrorFrames(seq: 1, t0: now, ticks: [
+          (offsetMs: 0, tick: heartbeat(rootMac)),
+          (offsetMs: 0, tick: heartbeat(waitingMac)),
+        ]),
+      );
+      await pumpEventQueue();
+      expect(of(rootMac).dlHeard, 5);
+      expect(of(rootMac).linkDegraded, isTrue);
+      expect(of(waitingMac).awaitingSignal, isTrue);
+
+      viewer.setCentralOnline(false);
+      expect(of(rootMac).online, isFalse);
+      expect(of(rootMac).dlHeard, 5);
+      expect(of(rootMac).linkDegraded, isTrue);
+      expect(of(waitingMac).awaitingSignal, isTrue,
+          reason: 'never heard: not a unit of the map');
+    });
   });
 }
 

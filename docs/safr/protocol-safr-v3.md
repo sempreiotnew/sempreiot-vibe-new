@@ -35,6 +35,9 @@ here. Do **not** keep divergent layout comments in code — cite this file inste
   `NAME_ANNOUNCE` / `SET_DEVICE` / `DEVICE_TABLE` becomes *reserved* (sent with length 0, ignored). All
   additive, `VER` unchanged. **Board side implemented 2026-10-28** (labels, `DEVICE_TABLE` format 2,
   `SET_DEVICE_IDS`, filter 4; host tests `test_labels.c`); rules, `SOUND`, `SET_LINKS` are Phase B.
+  Revision **3.9** (2026-11-05) adds `COMMAND ROOT_YIELD` (§7.6, `0x1F`): the board keeps **one
+  root** and tells any other unit attached to it to leave level 1 — additive, `VER` unchanged; a unit
+  that does not know it ignores it (and the board then serves it as before, see the row).
 - Status: implemented (uplink + downlink + journal backfill); v3.2 additions: implemented, bench pending;
   v3.3: implemented; **v3.4: specified, firmware Phase 2 (`docs/phases-development/phase2-leaf-brief.md`)**
 - Supersedes: SAFR v2 (`VER = 0x02` — decode-only for stored packets) and
@@ -586,6 +589,7 @@ Sets `F_ACK_REQ`. `DST_MAC` selects the target device (broadcast allowed).
 | 0x18 | GET_DEVICE_TABLE *(v3.2)* | `page u8` (`0` = all pages) ‖ `format u8` *(v3.5, optional: `1` = entries with the product fields, §7.12; absent or `0` = v3.2 entries; **v3.8: `2` = product fields + label ids + link kind**)* | Board-only: the board answers with one `DEVICE_TABLE` frame per page (§7.12). Sent by the tablet on link-up after `GET_INSTALLATION`, and on "Ressincronizar". |
 | 0x19 | GET_CODE *(v3.2)* | — | **Setup channel only**, accepted by a **provisioned** board: the tablet proves the board's `pop` (the operator typed or scanned the board sticker; the key is derived from it) and the board answers `CODE` (§7.13). This is how a tablet — camera or not — gets the code after the board was provisioned from a phone, and the only way the code ever leaves the board over USB (blueprint rule 5, lifecycle §4.1). |
 | 0x26 | SET_DEVICE_IDS *(v3.8, §14.1)* | `mac[6] ‖ zone_id u16 ‖ address_id u16` | Board-only (serial, never relayed): the unit's zone and endereçamento, `0` = none. The board stores them in its device table (an unknown MAC → a new `expected` entry) and ACKs; the tablet applies them on the ACK. An id that is not in the board's label table → ERROR/`DETAIL 0x07`; the board's own MAC or broadcast → `0x05`. |
+| 0x1F | **ROOT_YIELD** *(v3.9)* | `root_mac[6]` (the unit that keeps the root; zeros = not known) | **One root** (blueprint §4). Board → a unit that is attached to the board's access point and is **not** the root, sent on **that unit's own session** to the board (never down the root's session, never relayed into the mesh, never to the tablet), then the session is closed. `DST_MAC` = broadcast, no `F_ACK_REQ`: the unit that receives it at level 1 is the unit it is for; at any other level it is ignored. The unit **closes its own access point** (its children are dropped and it stops advertising itself, so the units under it look for the real mesh instead of staying under a unit with no path — without this a whole branch stayed dead, building 2026-11-05), leaves the board and bars itself from level 1; both are undone as soon as it has a parent in the mesh, or after 90 s when it finds none — the root may be gone by then, and the board says so again if it is not. **When the board sends it:** a second unit dials while the root's session is alive (proven: a frame from the root in the last 2 s, or the session still open 6 s later — TCP keepalive drops a dead root in ≈ 5 s, and the unit that waited is then the new root, so failover is not delayed). **A root that works is left alone:** the root stays unless its own link is weak (the board's access point hears it below **−85 dBm**, the weak-link level of §9.4) **and** the board hears the newcomer **≥ 10 dB** better; then the newcomer becomes the root and the old root is sent `ROOT_YIELD`. **A unit that does not know the command** (node firmware ≤ 0.5.2) dials again 2 s later: the board takes a unit that comes back within 30 s of a `ROOT_YIELD` for one of those and, for 60 s, lets the newest dial be the root as before 3.9 — so such a unit stays reachable for its update. |
 | 0x1E | SET_LINKS *(v3.8, §14.5)* | `REV u16 ‖ FLAGS u8 ‖ COUNT u8 ‖ MAC[6] × COUNT` (≤ 32) | Board → one unit (`DST_MAC` = the unit, `F_ACK_REQ`): the unit's **own cause list** — the units whose authenticated ALARM it acts on at once, without waiting for the board. `FLAGS` bit 0 **ANY** = act on every alarm (the floor, §14.6). Replaces the stored list entirely (NVS); the unit ACKs. Leafs: never (they have no effects). |
 | 0x20 | SET_LABEL *(v3.8, §14.2)* | `KIND u8 ‖ ID u16 ‖ NAME_LEN u8 ‖ NAME (≤ 32)` | Board-only (serial, never relayed): create or rename a label. `KIND` `1` zone · `2` endereçamento. The **tablet chooses the id** (next free in its copy; `0` refused, `DETAIL 0x04`). Existing id = rename. Table full → `DETAIL 0x02`. The board answers with the changed `LABEL_TABLE` page. |
 | 0x21 | DEL_LABEL *(v3.8)* | `KIND u8 ‖ ID u16` | Board-only: delete a label. Refused with `DETAIL 0x08` **while any device-table entry or any rule references it**; `0x07` unknown id. |
@@ -684,6 +688,13 @@ adopts the first copy and ignores the repeats. Before this a node announced
 once, marked done on the local send, and a copy lost above it (a root
 session flipping during network formation) left the unit a bare MAC with no
 model on the tablet until a reboot.
+*(2026-11-05)* A joined node also sends it again — same rule, until the ACK —
+when the central has confirmed nothing of that node for **5 minutes**, or right
+after one of its frames went unanswered: HEARTBEATs are not acknowledged, so
+this is how an idle node learns whether the central still hears it. A node
+whose ask stays unanswered for 2 minutes (then 4, 8, 10) **while it sees the
+central ACK another unit** leaves its parent and joins the mesh again; with no
+ACK passing for anybody (the tablet is off) it does nothing.
 
 | Off | Size | Field |
 |----|------|-------|

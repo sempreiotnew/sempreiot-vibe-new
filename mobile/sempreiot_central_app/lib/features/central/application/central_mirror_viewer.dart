@@ -612,6 +612,10 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
   }
 }
 
+/// [n] with what changed. Every field of the unit goes over — one left
+/// out here is lost on the phone at the unit's next frame, and for every
+/// unit when the picture is not live (2026-11-06: a unit never heard was
+/// drawn on the map, a weak link lost its mark).
 TopologyNode _copy(
   TopologyNode n, {
   DateTime? lastSeenAt,
@@ -633,6 +637,8 @@ TopologyNode _copy(
       name: n.name,
       zone: n.zone,
       address: n.address,
+      zoneId: n.zoneId,
+      addressId: n.addressId,
       boardState: n.boardState,
       boardFlags: n.boardFlags,
       parentCandidates: n.parentCandidates,
@@ -641,6 +647,9 @@ TopologyNode _copy(
       fwVersion: n.fwVersion,
       updating: updating ?? n.updating,
       heard: heard ?? n.heard,
+      awaitingSignal: n.awaitingSignal,
+      dlHeard: n.dlHeard,
+      linkDegraded: n.linkDegraded,
     );
 
 /// The mirror of the viewed central; rebuilt (and the old one unsubscribed)

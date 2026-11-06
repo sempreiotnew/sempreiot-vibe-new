@@ -1395,7 +1395,7 @@ class _MeshGraphPainter extends CustomPainter {
           final t = (ms - (i + 1) * _waveRowLagMs) / packetRippleMs;
           if (t < 0 || t >= 1) continue;
           for (final n in nodes) {
-            if (n.layer == rows[i]) {
+            if (layout.layerOf[n.mac] == rows[i]) {
               _ripple(canvas, layout.positions[n.mac], AppColors.ledCyan, t);
             }
           }
@@ -1773,13 +1773,26 @@ class _LaneLabelsPainter extends CustomPainter {
 /// a stale registry puts in a loop among themselves are never reached
 /// from the central: they go under it, and the loop is cut where it
 /// closes.
+///
+/// The row a unit is drawn in is its [layerOf], not its reported layer
+/// alone: a unit is always at least one row below the unit its line goes
+/// to (2026-11-06). The two disagree for a unit that is gone — its layer
+/// and its parent are what it last said, while that parent, alive, has
+/// since re-joined deeper and says so — and the tree then put it in its
+/// parent's row or above, in the very column of a live unit: one chip on
+/// top of the other, and only the one on top took the tap.
 class _MeshTree {
-  _MeshTree._(this.children, this.width, this.rowOf, this.layerKeys);
+  _MeshTree._(
+      this.children, this.width, this.layerOf, this.rowOf, this.layerKeys);
 
   final Map<String, List<TopologyNode>> children;
   final Map<String, int> width;
 
-  /// Layer → row (1 = the first under the central).
+  /// The layer each unit is drawn in: the one it reported when that is
+  /// below the unit its line goes to, else one below that unit.
+  final Map<String, int> layerOf;
+
+  /// Drawn layer → row (1 = the first under the central).
   final Map<int, int> rowOf;
   final List<int> layerKeys;
 
@@ -1787,10 +1800,6 @@ class _MeshTree {
 
   static _MeshTree build(List<TopologyNode> nodes, String? boardMac) {
     final byMac = {for (final n in nodes) n.mac: n};
-    final layerKeys = {for (final n in nodes) n.layer}.toList()..sort();
-    final rowOf = {
-      for (var i = 0; i < layerKeys.length; i++) layerKeys[i]: i + 1,
-    };
     final children = <String, List<TopologyNode>>{};
     for (final n in nodes) {
       var target = meshLinkTargetOf(n, byMac, boardMac)?.key ?? _centralKey;
@@ -1826,7 +1835,25 @@ class _MeshTree {
       total += width[k.mac]!;
     }
     width[_centralKey] = math.max(total, 1);
-    return _MeshTree._(children, width, rowOf, layerKeys);
+
+    // Down the tree as it is drawn (the walk the layouts place it by, the
+    // loop cut at the same unit): every unit below the one above it.
+    final layerOf = <String, int>{};
+    void descend(String key, int above) {
+      for (final k in children[key] ?? const <TopologyNode>[]) {
+        if (layerOf.containsKey(k.mac)) continue;
+        final layer = math.max(k.layer, above + 1);
+        layerOf[k.mac] = layer;
+        descend(k.mac, layer);
+      }
+    }
+
+    descend(_centralKey, 0);
+    final layerKeys = layerOf.values.toSet().toList()..sort();
+    final rowOf = {
+      for (var i = 0; i < layerKeys.length; i++) layerKeys[i]: i + 1,
+    };
+    return _MeshTree._(children, width, layerOf, rowOf, layerKeys);
   }
 }
 
@@ -1888,11 +1915,16 @@ class _MeshLayout {
     required this.centralLane,
     required this.laneCenters,
     required this.canvas,
+    this.layerOf = const {},
     this.radial = false,
     this.pitch = 116,
   });
 
   final Map<String, Offset> positions;
+
+  /// The layer each unit is drawn in (`_MeshTree.layerOf`): the key of its
+  /// row in [laneCenters].
+  final Map<String, int> layerOf;
 
   /// y of the central row (tree).
   final double centralLane;
@@ -1937,7 +1969,10 @@ class _MeshLayout {
     // Every unit in the middle of its subtree's span, its children's
     // spans laid side by side under it, in its own layer's row (a unit
     // linked past a dead parent keeps its row: its line goes up through
-    // the column its subtree owns, crossing nobody).
+    // the column its subtree owns, crossing nobody) — the layer it is
+    // drawn in (`_MeshTree.layerOf`), so always below the unit above it:
+    // two units of one row are never one above the other in the tree, so
+    // they are in different spans and never share a place.
     final positions = <String, Offset>{};
     void place(String key, double from, int row) {
       final w = tree.width[key]!;
@@ -1945,7 +1980,7 @@ class _MeshLayout {
       var cursor = from;
       for (final k in tree.children[key] ?? const <TopologyNode>[]) {
         if (positions.containsKey(k.mac)) continue; // the loop, cut
-        place(k.mac, cursor, tree.rowOf[k.layer]!);
+        place(k.mac, cursor, tree.rowOf[tree.layerOf[k.mac]]!);
         cursor += tree.width[k.mac]!;
       }
     }
@@ -1961,6 +1996,7 @@ class _MeshLayout {
       centralLane: laneY(0),
       laneCenters: {for (final l in tree.layerKeys) l: laneY(tree.rowOf[l]!)},
       canvas: Size(canvasW, height),
+      layerOf: tree.layerOf,
       pitch: pitch,
     );
   }
@@ -2159,6 +2195,7 @@ class _MeshLayout {
       centralLane: placed[_centralKey]!.dy,
       laneCenters: {for (final l in tree.layerKeys) l: 0},
       canvas: Size(w, h),
+      layerOf: tree.layerOf,
       radial: true,
       pitch: pitch,
     );
@@ -2187,6 +2224,7 @@ class _MeshLayout {
       centralLane: b.centralLane,
       laneCenters: b.laneCenters,
       canvas: b.canvas,
+      layerOf: b.layerOf,
       radial: b.radial,
       pitch: b.pitch,
     );

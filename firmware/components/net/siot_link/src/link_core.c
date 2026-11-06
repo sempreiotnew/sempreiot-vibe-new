@@ -9,6 +9,14 @@ static const siot_link_ops_t *s_ops[SIOT_LINK_KIND_MAX];
 static siot_link_rx_cb_t s_rx;
 static void *s_rx_ctx;
 
+bool siot_link_root_challenger_wins(bool root_known, int root_rssi,
+                                    bool challenger_known, int challenger_rssi)
+{
+    if (!root_known || !challenger_known) return false; /* nothing to compare: the root stays */
+    if (root_rssi >= SIOT_LINK_ROOT_WEAK_DBM) return false; /* a root that works is left alone */
+    return challenger_rssi >= root_rssi + SIOT_LINK_ROOT_TAKEOVER_DB;
+}
+
 esp_err_t siot_link_register(siot_link_kind_t kind, const siot_link_ops_t *ops)
 {
     if (kind >= SIOT_LINK_KIND_MAX || ops == NULL || ops->send == NULL) return ESP_ERR_INVALID_ARG;

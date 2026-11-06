@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sempreiot_central_app/features/central/application/central_mirror_codec.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_report.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_state.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_rollout_report.dart';
@@ -13,6 +14,7 @@ import 'package:sempreiot_central_app/features/central/application/topology_prov
 import 'package:sempreiot_central_app/features/central/domain/ota/firmware_image.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/device_avatar.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_legend.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_map.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_model_painter.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/network_3d/device_model_sprites.dart';
@@ -66,9 +68,11 @@ void main() {
   Future<void> pump(WidgetTester tester,
       {required bool showOta,
       List<TopologyNode>? units,
-      bool withBoard = true}) async {
+      bool withBoard = true,
+      Size size = const Size(1280, 800),
+      void Function(TopologyNode node)? onNodeTap}) async {
     final nodes = units ?? mesh;
-    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -88,7 +92,7 @@ void main() {
               nodes: nodes,
               board: withBoard ? boardNode : null,
               election: const RootElectionState(roots: {root}),
-              onNodeTap: (_, __) {},
+              onNodeTap: (node, _) => onNodeTap?.call(node),
               showOta: showOta,
             ),
           ),
@@ -327,6 +331,175 @@ void main() {
       expect(x(b1), lessThan(x(a1)));
       expect(x(a1), lessThan(x(a2)));
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group(
+      'a unit is never drawn on another: always below the unit its line '
+      'goes to (2026-11-06)', () {
+    const a = '5A:46:52:00:00:0A', b = '5A:46:52:00:00:0B';
+    const x = '5A:46:52:00:00:0C', y = '5A:46:52:00:00:0D';
+    // What a unit that is gone says is what it last said; its parent,
+    // alive, has since re-joined somewhere else and says so.
+    final cases = <String, List<TopologyNode>>{
+      // was root ─ a ─ x; a re-joined under b, one layer down: the layer
+      // x last said is a's layer now.
+      'its parent is now on the layer it last said': [
+        node(root, 1, SafrNodeRole.root, board),
+        node(b, 2, SafrNodeRole.node, root),
+        node(a, 3, SafrNodeRole.node, b),
+        node(x, 3, SafrNodeRole.node, a, online: false),
+      ],
+      // …two layers down: x last said the layer of a's new parent.
+      'its parent is now deeper than the layer it last said': [
+        node(root, 1, SafrNodeRole.root, board),
+        node(b, 2, SafrNodeRole.node, root),
+        node(a, 3, SafrNodeRole.node, b),
+        node(x, 2, SafrNodeRole.node, a, online: false),
+      ],
+      // Half a pitch apart is on top of each other too: x beside its live
+      // sibling, under a parent that is on x's layer.
+      'beside a live sibling, its parent on its layer': [
+        node(root, 1, SafrNodeRole.root, board),
+        node(a, 2, SafrNodeRole.node, root),
+        node(x, 2, SafrNodeRole.node, a, online: false),
+        node(y, 3, SafrNodeRole.node, a),
+      ],
+      // The deepest row: a row is made for it.
+      'under a unit of the last row': [
+        node(root, 1, SafrNodeRole.root, board),
+        node(a, 2, SafrNodeRole.node, root),
+        node(y, 3, SafrNodeRole.node, a),
+        node(x, 2, SafrNodeRole.node, y, online: false),
+      ],
+      // A phone with the central offline: no unit is live, every line is
+      // a last known one.
+      'nothing live at all (the central offline, on a phone)': [
+        node(root, 1, SafrNodeRole.root, board, online: false),
+        node(b, 2, SafrNodeRole.node, root, online: false),
+        node(a, 3, SafrNodeRole.node, b, online: false),
+        node(x, 3, SafrNodeRole.node, a, online: false),
+        node(y, 1, SafrNodeRole.node, x, online: false),
+      ],
+      // Two live units whose words do not agree yet (one heartbeat apart).
+      'live units, one heartbeat behind the other': [
+        node(root, 1, SafrNodeRole.root, board),
+        node(a, 2, SafrNodeRole.node, root),
+        node(x, 2, SafrNodeRole.node, a),
+      ],
+    };
+    const sizes = <String, Size>{
+      'tablet landscape': Size(1280, 800),
+      'tablet portrait': Size(800, 1280),
+      'phone portrait': Size(390, 844),
+      'phone landscape': Size(844, 390),
+    };
+
+    Finder chip(String mac) => find
+        .ancestor(
+            of: find.text(mac),
+            matching: find.byWidgetPredicate(
+                (w) => w.runtimeType.toString() == '_ArenaFreeTap'))
+        .first;
+
+    /// No chip on another, each below the unit its line goes to, and a
+    /// touch on a unit's picture opens that unit.
+    Future<void> expectEachUnitItsOwnPlace(
+        WidgetTester tester, List<TopologyNode> units, Size size) async {
+      TopologyNode? opened;
+      await pump(tester,
+          showOta: false,
+          units: units,
+          size: size,
+          onNodeTap: (n) => opened = n);
+      final rects = {for (final n in units) n.mac: tester.getRect(chip(n.mac))};
+      for (final i in units) {
+        for (final j in units) {
+          if (i.mac.compareTo(j.mac) >= 0) continue;
+          expect(rects[i.mac]!.deflate(1).overlaps(rects[j.mac]!.deflate(1)),
+              isFalse,
+              reason: '${i.mac} and ${j.mac} share a place');
+        }
+      }
+      final byMac = {for (final n in units) n.mac: n};
+      for (final n in units) {
+        final to = meshLinkTargetOf(n, byMac, board)!.key;
+        final above = to == '@central'
+            ? tester.getCenter(find.text('CENTRAL')).dy
+            : rects[to]!.top;
+        expect(rects[n.mac]!.top, greaterThan(above + 1),
+            reason: '${n.mac} is under $to, where its line goes');
+      }
+      for (final n in units) {
+        final at = tester.getCenter(find.descendant(
+            of: chip(n.mac), matching: find.byType(DeviceModelAvatar)));
+        // A tree taller than a short screen is panned to: only what is
+        // on screen can be touched — and not through the legend, which
+        // floats over the bottom left of the map (on a narrow phone it
+        // reaches the middle, over the last row until the map is moved).
+        if (!(Offset.zero & size).deflate(4).contains(at)) continue;
+        if (tester.getRect(find.byType(MeshLegend)).contains(at)) continue;
+        opened = null;
+        await tester.tapAt(at);
+        await tester.pump();
+        expect(opened?.mac, n.mac, reason: 'the touch on ${n.mac}');
+      }
+      expect(tester.takeException(), isNull);
+    }
+
+    for (final c in cases.entries) {
+      for (final s in sizes.entries) {
+        testWidgets('${c.key} — ${s.key}', (tester) async {
+          await expectEachUnitItsOwnPlace(tester, c.value, s.value);
+        });
+      }
+    }
+
+    testWidgets('a unit that says its layer right keeps its row',
+        (tester) async {
+      // x was pushed under a; y, a's other child, is where it says: the
+      // two side by side in one row, as two children of a.
+      final units = [
+        node(root, 1, SafrNodeRole.root, board),
+        node(a, 2, SafrNodeRole.node, root),
+        node(x, 2, SafrNodeRole.node, a, online: false),
+        node(y, 3, SafrNodeRole.node, a),
+      ];
+      await pump(tester, showOta: false, units: units);
+      double yOf(String mac) => tester.getCenter(find.text(mac)).dy;
+      expect(yOf(x), closeTo(yOf(y), 0.5));
+      expect(yOf(a), lessThan(yOf(y)));
+      expect(yOf(root), lessThan(yOf(a)));
+    });
+
+    testWidgets(
+        'the phone draws the central\'s snapshot as the tablet draws its '
+        'own units', (tester) async {
+      // The mirror carries each unit's layer and parent as they are
+      // (central_mirror_codec.dart); the place is worked out on each
+      // screen, by the same rule.
+      final units = cases['its parent is now deeper than the layer it last '
+          'said']!;
+      await pump(tester, showOta: false, units: units);
+      final onTablet = {
+        for (final n in units) n.mac: tester.getCenter(find.text(n.mac))
+      };
+      final mirrored = decodeMirrorState(encodeMirrorState(
+        seq: 1,
+        at: now,
+        link: 'connected',
+        nodes: [boardNode, ...units],
+      ))!
+          .nodes
+          .where((n) => n.layer > 0)
+          .toList();
+      expect(mirrored.map((n) => n.mac), units.map((n) => n.mac));
+      await tester.pumpWidget(const SizedBox());
+      await expectEachUnitItsOwnPlace(tester, mirrored, const Size(1280, 800));
+      for (final n in units) {
+        expect(tester.getCenter(find.text(n.mac)), onTablet[n.mac],
+            reason: '${n.mac} in the same place on the phone');
+      }
     });
   });
 

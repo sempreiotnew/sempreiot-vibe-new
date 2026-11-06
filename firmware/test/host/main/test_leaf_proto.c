@@ -246,8 +246,8 @@ TEST_CASE("leaf custody: 3 fast retries, alarm slow for ever, others released; a
     static const uint8_t L[6] = {1, 2, 3, 4, 5, 6};
     siot_leaf_custody_t c;
     siot_leaf_custody_init(&c);
-    TEST_ASSERT_TRUE(siot_leaf_custody_add(&c, L, 5, false, F1, sizeof(F1), 0));
-    TEST_ASSERT_TRUE(siot_leaf_custody_add(&c, L, 6, true, F1, sizeof(F1), 0));
+    TEST_ASSERT_TRUE(siot_leaf_custody_add(&c, L, 5, SAFR_MSG_EVENT, false, F1, sizeof(F1), 0));
+    TEST_ASSERT_TRUE(siot_leaf_custody_add(&c, L, 6, SAFR_MSG_EVENT, true, F1, sizeof(F1), 0));
     TEST_ASSERT_EQUAL(2, siot_leaf_custody_count(&c));
     TEST_ASSERT_NULL(siot_leaf_custody_due(&c, 1999));
     /* trouble (msg 5): forward + 2 fast retries = 3 sends, then released */
@@ -267,12 +267,12 @@ TEST_CASE("leaf custody: 3 fast retries, alarm slow for ever, others released; a
     TEST_ASSERT_EQUAL(6, e->msg_id);
     TEST_ASSERT_TRUE(e->alarm);
     TEST_ASSERT_FALSE(siot_leaf_custody_sent(&c, e, t + SIOT_LEAF_CUSTODY_SLOW_MS)); /* never released */
-    TEST_ASSERT_FALSE(siot_leaf_custody_ack(&c, L, 5));
-    TEST_ASSERT_TRUE(siot_leaf_custody_ack(&c, L, 6));
+    TEST_ASSERT_FALSE(siot_leaf_custody_ack(&c, L, 5, NULL));
+    TEST_ASSERT_TRUE(siot_leaf_custody_ack(&c, L, 6, NULL));
     TEST_ASSERT_EQUAL(0, siot_leaf_custody_count(&c));
     /* full of alarms: the oldest alarm is the victim */
-    for (uint16_t i = 0; i < SIOT_LEAF_CUSTODY_CAP; i++) TEST_ASSERT_TRUE(siot_leaf_custody_add(&c, L, i, true, F1, sizeof(F1), i));
-    TEST_ASSERT_TRUE(siot_leaf_custody_add(&c, L, 99, false, F1, sizeof(F1), 1000));
-    TEST_ASSERT_FALSE(siot_leaf_custody_ack(&c, L, 0));
-    TEST_ASSERT_TRUE(siot_leaf_custody_ack(&c, L, 99));
+    for (uint16_t i = 0; i < SIOT_LEAF_CUSTODY_CAP; i++) TEST_ASSERT_TRUE(siot_leaf_custody_add(&c, L, i, SAFR_MSG_EVENT, true, F1, sizeof(F1), i));
+    TEST_ASSERT_TRUE(siot_leaf_custody_add(&c, L, 99, SAFR_MSG_EVENT, false, F1, sizeof(F1), 1000));
+    TEST_ASSERT_FALSE(siot_leaf_custody_ack(&c, L, 0, NULL));
+    TEST_ASSERT_TRUE(siot_leaf_custody_ack(&c, L, 99, NULL));
 }

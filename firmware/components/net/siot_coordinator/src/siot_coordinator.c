@@ -58,10 +58,48 @@ static uint32_t epoch_now(void) { return 0; }
 static bool s_tx_to_mesh;
 static SemaphoreHandle_t s_tx_mesh_lock;
 
+/* ROOT_YIELD (spec §7.6, blueprint §4): the one frame that does not go down
+ * the root's session — it goes to a unit attached to the board that is NOT
+ * the root, on that unit's own session, which the link layer holds
+ * (link_mesh_board.c). The link layer asks for the frame; it is built like
+ * every other one (siot_safr_send: this board's counters, the installation
+ * key) and caught here on its way out instead of being sent. */
+static struct {
+    uint8_t *out;
+    size_t   cap;
+    size_t   len;
+    uint16_t msg_id;
+    bool     armed;
+} s_yield;
+
+static size_t build_root_yield(const uint8_t root_mac[6], uint8_t *out, size_t cap)
+{
+    uint8_t p[2 + 6] = {SAFR_CMD_ROOT_YIELD, 6};
+    memcpy(&p[2], root_mac, 6);
+    s_yield.out = out;
+    s_yield.cap = cap;
+    s_yield.len = 0;
+    s_yield.msg_id = siot_safr_next_msg_id();
+    s_yield.armed = true;
+    /* Broadcast: the unit that receives it is the one on that session, and
+     * only a unit at level 1 acts on it. No ACK asked: the session ends. */
+    const esp_err_t err = siot_safr_send(SAFR_BCAST_MAC, SAFR_MSG_COMMAND, s_yield.msg_id, 0, p, sizeof(p));
+    s_yield.armed = false;
+    if (err != ESP_OK) ESP_LOGW(TAG, "ROOT_YIELD not built: %s", esp_err_to_name(err));
+    return err == ESP_OK ? s_yield.len : 0;
+}
+
 static void tx_sink(const uint8_t *frame, size_t len, const uint8_t dst_mac[6], void *ctx)
 {
     (void)ctx;
     if (siot_survey_tx(frame, len, dst_mac)) return; /* PARENT_OFFER: ESP-NOW, not a link */
+    if (s_yield.armed && frame[4] == SAFR_MSG_COMMAND && siot_get_u16(&frame[5]) == s_yield.msg_id) {
+        if (len <= s_yield.cap) {
+            memcpy(s_yield.out, frame, len);
+            s_yield.len = len;
+        }
+        return; /* the link layer sends it, on the session of the unit it is for */
+    }
     /* COMMANDs the board originates (TEST tap, pending SET_DEVICE /
      * DECOMMISSION) go downlink into the mesh. Everything else it originates
      * (HEARTBEAT, TOPOLOGY, ACK, INSTALLATION, DEVICE_TABLE, EVENT_LOG_DATA)
@@ -907,6 +945,7 @@ esp_err_t siot_coordinator_start(void)
     siot_safr_set_level(0);
     siot_safr_set_tx(tx_sink, NULL);
     siot_link_set_rx(on_link_rx, NULL);
+    siot_link_mesh_board_set_root_yield(build_root_yield);
     esp_err_t err = siot_evbus_subscribe(SIOT_EVT_BUTTON_TAP, on_button, NULL, NULL);
     if (err != ESP_OK) return err;
     if ((err = siot_evbus_subscribe(SIOT_EVT_LINK_UP, on_link, NULL, NULL)) != ESP_OK) return err;
