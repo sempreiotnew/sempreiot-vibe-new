@@ -389,8 +389,82 @@ Facts that came out of the bench and are now rules:
   noticed in ~11 s), `SO_RCVTIMEO 1 s` so the loop re-checks the root role. Frames are delimited by
   `SOF` + `LEN` (+ CRC), no extra length prefix. Depth-2 nodes never dial anything — the "root relay"
   is the design, not a fallback, so Mesh-Lite NAPT is irrelevant to SAFR.
-- Root change: the old socket dies (keepalive), the new root dials; the board's `select()` loop accepts
-  the newest client and drops the previous one. `netcore` treats the gap as `DEGRADED`, not a failure.
+- Root change: the old socket dies (keepalive), the new root dials; the board's `select()` loop takes
+  it as the root. `netcore` treats the gap as `DEGRADED`, not a failure. **One root (2026-11-05,
+  protocol §7.6 `ROOT_YIELD`):** a unit that dials while the root's session is alive is held aside
+  until the root is proven alive (≤ 6 s), then one of the two is told to yield — the newcomer, unless
+  the root's own link is weak (< −85 dBm) and the board's AP hears the newcomer ≥ 10 dB better. Until then the newest dial won, and two units that both
+  heard the board took turns on the session, each losing the frames sent in the other's turn. The
+  unit that yields closes its access point (`esp_mesh_lite_set_leaf_node(true)`: its children leave
+  and find the mesh — 0.5.3 lacked this and a yielding unit kept a whole branch dead under it) and
+  bars itself from level 1 (`esp_mesh_lite_set_disallowed_level(1)`), both RAM only, until it has a
+  parent, 90 s at most (`link_mesh_node.c`).
+- **A unit is the root only on the board's access point (2026-11-05, `mesh_guard_poll`).** Mesh-Lite
+  gives a unit its parent's level + 1 and never checks where that leads: a root that went away and
+  came back advertising no level turned every unit still attached to it into "level 1", which
+  `netcore` announced as ROOT, and — the library accepts any level-1 unit as a parent — other units
+  joined those false roots and each other: groups with no path, offline and breathing (table log,
+  2026-11-05: `role: ROOT (level 1)` on a unit whose address was on another unit's network). Now
+  `siot_link_mesh_level()` says 0 for "level 1 under another unit"; after 1.5 s of it the unit closes
+  its access point until it is really in the mesh (level ≥ 2, or level 1 on the board).
+  **2026-11-06:** it says 0 for "level 1 attached to nothing" too — the library sets level 1 the
+  moment it decides to *try* the board and keeps it when the board is lost, and units announced
+  `role: ROOT` while still looking. A unit is the root with its station on the board, nowhere else.
+- **No path, no waiting for a RESTART.** A unit attached to another unit that has heard nothing of
+  the central through it for 60 s (four board HEARTBEATs) leaves that parent and looks again
+  (`esp_mesh_lite_disconnect` + `esp_mesh_lite_connect`). The wait doubles up to 10 min and starts
+  over when the central is heard, plus up to 15 s of spread per unit — with the board switched off
+  the mesh stays formed and a unit only looks around now and then.
+- **A root must prove it (2026-11-05, firmware 0.5.4 on the table).** One unit stayed at "level 1"
+  for 17 minutes with no session to the board; it advertised itself as the root, every other unit
+  attached to it and none tried the board — no root, for good. A unit at level 1 (not under another
+  unit) with no TCP session to the board for 20 s now asks whether the board is there: it is when the
+  unit is associated to the board's access point, or a connect to it failed in the last 30 s for any
+  reason but "no such access point" (the Wi-Fi driver's events, no scan of our own). Then it gives
+  the role up as on `ROOT_YIELD` and another unit attaches; the line `root not proven: …` says its
+  addresses, the dial error and the driver's refusal reason. "No such access point" = the board is
+  off: the root keeps the mesh. No word on the board at all for 60 s: it gives the role up too.
+  **Corrected 2026-11-06 (0.5.6 on the table):** the 20 s ran from the moment the unit was level 1,
+  so a unit that had looked for the mesh for 20 s and then attached to the board gave the root up
+  half a second later, before its dial could finish — and left the table without a root. They now
+  run from the association to the board (each association gets its own 20 s, three times per spell
+  at most).
+- **Mesh-Lite's fusion is off (2026-11-06, `FUSION_OFF_S`, `s_fusion_off_actions`).** Fusion is the
+  library's own way from several roots to one: every root broadcasts `join_me_req` on the board's
+  network, the weaker root tells its whole tree `fusion_network`, and they all look for the stronger
+  root's tree — and for nothing else until it is found. With the board keeping the one root the two
+  mechanisms met: a fusion began in the seconds two units were on the board, the board told the
+  "stronger" one to yield, and the units sent after its tree scanned for a tree that never came —
+  beside a root at −25 dBm, until RESTART (0.5.6: `Scan done` every 12 s and nothing else. Read
+  from the disassembly and two consoles; the library's flag itself was never seen on a console). Read
+  from `libesp_mesh_lite_esp32s3.a` 1.0.2: a fusion starts only in `join_me_process` and reaches
+  the children only as `fusion_network`, both entries of the library's message table; a table
+  registered later is consulted first (`esp_mesh_lite_msg_action_process`, first match wins). The
+  node registers its own two entries after `esp_mesh_lite_init` and drops both messages — it never
+  starts or follows a fusion, whatever the sender runs — and keeps the library's start timer
+  running for 46 days (the longest its arithmetic takes) so it sends no `join_me_req` itself; after
+  that a root sends one now and then and every unit drops it. **Not** `esp_mesh_lite_set_networking_mode(ROUTER)`:
+  it silences fusion too, but makes every unit that hears the board above the threshold attach to it.
+- **Out of the mesh: it says why, then restarts (2026-11-06).** Out = not attached where its level
+  says (a child on a unit, the root on the board). Not out: attached to nothing while the Wi-Fi
+  driver says "no such access point" about the board (last 60 s) — the board is off or the unit
+  hears nobody, nothing is stuck, the root keeps the mesh. After **60 s** out the library's own log
+  (`esp_mesh_lite_core_log_enable`) and the Wi-Fi driver's go on, and every 30 s one line
+  `out of the mesh for N s: …` says the library's level, parent, addresses, bars and the board's
+  last word; all off again when it is back in. After **5 min** out the unit restarts itself
+  (`siot_netcore.c` `MESH_OUT_RESTART_S`): every unit that ever stayed out came back on RESTART.
+  Never while an alarm is active; the wait doubles when it is out again after such a restart — 5,
+  10, 20, then 30 min at most (count in RTC memory, back to zero once it is in the mesh and hears
+  the central).
+- **One-way link (2026-11-05, `siot_netcore.c` `CONFIRM_*`).** A unit at level 2 heard the central
+  (not breathing) while the board listed it MISSING and its TEST blinked blue three times with no
+  cyan: its frames went nowhere, and nothing was logged on that path. Cause not established. A
+  joined unit now asks every 5 min (NAME_ANNOUNCE, protocol §7.11) or right after an unanswered
+  frame; unanswered for 2 min (doubling to 10) while the central is seen confirming another unit, it
+  leaves its parent and joins again (`siot_link_mesh_rejoin`). Never in alarm, never the root, and
+  nothing when no ACK passes at all (tablet off). The path now speaks: a TEST tap logs the parent
+  and the unit's addresses; a unit that receives another unit's uplink and is not the root, or a
+  root with no session, logs `uplink lost: …`.
   Bench observation: the 25 s beacon timeout was most of the failover time before the inactive-time
   and connect-timeout fixes; no measured series was recorded (`pocs/RESULTS.md` was never written — §14).
 
@@ -459,8 +533,9 @@ reopen frozen files:
 ## 8. Board: `coordinator` (from `root_duties.c`, `tcp_link.c`, `board_main.c`)
 
 - Normal mode only after a code exists: installation AP (§6.1), TCP server **`:5340`** (backlog 2, one
-  client = the current root, newest wins, keepalive 5/2/3, single `select()` loop over listen + client,
-  1 s tick), serial link (§6.5). Before that: setup mode, LED white blink.
+  client = the root — **one root, kept by the board**: a second unit is held aside and told to yield,
+  §6.3 "Root change" — keepalive 2/1/3, single `select()` loop over listen + root + the units held
+  aside, 1 s tick), serial link (§6.5). Before that: setup mode, LED white blink.
 - No 250-session question: the board never talks TCP to anything but the root. Scale is bounded by the
   AP's `max_connection` (8) during root election and by Mesh-Lite's tree — §14.
 - **Root duties** (ported from `mocked-device/main/mesh_sim.c`): forward every valid uplink frame to the

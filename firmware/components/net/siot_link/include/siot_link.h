@@ -5,7 +5,8 @@
  *
  *   SIOT_LINK_MESH   node:  Mesh-Lite raw messages to the root, or the root's
  *                           TCP session to the board at 192.168.4.1:5340
- *                    board: the installation AP + TCP server, one client = the root
+ *                    board: the installation AP + TCP server, one client = the
+ *                           root — ONE root, kept by the board (see "one root")
  *   SIOT_LINK_SERIAL board: the tablet, 115200 8N1 (siot_hal_serial)
  *   (Phase 2)        SIOT_LINK_ESPNOW, no signature changes needed (§6.4)
  *
@@ -108,6 +109,23 @@ void siot_link_stream_feed(siot_link_stream_t *s, siot_link_kind_t kind, const u
 esp_err_t siot_link_stream_expect_raw(siot_link_stream_t *s, size_t len, siot_link_raw_cb_t cb, void *ctx);
 void siot_link_stream_abort_raw(siot_link_stream_t *s);
 
+/* ---- one root (blueprint §4, protocol §7.6 ROOT_YIELD) ------------------ */
+
+/* A root that works is left alone (decided 2026-11-05): a second unit attached
+ * to the board takes the root only when the root's own link is WEAK — below
+ * the protocol's weak-link level, the one the map paints red (spec §9.4) —
+ * and the board hears the newcomer at least SIOT_LINK_ROOT_TAKEOVER_DB
+ * better. A root that moves, moves the whole tree with it. */
+#define SIOT_LINK_ROOT_WEAK_DBM    (-85)
+#define SIOT_LINK_ROOT_TAKEOVER_DB 10
+
+/* The board's rule, when a second unit dials while the root is alive: does
+ * the newcomer (the challenger) take the root? Signals are what the board's
+ * AP measures of each station, in dBm; unknown on either side = the root
+ * stays. Pure: tested on the host (test/host test_root_arbiter.c). */
+bool siot_link_root_challenger_wins(bool root_known, int root_rssi,
+                                    bool challenger_known, int challenger_rssi);
+
 #ifndef CONFIG_IDF_TARGET_LINUX
 /* ---- backends: init registers the ops; siot_link_start() brings it up --- */
 
@@ -116,8 +134,20 @@ void siot_link_stream_abort_raw(siot_link_stream_t *s);
 esp_err_t siot_link_mesh_node_init(const siot_installation_t *code);
 
 /* Board: installation AP (net_ssid/net_psk/channel, 192.168.4.1) + TCP
- * server on :5340, one client (the current root, newest wins). */
+ * server on :5340, one client: the root. ONE root (blueprint §4): a second
+ * unit that dials while the root is alive is told to yield — or takes the
+ * root, when the root's link is weak and the board hears the newcomer
+ * SIOT_LINK_ROOT_TAKEOVER_DB better, and then the old root is told
+ * (link_mesh_board.c). */
 esp_err_t siot_link_mesh_board_init(const siot_installation_t *code);
+
+/* Board: who writes the ROOT_YIELD frame (protocol §7.6) the board sends to a
+ * unit that must leave level 1 — the layer that owns SAFR (siot_coordinator).
+ * `root_mac` is the unit that keeps the root (zeros when unknown). Returns
+ * the frame length written to `out`, 0 = nothing to send. Runs in the link's
+ * server task. Without one the unit is only disconnected. */
+typedef size_t (*siot_link_root_yield_fn)(const uint8_t root_mac[6], uint8_t *out, size_t cap);
+void siot_link_mesh_board_set_root_yield(siot_link_root_yield_fn fn);
 
 /* Board: the tablet link over siot_hal_serial. */
 esp_err_t siot_link_serial_init(void);
@@ -139,10 +169,40 @@ esp_err_t siot_link_mesh_board_resume(void);
 
 /* ---- mesh queries (node backend; 0 / false on the board) --------------- */
 
-uint8_t siot_link_mesh_level(void);                       /* 0 = not joined, 1 = root */
+/* 0 = not joined, 1 = root. A unit is the root only with its station on the
+ * BOARD's access point: the library's "level 1" under another unit (a parent
+ * that came back with no level) or attached to nothing (still trying the
+ * board, or the board was lost) is reported 0 — not a root, not in the mesh
+ * (link_mesh_node.c, mesh_level). */
+uint8_t siot_link_mesh_level(void);
 bool    siot_link_mesh_parent(uint8_t mac[6], int8_t *rssi); /* STA's AP: parent, or the board when root */
 size_t  siot_link_mesh_children(uint8_t (*macs)[6], int8_t *rssi, size_t max); /* direct children */
 bool    siot_link_mesh_board_up(void);                    /* root with the TCP session open */
+
+/* Node, on ROOT_YIELD from the board (protocol §7.6): this unit is at level 1
+ * and another unit is the root. It closes its access point (its own units
+ * leave and find the mesh), leaves the board and may not come back to level 1
+ * until it has a parent in the mesh — or for 90 s when it finds none (the root
+ * may be gone by then: failover). Nothing when it is not at level 1. Safe from
+ * the link's rx path: the mesh task does the work. */
+void siot_link_mesh_yield_root(void);
+
+/* Node: one line that says where this unit hangs, for the logs — the
+ * library's level, its parent's SSID and signal, its station's address and
+ * gateway, its own access point's address. */
+void siot_link_mesh_describe(char *out, size_t cap);
+
+/* Node: leave the parent and look for one again — what a RESTART does to the
+ * mesh, without restarting. Only for a unit attached to another unit; nothing
+ * for the root. Safe from any task: the mesh task does the work. */
+void siot_link_mesh_rejoin(void);
+
+/* Node: for how many seconds in a row this unit has been out of the mesh —
+ * attached neither to a unit (as a child) nor to the board (as the root).
+ * 0 = it is in the mesh, or it is attached to nothing because the board is
+ * off (its access point is not on the air): nothing is stuck then, and the
+ * root keeps the mesh. siot_netcore restarts a unit that stays out. */
+uint32_t siot_link_mesh_out_s(void);
 
 /* Node: push a downlink frame one hop further, to this node's own children
  * (brief §6.3; the caller dedupes so it is a loop-safe re-broadcast). */

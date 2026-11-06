@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -57,6 +58,65 @@ static uint16_t s_pending_msg_id;
 static uint8_t  s_pending_payload[SAFR_EVENT_LEN];
 static uint8_t  s_pending_attempts;
 static int64_t  s_pending_next_ms;
+
+/* One-way link (table, 2026-11-05): a unit that hears the central — its
+ * HEARTBEATs come down, so it shows as joined and does not breathe — while
+ * nothing it sends arrives (the board lists it MISSING, its TEST blinks blue
+ * three times and never turns cyan). HEARTBEATs are not acknowledged, so an
+ * idle unit could not know. Now it finds out and gets out of it by itself:
+ *
+ *   - nothing of this unit confirmed by the central for CONFIRM_CHECK_MS (or
+ *     a frame just went unanswered: COMM_FAULT) -> it asks: NAME_ANNOUNCE
+ *     again, which the central ACKs (spec §7.11);
+ *   - the ask unanswered for the current wait (CONFIRM_REJOIN_MS, doubling to
+ *     CONFIRM_REJOIN_MAX_MS) AND the central seen confirming ANOTHER unit
+ *     since the ask -> the central is there and it is this unit it does not
+ *     hear: the unit leaves its parent and joins again (siot_link_mesh_rejoin
+ *     — what a RESTART does to the mesh, without restarting), and asks again.
+ *
+ * No ACK seen for anybody = the tablet is off: nothing is done, the mesh is
+ * left alone. Never while an alarm is active, never on the root (its frames
+ * go straight to the board). */
+#define CONFIRM_CHECK_MS      300000
+#define CONFIRM_REJOIN_MS     120000
+#define CONFIRM_REJOIN_MAX_MS 600000
+static int64_t  s_last_confirm_ms;   /* the central's last ACK of a frame of ours (0 = none yet in this state) */
+static int64_t  s_confirm_ask_ms;    /* asked at (0 = not asking) */
+static int64_t  s_other_ack_ms;      /* the central's last ACK of ANOTHER unit's frame that passed here */
+static uint32_t s_rejoin_wait_ms = CONFIRM_REJOIN_MS;
+static uint8_t  s_rejoins;           /* rejoins since the central last confirmed us */
+
+/* Last resort (2026-11-06). Every unit that ever stayed out of the mesh on
+ * the table came back the moment someone pressed RESTART — the library keeps
+ * state in RAM that only a restart clears. So a unit that has been out of the
+ * mesh for MESH_OUT_RESTART_S in a row (siot_link_mesh_out_s: attached to
+ * nothing, or to something that is not the mesh, while the board is on the
+ * air) restarts itself, after saying why on its console.
+ *
+ *   - never while an alarm is active (a restart forgets it): it waits;
+ *   - not when the board is simply off — the link does not count that as out;
+ *   - a unit that is out again after such a restart waits twice as long each
+ *     time: 5, 10, 20, then 30 minutes (MESH_OUT_RESTART_MAX_S) — a unit that
+ *     nothing can bring back restarts twice an hour, no more. The count lives
+ *     in RTC memory (it survives esp_restart, not a power cut) and goes back
+ *     to zero once the unit is in the mesh and hears the central. */
+#define MESH_OUT_RESTART_S      300
+#define MESH_OUT_RESTART_MAX_S 1800
+#define MESH_OUT_MAGIC   0x4D4F5554u /* "MOUT": the count below is ours, not power-on noise */
+static RTC_NOINIT_ATTR uint32_t s_out_magic;
+static RTC_NOINIT_ATTR uint32_t s_out_restarts;
+
+static uint32_t out_restarts(void)
+{
+    return s_out_magic == MESH_OUT_MAGIC && s_out_restarts <= 0xFF ? s_out_restarts : 0;
+}
+
+static uint32_t out_restart_wait_s(void)
+{
+    const uint32_t n = out_restarts();
+    const uint32_t wait = (uint32_t)MESH_OUT_RESTART_S << (n > 3 ? 3 : n);
+    return wait > MESH_OUT_RESTART_MAX_S ? MESH_OUT_RESTART_MAX_S : wait;
+}
 
 static bool s_name_announced;     /* the central acknowledged our NAME_ANNOUNCE */
 static uint16_t s_announce_msg_id; /* the copy waiting for that ACK */
@@ -343,6 +403,12 @@ static void on_ack(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_le
     (void)ctx;
     note_downlink();
     relay_down(f, raw, raw_len, dup);
+    if (!siot_mac_eq(f->dst_mac, siot_identity_get()->mac) && !siot_mac_is_bcast(f->dst_mac)) {
+        /* The central confirming ANOTHER unit: it is there and it hears the mesh. */
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        s_other_ack_ms = now_ms();
+        xSemaphoreGive(s_lock);
+    }
     if (!for_me(f) || f->payload_len < 4) return;
     const uint16_t acked = siot_get_u16(&f->payload[0]);
     const siot_evt_ack_t ev = {.msg_id = acked, .status = f->payload[2]};
@@ -350,6 +416,17 @@ static void on_ack(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_le
     ESP_LOGI(TAG, "ACK for msg_id %u status %u (%s)", acked, f->payload[2],
              s_pending_used && s_pending_msg_id == acked ? "confirms the pending frame"
              : s_pending_used ? "pending is another id" : "nothing pending");
+    const bool ours = (s_pending_used && s_pending_msg_id == acked) ||
+                      (s_announce_tries > 0 && s_announce_msg_id == acked);
+    if (ours) { /* the central hears this unit */
+        if (s_rejoins > 0) {
+            ESP_LOGW(TAG, "one-way link over: the central confirms this unit again after %u rejoin(s)", s_rejoins);
+        }
+        s_last_confirm_ms = now_ms();
+        s_confirm_ask_ms = 0;
+        s_rejoins = 0;
+        s_rejoin_wait_ms = CONFIRM_REJOIN_MS;
+    }
     if (s_pending_used && s_pending_msg_id == acked) s_pending_used = false;
     if (!s_name_announced && s_announce_tries > 0 && s_announce_msg_id == acked) {
         s_name_announced = true; /* the central has our name, product and version */
@@ -441,6 +518,21 @@ static bool apply_set_device(const uint8_t *a, size_t alen)
 static void on_command(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len, bool dup, void *ctx)
 {
     (void)ctx;
+    /* ROOT_YIELD (spec §7.6, blueprint §4): the board's word to a unit that
+     * is attached to it and is not the root — sent on that unit's own
+     * session, so whoever receives it at level 1 is the unit it is for. It
+     * leaves the board and joins the mesh as a child (siot_link). Never
+     * relayed, never ACKed, and not a sign of a path to the board: the
+     * session it came on ends with it. */
+    if (f->payload_len >= 2 && f->payload[0] == SAFR_CMD_ROOT_YIELD) {
+        if (!dup && siot_link_mesh_level() == 1) {
+            char root[SIOT_MAC_STR_LEN] = "?";
+            if (f->payload[1] >= 6 && f->payload_len >= 8) siot_mac_to_str(&f->payload[2], root);
+            ESP_LOGW(TAG, "ROOT_YIELD: the root is %s, not this unit — leaving level 1 to join the mesh", root);
+            siot_link_mesh_yield_root();
+        }
+        return;
+    }
     note_downlink();
     relay_down(f, raw, raw_len, dup);
     if (!for_me(f) || f->payload_len < 2) return;
@@ -548,7 +640,9 @@ static void on_button(siot_evt_id_t id, const void *data, void *ctx)
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (id == SIOT_EVT_BUTTON_TAP) {
-        ESP_LOGW(TAG, "TEST tap (level %u) -> MANUAL_TEST", siot_link_mesh_level());
+        char where[160];
+        siot_link_mesh_describe(where, sizeof(where));
+        ESP_LOGW(TAG, "TEST tap (level %u) -> MANUAL_TEST — %s", siot_link_mesh_level(), where);
         emit_event(now_ms(), SAFR_EVT_ALERT, SAFR_EC_MANUAL_TEST, true, true);
     } else if (id == SIOT_EVT_BUTTON_DOUBLE_TAP) {
         ESP_LOGW(TAG, "double tap -> ALARM SMOKE_ALARM");
@@ -648,6 +742,56 @@ static void netcore_task(void *arg)
             }
         }
         if (t >= next_hb_ms) { emit_heartbeat(t); next_hb_ms = t + HB_INTERVAL_MS; }
+
+        /* One-way link (see CONFIRM_CHECK_MS): joined under another unit, the
+         * central heard, no alarm. */
+        if (siot_link_mesh_level() >= 2 && siot_link_is_up(SIOT_LINK_MESH) && board_reachable(t) && !s_alarm_active) {
+            if (s_last_confirm_ms == 0) s_last_confirm_ms = t;
+            if (s_confirm_ask_ms == 0 && (s_comm_fault || t - s_last_confirm_ms >= CONFIRM_CHECK_MS)) {
+                s_confirm_ask_ms = t;
+                announce_again_locked();
+                ESP_LOGI(TAG, "nothing of this unit confirmed by the central for %d s%s: asking (NAME_ANNOUNCE)",
+                         (int)((t - s_last_confirm_ms) / 1000), s_comm_fault ? ", and a frame went unanswered" : "");
+            } else if (s_confirm_ask_ms != 0 && t - s_confirm_ask_ms >= (int64_t)s_rejoin_wait_ms &&
+                       s_other_ack_ms > s_confirm_ask_ms) {
+                char where[160];
+                siot_link_mesh_describe(where, sizeof(where));
+                if (s_rejoins < 0xFF) s_rejoins++;
+                s_rejoin_wait_ms = s_rejoin_wait_ms >= CONFIRM_REJOIN_MAX_MS / 2 ? CONFIRM_REJOIN_MAX_MS
+                                                                                  : s_rejoin_wait_ms * 2;
+                ESP_LOGW(TAG, "one-way link: the central is heard and confirms other units, but nothing of this "
+                              "unit for %d s — leaving the parent to join again (rejoin %u, next in %d s). %s",
+                         (int)((t - s_last_confirm_ms) / 1000), s_rejoins, (int)(s_rejoin_wait_ms / 1000), where);
+                s_confirm_ask_ms = t;
+                announce_again_locked();
+                siot_link_mesh_rejoin();
+            }
+        } else {
+            s_confirm_ask_ms = 0; /* not in that state: the count starts over when it is */
+            if (!board_reachable(t)) s_last_confirm_ms = 0;
+        }
+
+        /* Last resort (see MESH_OUT_RESTART_S): out of the mesh for too long. */
+        const uint32_t out_s = siot_link_mesh_out_s();
+        if (out_s == 0) {
+            if (out_restarts() != 0 && siot_link_mesh_level() > 0 && board_reachable(t)) {
+                ESP_LOGI(TAG, "in the mesh and the central is heard: the restart wait is back to %d min",
+                         MESH_OUT_RESTART_S / 60);
+                s_out_restarts = 0;
+            }
+        } else if (out_s >= out_restart_wait_s() && !s_alarm_active) {
+            char where[160];
+            siot_link_mesh_describe(where, sizeof(where));
+            const uint32_t n = out_restarts() + 1;
+            s_out_magic = MESH_OUT_MAGIC;
+            s_out_restarts = n;
+            ESP_LOGE(TAG, "out of the mesh for %u s — RESTARTING this unit (restart %u of this kind; if it is out "
+                          "again the next one waits %u min). %s",
+                     (unsigned)out_s, (unsigned)n, (unsigned)(out_restart_wait_s() / 60), where);
+            xSemaphoreGive(s_lock);
+            vTaskDelay(pdMS_TO_TICKS(300)); /* let the line out */
+            esp_restart();
+        }
 
         /* Fast phase (spec §9.1): 3 × 2 s, same MSG_ID, fresh MSG_CTR. */
         if (s_pending_used && t >= s_pending_next_ms) {
