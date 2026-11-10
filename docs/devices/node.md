@@ -16,7 +16,7 @@ Three words that describe the same hardware in different states (blueprint §0, 
 
 | Word | Meaning |
 |---|---|
-| **AC device / node** | The unit itself. Mesh-Lite node under the board's access point, up to 4 levels deep. |
+| **AC device / node** | The unit itself. Mesh-Lite node under the board's access point, up to 15 levels deep (15 radio hops from the board). |
 | **Root** | The AC device currently connected *directly* to the board's access point (level 1). Chosen automatically by Mesh-Lite; replaced automatically when it dies. There is one root per installation. |
 | **Relay / child node** | An AC device at level ≥ 2, joined under the root or another node. Forwards its subtree's traffic and re-broadcasts downlink. |
 
@@ -75,7 +75,7 @@ mesh.
 
 | Ref | Function | Node's part | Status |
 |---|---|---|---|
-| 2.2 | Self-forming mesh | Boots, reads the code, starts Mesh-Lite with router = `NET_SSID` / `NET_PSK`, mesh id, node type root-or-child, max level 4, fixed channel. **One root, kept by the board** (reference row 2.2, protocol §7.6 `ROOT_YIELD`): a second unit that attaches to the board is told to yield and joins under the root; Mesh-Lite's own root merging ("fusion") is switched off since 2026-11-06, and a unit counts as the root only while its station is on the board | POC |
+| 2.2 | Self-forming mesh | Boots, reads the code, starts Mesh-Lite with router = `NET_SSID` / `NET_PSK`, mesh id, node type root-or-child, max level 15 (15 radio hops from the board; 4 until 2026-11-10), fixed channel. **One root, kept by the board** (reference row 2.2, protocol §7.6 `ROOT_YIELD`): a second unit that attaches to the board is told to yield and joins under the root; Mesh-Lite's own root merging ("fusion") is switched off since 2026-11-06, and a unit counts as the root only while its station is on the board | POC |
 | 2.3 | **Root failover** | If the root dies another AC device becomes root; the mesh also survives the board being off (nodes form a mesh among themselves) and re-homes when it returns. Target < 60 s, max 120 s. **v3.3:** a node whose level changed re-sends `HEARTBEAT` + `TOPOLOGY` only once the new path is proven (root: board session up; child: a downlink frame arrived), then restarts its timers. A unit that stays out of the mesh — attached neither to a unit nor to the board while the board is on the air — logs why after 60 s and restarts itself after 5 min (never in alarm; then 10, 20, at most every 30 min) | POC (numbers not recorded) · announce-on-proven-path Implemented · self-restart built 2026-11-06, not yet run on units |
 | 2.4 | Uplink path | Own and relayed frames → root (Mesh-Lite raw message to root) → board over TCP `:5340` (root only) | POC |
 | 2.5 | Downlink path | Root receives from the board, broadcasts to children; **every node re-broadcasts one hop further and dedupes** by MSG_ID; acts only on frames addressed to it or broadcast | POC |
@@ -187,7 +187,7 @@ three blues 2 s apart and no cyan = no ACK (tablet not connected or link down).
 | Alarm re-announce | every 60 s until `RESET` | spec §7.2 |
 | Alarm to panel | budget ≤ 10 s end to end; measured ≪ 1 s on a 2-level mesh | ref §4 |
 | Root failover | target < 60 s, max 120 s; POC code: 25 s beacon timeout, ~60 s blocking connect, ~11 s keepalive — **5× series not yet run** | ref 2.3, brief §14 item 5 |
-| Mesh depth | up to 4 levels; `CHILD_COUNT` ≤ 16 in `TOPOLOGY` | blueprint §4, spec §7.4 |
+| Mesh depth | up to 15 levels (hops from the board; 4 until 2026-11-10; a unit at the last level takes no unit under it); `CHILD_COUNT` ≤ 16 in `TOPOLOGY` | blueprint §4, spec §7.4 |
 | ESP-NOW peers (Phase 2) | 20 total, 6 encrypted — a parent adds a leaf as an unencrypted peer on wake, answers, drops it; SAFR does the encryption | ref §4.1 item 4 (`esp_now.h`, IDF 5.5.2) |
 | Parent role (spec §12) | leaf ACK within the leaf's 100 ms wait; mailbox 4 per leaf; custody queue 32; leaf table expiry 180 s | spec §12.10, §12.11 |
 | Survey probe | 4 copies 1.2 s apart; window 4.5 s; green ≥ −75 dBm, yellow ≥ −85 dBm | lifecycle §6 |

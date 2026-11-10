@@ -46,7 +46,28 @@ static const char *TAG = "link_mesh_node";
 #define TCP_KEEPALIVE_INTVL_S    2
 #define TCP_KEEPALIVE_CNT        3
 #define STA_INACTIVE_TIME_S      6    /* parent beacon loss; driver default seen on the bench was 25 s */
-#define MESH_MAX_LEVEL           4
+/* How deep the mesh goes: the level of a unit is its number of radio hops to
+ * the board (root = 1). Nothing may attach to a unit at the last level — the
+ * joining unit drops it as a candidate before it looks at the signal
+ * (esp_mesh_lite_vendor_ie_cb) and the unit itself turns away a child that
+ * would pass it — whatever its number of children (6 per unit, another limit).
+ *
+ * It was 4 until 2026-11-10: on a site, a unit switched on beside a unit at
+ * 4 hops could not join it, heard the others too weakly, and breathed for
+ * good. 15 is as far as the library goes (the level travels in 4 bits, and so
+ * does the count of the ancestors' network numbers a unit inherits). Each hop
+ * adds delay and one more chance to lose a frame; never run on units beyond 4
+ * when this was written.
+ *
+ * TWO places hold it and they must agree: mesh_cfg.max_level below, and the
+ * library's own Kconfig symbol, which its source uses directly
+ * (esp_mesh_lite.c: a unit deeper than CONFIG_MESH_LITE_MAXIMUM_LEVEL_ALLOWED
+ * drops its children and leaves its parent). So this is the Kconfig symbol,
+ * set in apps/node/sdkconfig.defaults; an old sdkconfig that still says
+ * another number fails the build here. */
+#define MESH_MAX_LEVEL           CONFIG_MESH_LITE_MAXIMUM_LEVEL_ALLOWED
+_Static_assert(MESH_MAX_LEVEL == 15, "mesh depth: CONFIG_MESH_LITE_MAXIMUM_LEVEL_ALLOWED must be 15 "
+                                     "(apps/node/sdkconfig.defaults; an existing sdkconfig keeps its old value)");
 /* Mesh-Lite's "fusion" is OFF (2026-11-06). It is the library's own way of
  * getting from several roots to one (User Guide, Automatic Root Node
  * Selection): every root broadcasts "join_me_req" on the board's network with

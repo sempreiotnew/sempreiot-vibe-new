@@ -17,6 +17,11 @@ CONFIG_MBEDTLS_HKDF_C=y
 # the prebuilt lib links but its src/ objects do not -> undefined references.
 CONFIG_MESH_LITE_ENABLE=y
 
+# Mesh depth: 15 levels = 15 radio hops from the board, the most the library
+# allows (4 until 2026-11-10; see MESH_MAX_LEVEL in siot_link/src/link_mesh_node.c,
+# which takes this symbol and fails the build if it is another number).
+CONFIG_MESH_LITE_MAXIMUM_LEVEL_ALLOWED=15
+
 # Mesh-Lite runs its connect/retry/report timers on the FreeRTOS timer service
 # task; IDF's 2048-byte default overflows there. esp_timer bumped for the same
 # reason (brief §2 "sdkconfig facts that are not optional").

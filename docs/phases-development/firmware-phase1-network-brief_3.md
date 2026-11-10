@@ -354,7 +354,7 @@ Init sequence (mirrors `managed_components/espressif__mesh_lite/external_example
 `esp_netif_init` → `esp_event_loop_create_default` → `esp_bridge_create_all_netif()` (SoftAP with DHCP +
 STA netifs, `esp_wifi_init/start`) → `esp_bridge_wifi_set_config(WIFI_IF_STA, {0})` →
 `esp_bridge_wifi_set_config(WIFI_IF_AP, {ssid = "<net_ssid>-<mac[3..5] hex>", password = net_psk,
-channel})` → `ESP_MESH_LITE_DEFAULT_INIT()` with `mesh_id`, `max_level = 4`,
+channel})` → `ESP_MESH_LITE_DEFAULT_INIT()` with `mesh_id`, `max_level = 15` (`CONFIG_MESH_LITE_MAXIMUM_LEVEL_ALLOWED`; 4 until 2026-11-10),
 **`join_mesh_ignore_router_status = true`**, `softap_ssid/password` → `esp_mesh_lite_init` →
 `esp_mesh_lite_set_softap_info` → `esp_mesh_lite_set_router_config({net_ssid, net_psk})` →
 `esp_mesh_lite_raw_msg_action_list_register` → `esp_mesh_lite_start` →
