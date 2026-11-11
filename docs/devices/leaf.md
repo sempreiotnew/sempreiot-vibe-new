@@ -177,7 +177,7 @@ and `siot_coordinator` forward any authenticated frame regardless of link (brief
 | Post-provisioning verdict (≤ 30 s) | the same as a button press, run by the leaf itself |
 | Button press | blue 100 ms at once → (unbound or `NO_PATH`: discovery, no LED) → walk test: blue 500 ms sent, cyan 500 ms confirmed, or one red · survey: one blink per answering unit, one red = nobody, then dark (2026-10-03: a white "setup" flash after the survey — read as cyan with the board off — removed; the leaf's resting LED is off) |
 | COMM_FAULT | one red blink + trouble chirp per wake |
-| Alarm active | red solid + local sounder, awake |
+| Alarm active | red blink (500 ms on / 500 ms off, as every unit in alarm) + local sounder, awake — specified; the leaf firmware lights no alarm LED yet |
 | IDENTIFY (from the mailbox) | blue blink N s, then sleep |
 | Factory-reset armed | white solid ≥ 5 s |
 

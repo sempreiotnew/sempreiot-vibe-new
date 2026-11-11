@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sempreiot_central_app/core/theme/app_colors.dart';
+import 'package:sempreiot_central_app/features/central/application/device_led_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/safr_traffic_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/topology_provider.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_frame.dart';
@@ -96,6 +97,51 @@ void main() {
     bus.emit(tick(nodeMac));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byType(CommandRipple), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a unit in alarm spreads red rings again and again on its card',
+      (tester) async {
+    final bus = SafrTrafficBus();
+    addTearDown(bus.dispose);
+    var now = DateTime(2026, 1, 1);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        safrTrafficProvider.overrideWithValue(bus),
+        // The engine's clock, moved along with the pumps below.
+        deviceLedProvider.overrideWith((ref) => DeviceLedEngine(
+            traffic: bus.stream, nodes: () => [node], clock: () => now)),
+      ],
+      child: MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 64,
+              height: 64,
+              child: Stack(clipBehavior: Clip.none, children: [
+                DeviceAlarmRipple(node: node, diameter: 64),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    ));
+    expect(find.byType(CommandRipple), findsNothing);
+    bus.emit(tick(nodeMac, severity: 3, msgType: SafrMsgType.event));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    final rings = tester.widget<CommandRipple>(find.byType(CommandRipple));
+    expect(rings.color, AppColors.error);
+    expect(rings.repeat, isTrue);
+    // Still there long after one set of rings has faded.
+    now = now.add(const Duration(seconds: 5));
+    await tester.pump(const Duration(seconds: 5));
+    expect(find.byType(CommandRipple), findsOneWidget);
+    // No re-announce for a whole period: the unit left alarm, the rings go.
+    now = now.add(const Duration(seconds: 70));
+    await tester.pump(const Duration(seconds: 70));
+    await tester.pump();
     expect(find.byType(CommandRipple), findsNothing);
     expect(tester.takeException(), isNull);
   });

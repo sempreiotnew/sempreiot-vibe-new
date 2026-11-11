@@ -72,7 +72,7 @@ in `tools/pinmap/pinmap.yaml`.
 ## 6. LED language
 
 Exactly the node's (reference row 7.7): white blink setup · white breathe finding the network · green
-flash root / off child · blue / cyan traffic pulses · red solid = alarm latched (this unit sounding).
+flash root / off child · blue / cyan traffic pulses · red blink (500 ms on / 500 ms off) = alarm latched (this unit sounding).
 
 ## 7. Open items
 

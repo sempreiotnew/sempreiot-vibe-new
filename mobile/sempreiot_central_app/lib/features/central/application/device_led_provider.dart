@@ -35,12 +35,16 @@ import 'topology_provider.dart';
 ///    central's ACK comes within 3 s. Its red blink (no ACK reached it) is
 ///    not shown: the tablet cannot know its ACK was lost on the way down;
 ///  * IDENTIFY: blue blink 1 s for N s, no pulses meanwhile;
-///  * base: node in alarm red solid, root (level 1) green flash, board
-///    magenta flash, children and leaves off. "In alarm" is the DEVICE's
-///    state, not the app's latch (the ALARME badge): red while its ALARM
-///    re-announces keep arriving (every 60 s, siot_netcore.c), gone when a
-///    RESET clears the latch, the unit reboots (HEARTBEAT uptime) or the
-///    re-announces stop.
+///  * base: node in alarm red blink (500 ms on / 500 ms off; red solid
+///    until 2026-11-11), root (level 1) green flash, board magenta flash,
+///    children and leaves off. "In alarm" is the DEVICE's state, not the
+///    app's latch (the ALARME badge): red while its ALARM re-announces keep
+///    arriving (every 60 s, siot_netcore.c), gone when a RESET clears the
+///    latch, the unit reboots (HEARTBEAT uptime) or the re-announces stop.
+///    The same "in alarm" ([inAlarm]) spreads the red rings from the unit
+///    on the Rede map and on its Dispositivos card — a drawing of the
+///    tablet, not a LED: a battery unit gets the rings too, though its
+///    firmware lights no alarm LED yet.
 ///
 /// What never crosses the wire is not shown here: survey, button hold,
 /// setup, and the white "finding the network" of an offline unit (offline
@@ -98,8 +102,9 @@ class DeviceLedEngine extends ChangeNotifier {
   /// before is not an alarm they are still in.
   final _bootedSinceStart = <String>{};
 
-  /// Redraws when a red LED times out (no re-announce): red is static, so
-  /// nothing else would repaint it.
+  /// Redraws when an alarm times out (no re-announce): whoever listens
+  /// (the LED dot, the red rings) stops then, not at the next frame of
+  /// traffic.
   final _alarmExpiry = <String, Timer>{};
 
   LedTimeline _led(String mac) =>
@@ -240,10 +245,16 @@ class DeviceLedEngine extends ChangeNotifier {
     return true;
   }
 
+  /// [node] is in alarm right now and can be seen: what blinks its LED red
+  /// and spreads the red rings from it. Never the board (it has no alarm
+  /// of its own), never a unit without communication.
+  bool inAlarm(TopologyNode node) =>
+      node.layer != 0 && node.online && node.heard && _inAlarm(node);
+
   LedBase baseOf(TopologyNode node) {
     if (node.layer == 0) return LedBase.magentaFlash;
     if (node.isLeaf) return LedBase.off; // no alarm LED on a leaf yet
-    if (_inAlarm(node)) return LedBase.redSolid;
+    if (_inAlarm(node)) return LedBase.redBlink;
     return node.layer == 1 ? LedBase.greenFlash : LedBase.off;
   }
 
@@ -256,11 +267,12 @@ class DeviceLedEngine extends ChangeNotifier {
   }
 
   /// True when [node]'s LED changes over time right now, so the screen has
-  /// to redraw every frame (a pulse queued, IDENTIFY, a slow flash).
+  /// to redraw every frame (a pulse queued, IDENTIFY, a slow flash, the
+  /// alarm's red blink).
   bool animating(TopologyNode node) {
     if (!node.online || !node.heard) return false;
     final base = baseOf(node);
-    if (base == LedBase.greenFlash || base == LedBase.magentaFlash) return true;
+    if (base != LedBase.off) return true;
     return _leds[node.mac]?.busy(_clock()) ?? false;
   }
 

@@ -85,7 +85,7 @@ What the LED tells you after that (one language for every unit):
 | blue blink for 1 s | survey: this unit heard a neighbour's probe and answered (§5) |
 | green / yellow / red solid for 3 s | survey verdict on the unit whose TEST you pressed (§5) |
 | blue blink for N s | "Piscar" from the tablet (identify) |
-| red solid | alarm latched |
+| red blink (500 ms on / 500 ms off) | in alarm, until it is reset |
 
 If the scan says **"Este dispositivo já foi configurado"** **[Phase 1]**: another installer already did
 it, or it holds an old installation. To redo it, hold its button 5 s (§10) and start again.

@@ -145,7 +145,7 @@ plus FACTORY_RESET (button ≥ 5 s) and UNPROVISIONED_FACTORY (no identity)
 | Survey, passive unit | 1 s solid green / yellow / red | ≥ −75 / ≥ −85 / below dBm at which it heard the probe |
 | Survey, pressed unit | dark 4.5 s, one 400 ms blink per answering unit in that link's colour; one red blink = nobody | Button locked while dark |
 | IDENTIFY | blue blink, 1 s period, N s | Suppresses traffic pulses meanwhile |
-| Alarm latched | red solid | Until `RESET` |
+| Alarm latched | red blink, 500 ms on / 500 ms off | Until `RESET` (2026-11-11; was red solid) |
 | Factory-reset armed | white solid ≥ 5 s | Then reboot into setup |
 | Unprovisioned factory | red slow | No `id` / `pop` |
 

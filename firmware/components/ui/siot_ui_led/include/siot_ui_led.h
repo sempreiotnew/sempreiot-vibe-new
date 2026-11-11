@@ -13,7 +13,9 @@
  *   ONLINE, node level 1   green flash 250 ms every 5 s (root)
  *   ONLINE, node level ≥ 2 off (child)
  *   DEGRADED               keeps the role colour (no pattern defined yet)
- *   ALARM_SET              red solid until ALARM_CLEARED
+ *   ALARM_SET              red blink, 500 ms on / 500 ms off, until
+ *                          ALARM_CLEARED (was red solid until 2026-11-11);
+ *                          not the factory red, a 250 ms flash every 5 s
  *   IDENTIFY               blue blink, 1 s period, for N s (default 3)
  *   SURVEY_HEARD           passive unit: 1 s solid in the colour of the RSSI it
  *                          heard the probe at (green ≥ −75, yellow ≥ −85, red)
@@ -58,13 +60,14 @@ typedef enum {
     SIOT_LED_GREEN_SOLID,     /* installed cue (blueprint, not wired) */
     SIOT_LED_MAGENTA_SOLID,   /* (console only) */
     SIOT_LED_MAGENTA_BLINK,   /* board serving: 250 ms flash every 5 s */
-    SIOT_LED_RED_SOLID,       /* alarm / fault */
+    SIOT_LED_RED_SOLID,       /* fault; survey: weak link / nobody answered */
     SIOT_LED_RED_BLINK,       /* unprovisioned factory: 250 ms every 5 s */
     SIOT_LED_BLUE_BLINK,      /* IDENTIFY (1 s period) */
     SIOT_LED_BLUE_SOLID,      /* pulse: background tick / outgoing message */
     SIOT_LED_CYAN_SOLID,      /* pulse: own event confirmed by the tablet */
     SIOT_LED_YELLOW_SOLID,    /* survey: only weak answers (lifecycle §6) */
     SIOT_LED_WHITE_BREATHE,   /* configured, finding the network: slow dim fade, never a blink */
+    SIOT_LED_RED_ALARM_BLINK, /* in alarm: 500 ms on / 500 ms off until RESET */
 } siot_led_pattern_t;
 
 #define SIOT_LED_SURVEY_HEARD_MS  1000  /* passive unit: solid colour of the probe it heard */

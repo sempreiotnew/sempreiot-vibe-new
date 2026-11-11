@@ -117,26 +117,31 @@ void main() {
     expect(at(childMac, 1100), isNull);
   });
 
-  test('a COMMAND: the board relays it down (blue 500 ms on the board), the '
+  test(
+      'a COMMAND: the board relays it down (blue 500 ms on the board), the '
       'unit\'s own ACK of it is blue 500 ms on the unit and the board', () {
     // safr_downlink_provider: one downlink tick per transmission …
-    tickAt(0, const SafrTrafficTick(
-      mac: childMac,
-      direction: SafrTrafficDirection.downlink,
-      severity: 0,
-      msgType: SafrMsgType.command,
-    ));
+    tickAt(
+        0,
+        const SafrTrafficTick(
+          mac: childMac,
+          direction: SafrTrafficDirection.downlink,
+          severity: 0,
+          msgType: SafrMsgType.command,
+        ));
     expect(at(boardMac, 300), LedColor.blue);
     expect(at(childMac, 300), isNull, reason: 'receiving lights nothing');
     // … and the unit's ACK (siot_netcore.c "ACK every time" → on_tx: ACK is
     // a message, 500 ms), relayed up by the board.
-    tickAt(1000, const SafrTrafficTick(
-      mac: childMac,
-      direction: SafrTrafficDirection.uplink,
-      severity: 0,
-      ack: true,
-      msgType: SafrMsgType.ack,
-    ));
+    tickAt(
+        1000,
+        const SafrTrafficTick(
+          mac: childMac,
+          direction: SafrTrafficDirection.uplink,
+          severity: 0,
+          ack: true,
+          msgType: SafrMsgType.ack,
+        ));
     expect(at(childMac, 1400), LedColor.blue);
     expect(at(childMac, 1600), isNull);
     expect(at(boardMac, 1400), LedColor.blue);
@@ -197,13 +202,30 @@ void main() {
         eventCode: SafrEventCode.smokeAlarm,
       );
 
+  test('in alarm the red BLINKS 500 ms on / 500 ms off, never solid', () {
+    nodes = [
+      node(boardMac, SafrNodeRole.root, 0),
+      node(childMac, SafrNodeRole.node, 2, alarm: true),
+    ];
+    tickAt(0, alarmUp(childMac));
+    expect(at(childMac, 400), LedColor.blue); // the ALARM leaving
+    // transient_done: the base resumes in its dark half.
+    expect(at(childMac, 600), isNull);
+    expect(at(childMac, 999), isNull);
+    expect(at(childMac, 1000), LedColor.red);
+    expect(at(childMac, 1499), LedColor.red);
+    expect(at(childMac, 1500), isNull);
+    expect(at(childMac, 2000), LedColor.red);
+    expect(engine.animating(find(childMac)), isTrue); // redrawn every frame
+  });
+
   test('red follows the device: on while its ALARM re-announces arrive', () {
     nodes = [
       node(boardMac, SafrNodeRole.root, 0),
       node(childMac, SafrNodeRole.node, 2, alarm: true),
     ];
     tickAt(0, alarmUp(childMac));
-    expect(at(childMac, 600), LedColor.red); // after the blue 500 ms
+    expect(at(childMac, 1000), LedColor.red); // after the blue 500 ms
     tickAt(60000, alarmUp(childMac)); // re-announce (ALARM_RETX_MS)
     expect(at(childMac, 120000), LedColor.red);
   });
@@ -239,13 +261,13 @@ void main() {
     // read "not latched" as "reset" and dropped the alarm for 60 s.
     tickAt(100000, alarmUp(childMac)); // not latched yet
     expect(at(childMac, 100010), LedColor.blue);
-    expect(at(childMac, 100600),
+    expect(at(childMac, 101000),
         LedColor.red); // redraw in the gap: red, like the unit
     nodes = [
       node(boardMac, SafrNodeRole.root, 0),
       node(childMac, SafrNodeRole.node, 2, alarm: true),
     ];
-    expect(at(childMac, 100700), LedColor.red); // latch written
+    expect(at(childMac, 101100), LedColor.red); // latch written
   });
 
   test('latched before the app listened: red until one re-announce period', () {
@@ -273,12 +295,12 @@ void main() {
     ];
     tickAt(0, alarmUp(childMac));
     tickAt(15000, heartbeat(childMac, 600)); // still up: still in alarm
-    expect(at(childMac, 15200), LedColor.red);
+    expect(at(childMac, 15600), LedColor.red);
     tickAt(20000, heartbeat(childMac, 3)); // booted at ~17 s, after the alarm
     expect(at(childMac, 20200), isNull);
     expect(find(childMac).alarmLatched, isTrue); // ALARME badge stays
     tickAt(25000, alarmUp(childMac)); // alarms again after the reboot
-    expect(at(childMac, 25600), LedColor.red);
+    expect(at(childMac, 26000), LedColor.red);
   });
 
   test('latched at app start, then the unit reboots: no red', () {
@@ -298,6 +320,28 @@ void main() {
     ];
     tickAt(0, alarmUp(leafMac));
     expect(at(leafMac, 1000), isNull);
+    // The red rings are the tablet's drawing, not its LED: it gets them.
+    expect(engine.inAlarm(find(leafMac)), isTrue);
+  });
+
+  test('the red rings follow the same alarm as the red blink', () {
+    nodes = [
+      node(boardMac, SafrNodeRole.root, 0),
+      node(childMac, SafrNodeRole.node, 2, alarm: true),
+    ];
+    expect(engine.inAlarm(find(boardMac)), isFalse);
+    tickAt(0, alarmUp(childMac));
+    now = DateTime(2026, 1, 1, 0, 0, 1);
+    expect(engine.inAlarm(find(childMac)), isTrue);
+    now = DateTime(2026, 1, 1, 0, 1, 11); // 71 s: no re-announce came
+    expect(engine.inAlarm(find(childMac)), isFalse);
+    // Without communication: no rings, as no LED.
+    tickAt(80000, alarmUp(childMac));
+    nodes = [
+      node(boardMac, SafrNodeRole.root, 0),
+      node(childMac, SafrNodeRole.node, 2, alarm: true, online: false),
+    ];
+    expect(engine.inAlarm(find(childMac)), isFalse);
   });
 
   test('an offline unit shows no LED (the app keeps its red look)', () {
@@ -338,8 +382,7 @@ void main() {
       expect(at(leafMac, 1050), isNull);
     });
 
-    test('ten chunks a second: blue without a gap, 8 pulses in the queue',
-        () {
+    test('ten chunks a second: blue without a gap, 8 pulses in the queue', () {
       // 6 s of a push, one ACK every 100 ms, from t = 1 s: the magenta
       // flash of the board never gets a turn.
       for (var i = 0; i < 60; i++) {
@@ -424,7 +467,8 @@ void main() {
   // LED.
 
   group('firmware rollout', () {
-    test('OTA_STATUS is background traffic: a 100 ms tick on the unit and on '
+    test(
+        'OTA_STATUS is background traffic: a 100 ms tick on the unit and on '
         'the board that relays it', () {
       tickAt(1000, up(childMac, SafrMsgType.otaStatus));
       expect(at(childMac, 1050), LedColor.blue);
@@ -482,8 +526,7 @@ void main() {
       expect(at(childMac, 1550), isNull);
     });
 
-    test('OTA_ROLLOUT is the board\'s own frame: a tick on the board only',
-        () {
+    test('OTA_ROLLOUT is the board\'s own frame: a tick on the board only', () {
       tickAt(1000, up(boardMac, SafrMsgType.otaRollout));
       expect(at(boardMac, 1050), LedColor.blue);
       expect(at(boardMac, 1150), isNull);
@@ -499,7 +542,8 @@ void main() {
       expect(at(rootMac, 6100 + 4500 + 50), LedColor.green);
     });
 
-    test('a unit that restarts into its new firmware is silent: its LED is '
+    test(
+        'a unit that restarts into its new firmware is silent: its LED is '
         'dark on screen, whatever it is supervised as', () {
       nodes = [
         node(boardMac, SafrNodeRole.root, 0),

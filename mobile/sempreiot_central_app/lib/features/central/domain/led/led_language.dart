@@ -21,11 +21,13 @@ const ledMsgMs = 500;
 const ledSlowPeriodMs = 5000;
 const ledSlowOnMs = 250;
 
-/// `BLINK_HALF_TICKS` × 50 ms — IDENTIFY blinks 500 ms on / 500 ms off.
+/// `BLINK_HALF_TICKS` × 50 ms — IDENTIFY (blue) and a unit in alarm (red)
+/// blink 500 ms on / 500 ms off.
 const ledBlinkHalfMs = 500;
 
 /// After a pulse the base resumes in its "off" part (`transient_done`:
-/// phase = BLINK_HALF_TICKS), so the next slow flash comes 4.5 s later.
+/// phase = BLINK_HALF_TICKS), so the next slow flash comes 4.5 s later and
+/// the alarm's red blink comes back dark for 500 ms, then lit.
 const ledResumePhaseMs = ledBlinkHalfMs;
 
 /// `SIOT_LED_PULSE_QUEUE` — pulses waiting behind the one lit.
@@ -37,7 +39,7 @@ const leafWalkTestAckMs = 3000;
 
 /// `ALARM_RETX_MS` (siot_netcore.c) — a node in alarm re-announces its
 /// ALARM this often, and stops the moment it leaves alarm (RESET, reboot).
-/// The red LED is shown while re-announces keep coming, plus some slack for
+/// The red blink is shown while re-announces keep coming, plus some slack for
 /// the trip through the mesh.
 const alarmRetxMs = 60000;
 const alarmRetxGraceMs = 10000;
@@ -55,7 +57,10 @@ const ledBreathePeriodMs = 3000;
 const ledBreatheMaxDuty = 64 / 255;
 
 /// The steady pattern under the pulses (`pattern_for_state`).
-enum LedBase { off, redSolid, greenFlash, magentaFlash }
+///
+/// [redBlink] is `SIOT_LED_RED_ALARM_BLINK`, a unit in alarm: 500 ms on /
+/// 500 ms off until its alarm ends (red solid until 2026-11-11).
+enum LedBase { off, redBlink, greenFlash, magentaFlash }
 
 /// How bright a duty LOOKS. The real LED's output follows its PWM duty, and
 /// the eye reads light on a curve close to a cube root (CIE lightness): the
@@ -131,7 +136,8 @@ class LedTimeline {
   final _segments = <_Segment>[];
   DateTime? _identifyUntil;
 
-  /// Origin of the slow flash; moved to the end of every transient.
+  /// Origin of the slow flash and of the alarm blink; moved to the end of
+  /// every transient.
   DateTime _baseEpoch;
 
   void _prune(DateTime now) {
@@ -198,12 +204,13 @@ class LedTimeline {
   }
 
   LedLook _base(LedBase base, DateTime now) {
-    final flashOn =
-        now.difference(_baseEpoch).inMilliseconds % ledSlowPeriodMs <
-            ledSlowOnMs;
+    final phaseMs = now.difference(_baseEpoch).inMilliseconds;
+    final flashOn = phaseMs % ledSlowPeriodMs < ledSlowOnMs;
+    // `pattern_to_rgb`: on = (phase / BLINK_HALF_TICKS) & 1 == 0.
+    final blinkOn = (phaseMs ~/ ledBlinkHalfMs).isEven;
     return switch (base) {
       LedBase.off => LedLook.dark,
-      LedBase.redSolid => const LedLook(LedColor.red),
+      LedBase.redBlink => blinkOn ? const LedLook(LedColor.red) : LedLook.dark,
       LedBase.greenFlash =>
         flashOn ? const LedLook(LedColor.green) : LedLook.dark,
       LedBase.magentaFlash =>

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../application/device_led_provider.dart';
 import '../../application/safr_traffic_provider.dart';
 import '../../application/topology_provider.dart';
 import '../../domain/safr/safr_v2_frame.dart' show SafrMsgType;
@@ -104,6 +105,41 @@ class _DeviceTrafficRippleState extends ConsumerState<DeviceTrafficRipple> {
         key: ValueKey('traffic-ripple-${widget.node.mac}-$_seq'),
         color: color,
         diameter: widget.diameter,
+      ),
+    );
+  }
+}
+
+/// Red rings spreading from a unit's avatar on a Dispositivos card, again
+/// and again, for as long as the unit is in alarm — the same rings and the
+/// same rule as on the Rede map, and the rule that blinks its LED red
+/// (DeviceLedEngine.inAlarm). Nothing at all on a unit that is not.
+class DeviceAlarmRipple extends ConsumerWidget {
+  const DeviceAlarmRipple({
+    super.key,
+    required this.node,
+    required this.diameter,
+  });
+
+  final TopologyNode node;
+
+  /// The avatar's size; the rings start at its rim.
+  final double diameter;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final inAlarm =
+        ref.watch(deviceLedProvider.select((led) => led.inAlarm(node)));
+    if (!inAlarm) return const SizedBox.shrink();
+    final extent = CommandRipple.extentFor(diameter);
+    return Positioned(
+      left: (diameter - extent) / 2,
+      top: (diameter - extent) / 2,
+      child: CommandRipple(
+        key: ValueKey('alarm-ripple-${node.mac}'),
+        color: AppColors.error,
+        diameter: diameter,
+        repeat: true,
       ),
     );
   }

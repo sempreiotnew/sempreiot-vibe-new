@@ -488,6 +488,9 @@ class _DeviceCard extends StatelessWidget {
                       // does on the Rede map. (Its LED dot is its LED: a
                       // detector's stays dark on a timer wake, §12.8.)
                       DeviceTrafficRipple(node: node, diameter: 64),
+                      // In alarm: the same rings, red, again and again
+                      // until its alarm ends — with its LED's red blink.
+                      DeviceAlarmRipple(node: node, diameter: 64),
                       DeviceModelAvatar(
                         node: node,
                         isRoot: isRoot,

@@ -14,7 +14,7 @@
 static const char *TAG = "siot_ui_led";
 
 /* ---- Pattern engine (non-blocking, 50 ms esp_timer tick) — from siot_led.c
- * WHITE_BLINK / BLUE_BLINK run at 1 Hz (500 ms on / 500 ms off);
+ * WHITE_BLINK / BLUE_BLINK / RED_ALARM_BLINK run at 1 Hz (500 ms on / 500 ms off);
  * GREEN_BLINK / RED_BLINK are a 250 ms flash every 5 s. */
 #define LED_TICK_MS            50
 #define BLINK_HALF_TICKS       10   /* 500 ms on / 500 ms off */
@@ -73,6 +73,7 @@ static void pattern_to_rgb(siot_led_pattern_t p, uint32_t phase, bool *r, bool *
     case SIOT_LED_MAGENTA_BLINK:   *r = slow_on; *b = slow_on; break;
     case SIOT_LED_RED_SOLID:       *r = true; break;
     case SIOT_LED_RED_BLINK:       *r = slow_on; break;
+    case SIOT_LED_RED_ALARM_BLINK: *r = on; break;
     case SIOT_LED_BLUE_BLINK:      *b = on; break;
     case SIOT_LED_BLUE_SOLID:      *b = true; break;
     case SIOT_LED_CYAN_SOLID:      *g = true; *b = true; break;
@@ -110,7 +111,8 @@ static void transient_done(void)
     s_pattern = s_base;
     s_ticks_remaining = 0;
     /* Resume the base pattern in its "off" part so a pulse is not
-     * immediately followed by a green/white flash. */
+     * immediately followed by a green/white flash (the alarm's red blink
+     * comes back dark for 500 ms, then lit). */
     s_blink_phase = BLINK_HALF_TICKS;
 }
 
@@ -213,7 +215,7 @@ static void on_tx(uint8_t msg_type)
 
 static siot_led_pattern_t pattern_for_state(void)
 {
-    if (s_alarm) return SIOT_LED_RED_SOLID;
+    if (s_alarm) return SIOT_LED_RED_ALARM_BLINK;
     if (s_survey) return SIOT_LED_OFF; /* lifecycle §6: dark = survey running, button locked */
     switch (s_state) {
     case SIOT_STATE_UNPROVISIONED_FACTORY: return SIOT_LED_RED_BLINK;

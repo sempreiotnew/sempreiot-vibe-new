@@ -13,6 +13,7 @@ import '../../../../core/theme/signal_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../application/central_mirror_viewer.dart';
 import '../../application/device_command_provider.dart';
+import '../../application/device_led_provider.dart';
 import '../../application/ota_push_report.dart';
 import '../../application/ota_rollout_report.dart';
 import '../../application/root_election_provider.dart';
@@ -743,6 +744,10 @@ class _MeshMapState extends ConsumerState<MeshMap>
     // A broadcast command (Rearmar from the alarm banner) every unit
     // confirmed: a cyan wave down the tree, once, from the moment the last
     // ACK came in.
+    // A unit in alarm spreads red rings until its alarm ends: the LED
+    // engine says which (the rule of its red blink). Asked on every frame
+    // by the painter, so the engine is read, not listened to.
+    final alarmLed = ref.watch(deviceLedProvider.notifier);
     final allConfirmed = commands[safrBroadcastMac];
     final waveStartedAt =
         allConfirmed != null && allConfirmed.step == DeviceCommandStep.delivered
@@ -836,6 +841,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
                                       otaLink: activity != null,
                                       faded: _faded(nodes),
                                       waveStartedAt: waveStartedAt,
+                                      inAlarm: alarmLed.inAlarm,
                                       transform: _transform,
                                       dbmShown: labels?.dbm ?? const {},
                                     ),
@@ -1174,9 +1180,15 @@ class _MeshGraphPainter extends CustomPainter {
     this.otaLink = false,
     this.faded = const {},
     this.waveStartedAt,
+    this.inAlarm,
     this.transform,
     this.dbmShown = const {},
   }) : super(repaint: repaint);
+
+  /// Is this unit in alarm right now (DeviceLedEngine.inAlarm)? One in
+  /// alarm spreads the packets' rings in red, again every
+  /// [alarmRippleEveryMs], until its alarm ends.
+  final bool Function(TopologyNode node)? inAlarm;
 
   /// The map's pan/zoom: on the radial picture the dBm pills are drawn
   /// only once the zoom leaves room for them (the names' rule).
@@ -1398,6 +1410,19 @@ class _MeshGraphPainter extends CustomPainter {
             if (layout.layerOf[n.mac] == rows[i]) {
               _ripple(canvas, layout.positions[n.mac], AppColors.ledCyan, t);
             }
+          }
+        }
+      }
+    }
+
+    // In alarm: the same rings from the unit, red, one drop after another.
+    final alarm = inAlarm;
+    if (alarm != null) {
+      final t = (nowMs % alarmRippleEveryMs) / packetRippleMs;
+      if (t < 1) {
+        for (final n in nodes) {
+          if (alarm(n)) {
+            _ripple(canvas, layout.positions[n.mac], AppColors.error, t);
           }
         }
       }

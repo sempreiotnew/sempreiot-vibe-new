@@ -1291,6 +1291,10 @@ green instead of four blinks (found on the bench 2026-09-29).
 **COMM_FAULT:** on each wake one short **red blink + trouble chirp** (the
 conventional detector behaviour; colours not final).
 
+**Alarm:** the pattern of every unit in alarm is the **red blink, 500 ms on /
+500 ms off** (`SIOT_LED_RED_ALARM_BLINK`, 2026-11-11; was red solid). The leaf
+firmware lights no alarm LED yet; when it does, it is this one.
+
 **Survey is run *from* the leaf, never *to* it:** a sleeping leaf answers
 nothing; an awake one answers but nobody relies on it. AC devices and the board
 are always awake to answer a leaf's probe.

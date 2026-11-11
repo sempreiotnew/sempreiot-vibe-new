@@ -123,13 +123,29 @@ class CommandTicks extends StatelessWidget {
   }
 }
 
+/// A unit in alarm spreads the rings again this often, in red, on the Rede
+/// map and on its Dispositivos card, for as long as it is in alarm
+/// (DeviceLedEngine.inAlarm — the rule that blinks its LED red). A drawing
+/// of the tablet: the unit's own signal is its LED.
+const alarmRippleEveryMs = 1200;
+
 /// Rings that spread from a unit once, when a command reached it (cyan,
 /// the confirmed colour) or when nothing came back (red). Give it a new key
-/// for every step so each one plays once.
+/// for every step so each one plays once. With [repeat] they spread again
+/// every [alarmRippleEveryMs] until the widget goes: a unit in alarm.
 class CommandRipple extends StatefulWidget {
-  const CommandRipple({super.key, required this.color, this.diameter = 46});
+  const CommandRipple({
+    super.key,
+    required this.color,
+    this.diameter = 46,
+    this.repeat = false,
+  });
   final Color color;
   final double diameter;
+  final bool repeat;
+
+  /// How long one set of rings takes to spread and fade.
+  static const spreadMs = 1100;
 
   /// The rings' reach: the widget is this much wider than [diameter].
   static double extentFor(double diameter) => diameter * 2.2;
@@ -140,10 +156,20 @@ class CommandRipple extends StatefulWidget {
 
 class _CommandRippleState extends State<CommandRipple>
     with SingleTickerProviderStateMixin {
-  late final _c = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1100),
-  )..forward();
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+      vsync: this,
+      duration: Duration(
+        milliseconds:
+            widget.repeat ? alarmRippleEveryMs : CommandRipple.spreadMs,
+      ),
+    );
+    widget.repeat ? _c.repeat() : _c.forward();
+  }
 
   @override
   void dispose() {
@@ -161,7 +187,11 @@ class _CommandRippleState extends State<CommandRipple>
           animation: _c,
           builder: (_, __) => CustomPaint(
             painter: _RipplePainter(
-              t: _c.value,
+              // Repeating: the rings spread in [spreadMs], then the water
+              // rests until the next drop.
+              t: widget.repeat
+                  ? _c.value * alarmRippleEveryMs / CommandRipple.spreadMs
+                  : _c.value,
               color: widget.color,
               inner: widget.diameter / 2,
             ),

@@ -63,7 +63,7 @@ code in the spec first, the input pin in `pinmap.yaml`.
 
 ## 6. LED language
 
-The node's, plus **red solid while the station is in alarm** (already the alarm-latched colour).
+The node's, plus the **red blink (500 ms on / 500 ms off) while the station is in alarm** (already the alarm-latched pattern).
 
 ## 7. Open items
 
