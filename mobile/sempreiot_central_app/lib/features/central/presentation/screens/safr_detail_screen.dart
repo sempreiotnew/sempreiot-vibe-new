@@ -1329,6 +1329,9 @@ class _WireDetailScaffold extends ConsumerWidget {
                 'REARME do operador: única ação que limpa alarmes retidos '
                     '(UL 864/NFPA 72). A central só limpa após o ACK do '
                     'root.',
+              v2p.SafrCommand.restart =>
+                'REINICIAR: a unidade confirma e reinicia em seguida. Não '
+                    'apaga nada; nunca em broadcast.',
               v2p.SafrCommand.getInstallation =>
                 'Pede à placa a identidade da instalação (resposta: INST).',
               v2p.SafrCommand.setInstallation =>

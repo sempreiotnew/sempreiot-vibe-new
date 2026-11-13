@@ -21,6 +21,10 @@ import '../domain/system_test/system_test_run.dart';
 /// central confirms — its TEST button, an alarm, any other event. Same
 /// ticks, the other side of the conversation: ✓ the central received it,
 /// ✓✓ the central's ACK went back (the unit's LED turns cyan on it).
+///
+/// The order is the wire's ([DeviceCommandStatus.wire] carries the index):
+/// a new kind goes at the END, or every phone would read the ones after it
+/// as another command.
 enum DeviceCommandKind {
   identify('Identificar'),
   test('Testar'),
@@ -29,7 +33,11 @@ enum DeviceCommandKind {
   reset('Rearmar'),
   unitTest('Teste da unidade', fromUnit: true),
   unitAlarm('Alarme', fromUnit: true),
-  unitEvent('Evento', fromUnit: true);
+  unitEvent('Evento', fromUnit: true),
+
+  /// A plain restart of one unit — the Central's board, a mains unit, a
+  /// battery unit (protocol §7.6 RESTART). Nothing is erased.
+  restart('Reiniciar');
 
   const DeviceCommandKind(this.label, {this.fromUnit = false});
   final String label;
@@ -45,7 +53,8 @@ enum DeviceCommandKind {
 ///   protocol §7.5) — one check;
 /// - [delivered]: the unit itself confirmed it (its own ACK, relayed up by
 ///   the board) — two checks: it reached both ends;
-/// - [answered]: TESTAR only — the unit's test event came back up;
+/// - [answered]: TESTAR — the unit's test event came back up; REINICIAR —
+///   the unit is back: its first frame after the restart arrived;
 /// - [failed]: no confirmation after every retry.
 ///
 /// Order matters: a later step never goes back to an earlier one.
@@ -92,7 +101,8 @@ class DeviceCommandStatus {
   bool get inFlight =>
       !kind.fromUnit &&
       (step == DeviceCommandStep.sending ||
-          (kind == DeviceCommandKind.test &&
+          ((kind == DeviceCommandKind.test ||
+                  kind == DeviceCommandKind.restart) &&
               step == DeviceCommandStep.delivered));
 
   DeviceCommandStatus copyWith(
@@ -185,6 +195,13 @@ const _wakeWindow = Duration(seconds: 75);
 /// still says online, nothing answers) — red, "sem resposta".
 const unitAckWindow = Duration(seconds: 15);
 
+/// REINICIAR: the unit confirmed and restarted; its first frame after the
+/// boot must come within this, or it is red — "não voltou". Generous on
+/// purpose: a mains unit has to find the mesh again, a battery unit its
+/// parent, the board has to bring the tablet's link back. Not measured on
+/// the bench yet (2026-11-13).
+const restartReturnWindow = Duration(seconds: 120);
+
 /// IDENTIFY: how long the unit blinks.
 const identifyBlinkSeconds = 10;
 
@@ -193,7 +210,8 @@ const identifyBlinkSeconds = 10;
 /// unit confirms) and in the device popover.
 ///
 /// On the tablet it sends the command itself; on a phone viewing a central
-/// it asks the central — for IDENTIFY, and an Administrador for TESTAR —
+/// it asks the central — for IDENTIFY, and an Administrador for TESTAR and
+/// REINICIAR —
 /// and follows the steps the central publishes (central mirror `command`
 /// events).
 class DeviceCommandTracker
@@ -229,7 +247,8 @@ class DeviceCommandTracker
   /// on site.
   static const phoneMayAsk = {
     DeviceCommandKind.identify,
-    DeviceCommandKind.test
+    DeviceCommandKind.test,
+    DeviceCommandKind.restart,
   };
 
   /// The UNIT confirmed a command to it (its own ACK came back up): what
@@ -274,6 +293,13 @@ class DeviceCommandTracker
   static const staleGrace = Duration(seconds: 5);
   late final List<StreamSubscription<Object?>> _subs;
   final _timers = <String, Timer>{};
+
+  /// The BOOT_CTR of the last frame heard from each unit (central only).
+  final _bootCtr = <String, int>{};
+
+  /// REINICIAR: the unit's BOOT_CTR when its own ACK arrived — the boot
+  /// that is about to end. A frame with another one is the unit back.
+  final _restartBoot = <String, int?>{};
 
   /// The running broadcast's window: started when the board took it, never
   /// restarted by the tally moving (2026-10-28: every unit that confirmed
@@ -455,6 +481,9 @@ class DeviceCommandTracker
 
   /// A unit that never confirmed inside the window.
   static const noAnswerNote = 'sem resposta';
+
+  /// REINICIAR: the unit confirmed, and nothing came from it after.
+  static const notBackNote = 'não voltou';
 
   /// A unit still waiting when the operator cancelled the test.
   static const cancelledNote = 'cancelado';
@@ -654,6 +683,9 @@ class DeviceCommandTracker
         cur != null &&
         (cur.step == DeviceCommandStep.sending ||
             cur.step == DeviceCommandStep.boardAck)) {
+      if (cur.kind == DeviceCommandKind.restart) {
+        _restartBoot[mac] = _bootCtr[mac];
+      }
       _advance(mac, DeviceCommandStep.delivered);
       if (!cur.kind.fromUnit) _onConfirmed?.call(mac, cur.kind);
       return;
@@ -680,6 +712,30 @@ class DeviceCommandTracker
 
   void _onTraffic(SafrTrafficTick tick) {
     final cur = state[tick.mac];
+    if (tick.direction == SafrTrafficDirection.uplink) {
+      final boot = tick.bootCtr;
+      if (boot != null) _bootCtr[tick.mac] = boot;
+      // REINICIAR: the unit confirmed (its ACK was the last thing it sent
+      // before restarting), so a frame from another boot is the unit back.
+      // Without a BOOT_CTR to compare (a phone: it is not mirrored), a
+      // HEARTBEAT whose uptime started after the confirmation says the
+      // same. Never before the unit's own ACK: a battery unit starts a new
+      // boot at every wake, and its wake is not a restart.
+      if (cur != null &&
+          cur.kind == DeviceCommandKind.restart &&
+          cur.step == DeviceCommandStep.delivered) {
+        final atAck = _restartBoot[tick.mac];
+        final uptime = tick.uptimeS;
+        final newBoot = boot != null && atAck != null && boot != atAck;
+        final bootedAfter = uptime != null &&
+            uptime <= _clock().difference(cur.updatedAt).inSeconds + 2;
+        if (newBoot || bootedAfter) {
+          _restartBoot.remove(tick.mac);
+          _advance(tick.mac, DeviceCommandStep.answered);
+          return;
+        }
+      }
+    }
     if (tick.direction == SafrTrafficDirection.uplink &&
         tick.msgType == SafrMsgType.event) {
       // The test TESTAR asked for came back: the command is answered.
@@ -860,6 +916,9 @@ class DeviceCommandTracker
     var linger = _lingerAfter[s.step]!;
     // The board took a command to one unit: its ✓ waits for the unit's
     // own ACK — seconds for a mains unit, the next wake for a detector.
+    // REINICIAR: the unit confirmed; now its first frame after the boot.
+    final awaitsReturn = s.kind == DeviceCommandKind.restart &&
+        s.step == DeviceCommandStep.delivered;
     final awaitsUnit = s.mac != safrBroadcastMac &&
         !s.kind.fromUnit &&
         s.step == DeviceCommandStep.boardAck &&
@@ -869,6 +928,8 @@ class DeviceCommandTracker
       linger = broadcastWindow;
     } else if (awaitsUnit) {
       linger = s.waitsForWake ? _wakeWindow : unitAckWindow;
+    } else if (awaitsReturn) {
+      linger = restartReturnWindow;
     } else if (s.kind == DeviceCommandKind.test &&
         s.step == DeviceCommandStep.delivered) {
       linger = _testAnswerWithin;
@@ -898,6 +959,16 @@ class DeviceCommandTracker
         _put(s.copyWith(
             step: DeviceCommandStep.failed,
             note: noAnswerNote,
+            updatedAt: _clock()));
+        return;
+      }
+      // The unit confirmed the restart and never spoke again: red. (A
+      // phone shows the central's verdict; with nothing heard it lets go.)
+      if (awaitsReturn && _send != null) {
+        _restartBoot.remove(s.mac);
+        _put(s.copyWith(
+            step: DeviceCommandStep.failed,
+            note: notBackNote,
             updatedAt: _clock()));
         return;
       }
@@ -943,6 +1014,9 @@ final deviceCommandProvider = StateNotifierProvider<DeviceCommandTracker,
         // TESTAR: on this phone's own topic, the central checks who asks
         // and answers when the board took it, or why not.
         if (kind == DeviceCommandKind.test) return mirror.sendUnitTest(mac);
+        if (kind == DeviceCommandKind.restart) {
+          return mirror.sendUnitRestart(mac);
+        }
         final outcome = await mirror.sendIdentify(mac);
         return switch (outcome) {
           MirrorIdentifyOutcome.confirmed => null,
@@ -978,6 +1052,9 @@ final deviceCommandProvider = StateNotifierProvider<DeviceCommandTracker,
       if (kind == DeviceCommandKind.identify) {
         ref.read(deviceLedProvider).identify(mac, identifyBlinkSeconds);
       }
+      // Rearmar: the alarm leaves the banner when the unit itself says it
+      // has the RESET — never on the board's ACK alone.
+      if (kind == DeviceCommandKind.reset) downlink.confirmReset(mac);
     },
     send: (mac, kind) async {
       switch (kind) {
@@ -993,8 +1070,11 @@ final deviceCommandProvider = StateNotifierProvider<DeviceCommandTracker,
         case DeviceCommandKind.soundOn:
           return ref.read(deviceSoundProvider.notifier).setSound(mac, on: true);
         case DeviceCommandKind.reset:
-          // The latch clears only on the confirmation.
+          // The latch clears on the unit's own confirmation (onConfirmed
+          // above); for a unit out of communication, on the board's.
           return downlink.sendReset(mac);
+        case DeviceCommandKind.restart:
+          return downlink.sendCommand(mac, SafrCommand.restart);
         case DeviceCommandKind.unitTest:
         case DeviceCommandKind.unitAlarm:
         case DeviceCommandKind.unitEvent:

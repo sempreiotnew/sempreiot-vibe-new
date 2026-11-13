@@ -131,6 +131,7 @@ static void announce_again_locked(void)
     s_announce_next_ms = 0;
 }
 static esp_timer_handle_t s_decommission_timer;
+static esp_timer_handle_t s_restart_timer; /* RESTART: the ACK first, the restart 300 ms later */
 
 /* Role announcement after a Mesh-Lite level change (spec §7.4: TOPOLOGY on
  * change only, since 2026-10-03). It used to fire once, at the instant of the change — before
@@ -494,6 +495,16 @@ static void decommission_cb(void *arg)
     esp_restart();
 }
 
+/* RESTART (spec §7.6 v3.10): the ACK went out first; now a plain restart.
+ * Nothing is erased — the unit comes back with its code and rejoins. Runs in
+ * the esp_timer task, not the rx path. */
+static void restart_cb(void *arg)
+{
+    (void)arg;
+    ESP_LOGW(TAG, "RESTART: asked by the central — restarting");
+    esp_restart();
+}
+
 /* SET_DEVICE ARGS: mac[6] ‖ name_len ‖ name ‖ zone_len ‖ zone; must name us. */
 static bool apply_set_device(const uint8_t *a, size_t alen)
 {
@@ -568,6 +579,18 @@ static void on_command(const siot_safr_frame_t *f, const uint8_t *raw, size_t ra
                 esp_timer_create(&targs, &s_decommission_timer);
             }
             if (s_decommission_timer) esp_timer_start_once(s_decommission_timer, 300 * 1000);
+            break;
+        case SAFR_CMD_RESTART: /* v3.10: plain restart, this unit only (never broadcast) */
+            if (!siot_mac_eq(f->dst_mac, siot_identity_get()->mac)) {
+                status = SAFR_ACK_ERROR;
+                break;
+            }
+            if (s_restart_timer == NULL) {
+                const esp_timer_create_args_t targs = {.callback = restart_cb, .name = "restart"};
+                esp_timer_create(&targs, &s_restart_timer);
+            }
+            if (s_restart_timer) esp_timer_start_once(s_restart_timer, 300 * 1000);
+            else status = SAFR_ACK_ERROR;
             break;
         case SAFR_CMD_IDENTIFY: {
             const siot_evt_identify_t ev = {.seconds = f->payload_len >= 3 ? f->payload[2] : 0};

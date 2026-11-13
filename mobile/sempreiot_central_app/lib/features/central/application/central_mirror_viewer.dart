@@ -450,6 +450,12 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
   Future<String?> sendUnitTest(String mac) =>
       _sendOta((id) => encodeMirrorUnitTest(id: id, mac: mac, name: _who()));
 
+  /// Asks the central to restart the unit [mac] — its board, a mains unit
+  /// or a battery unit (§4.11). Null when the board took it; otherwise why
+  /// not. The unit's own ACK and its return arrive as `command` events.
+  Future<String?> sendUnitRestart(String mac) =>
+      _sendOta((id) => encodeMirrorUnitRestart(id: id, mac: mac, name: _who()));
+
   /// One request on this phone's own command topic, answered by an
   /// `ota_answer` / `test_answer` event that carries the same id.
   Future<String?> _sendOta(String Function(String id) payload) {

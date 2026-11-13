@@ -34,6 +34,9 @@ alarms held on the panel, always** (decided 2026-10-03).
    - **A test** (decided 2026-10-31 for "Testar tudo", 2026-11-05 for one unit): an
      **Administrador** may start the system test from the phone (§4.9) and send **Testar** to one
      unit (§4.10). A test raises a test event and changes nothing else.
+   - **Reiniciar** (decided 2026-11-13): an **Administrador** may restart one unit — the central's
+     board, a mains unit or a battery unit — from the phone (§4.11). A plain restart: nothing is
+     erased, and the alarms held on the panel stay held.
 3. **Never in the fire path.** Publishing runs beside the SAFR pipeline and never delays an ACK, a
    latch or a siren. If publishing fails, the tablet carries on.
 4. **Never stale as live.** Every message carries a sequence number and a time. The phone shows the
@@ -67,6 +70,7 @@ alarms held on the panel, always** (decided 2026-10-03).
 | `{id}/cmd/{user}` | phone → central | no | an Administrador taps Atualizar / Cancelar | `ota_start` / `ota_cancel` (§4.6); `{user}` = the phone's Identity ID, which AWS lets only that user publish under |
 | `{id}/cmd/{user}` | phone → central | no | an Administrador taps Testar tudo / Cancelar teste | `test_start` / `test_cancel` (§4.9), answered by a `test_answer` event |
 | `{id}/cmd/{user}` | phone → central | no | an Administrador taps Testar on a unit | `unit_test` (§4.10), answered by a `test_answer` event; its steps follow as `command` events |
+| `{id}/cmd/{user}` | phone → central | no | an Administrador taps Reiniciar on a unit or on the Central | `unit_restart` (§4.11), answered by a `test_answer` event; its steps follow as `command` events |
 | `{id}/cmd/{user}` *(planned 2026-10-28)* | phone → central | no | an Administrador edits Causa e efeito | `label_set` / `label_del` / `rule_set` / `rule_del` (§4.8) |
 | `{id}/rules` *(planned)* | central → cloud | no | watched: on hello, then on change | the label tables and the rule table **as the board confirmed them** (§4.8) |
 | `{id}/mesh/up` · `{id}/mesh/down` *(planned, names to settle — Phase C)* | island root ↔ central | no | always while an island exists | SAFR frames, end-to-end authenticated, tunnelled over MQTT (`phase4-cause-and-effect-brief.md` §2.4) |
@@ -169,7 +173,7 @@ phone user who asked, absent for the tablet. The phone puts it into its own trac
 draws the same pill, checks and rings as the tablet; the command packets themselves arrive as ticks
 (a COMMAND going down, the unit's ACK coming up). On this open topic a phone asks only for
 Identificar, as above; the `identify*` events stay for phones of older builds. **Testar** of one unit
-is asked on the phone's own topic, by an Administrador (§4.10).
+is asked on the phone's own topic, by an Administrador (§4.10); so is **Reiniciar** (§4.11).
 
 The level of the user is not checked for Identificar: any accepted user may identify (open
 decision D3).
@@ -440,6 +444,43 @@ its `MANUAL_TEST` event.
   `test/central/unit_test_remote_test.dart`, `central_mirror_screen_test.dart`,
   `device_command_test.dart`.
 
+### 4.11 Reiniciar one unit from a phone (`{id}/cmd/{user}`) — 2026-11-13
+
+```json
+{"v":1,"type":"unit_restart","id":"muvia60t-3","mac":"AA:BB:CC:DD:EE:FF","name":"…"}
+```
+
+**Reiniciar**, from a phone: the central sends `COMMAND RESTART` (protocol §7.6, v3.10) to that
+unit exactly as its own popover does. `mac` is a mains unit, a battery unit, or **the central's
+own board** (the Central's popover). A plain restart — nothing is erased.
+
+- **Who is asking / who may.** As §4.10: the topic's last level is the phone's Identity ID; it must
+  be an accepted Administrador (`LEVEL_4`) or Master of this central.
+- **The checks after that**, each refused with a short reason: no system test running ("Teste do
+  sistema em andamento") · no update running ("Atualização em andamento") · the board on the link
+  ("Central sem a placa") · a unit the central knows and hears ("Sem comunicação"; the board is on
+  the link by the check before) · no other command on its way to it ("Outro comando em andamento").
+  A battery unit is **not** refused: the command waits on its parent for the next wake.
+- **The answer.** The same `test_answer` event as §4.10: `started` when the board took the command,
+  `refused` plus the reason otherwise.
+- **What follows** reaches every phone as the `command` events of §3.3 (kind **8**, appended at
+  the end of the list so a phone of an older build ignores it instead of reading another command):
+  ✓✓ when the unit's own ACK came back (sent before it restarts), then step `answered` —
+  "Reiniciar · voltou" — when the tablet hears the unit's first frame of the next boot (another
+  `BOOT_CTR`), or `failed` with "não voltou" when nothing came within 120 s (not measured on the
+  bench yet). The verdict is the tablet's; the phone never gives one of its own.
+- **The board.** The tablet stays on MQTT while its board restarts, so the answer and the steps
+  still reach the phones; the central's board link drops for the seconds the board takes to boot,
+  and the map says so as it does for any link loss.
+- **Audit.** `unit_restart_remote_started` / `unit_restart_remote_refused`, with the user's
+  Identity ID and the unit's MAC.
+- **On the phone.** **Reiniciar** in the unit popover and **Reiniciar central** in the Central's
+  popover, two taps each (the first arms it, "Confirmar"); for anyone who is not an Administrador
+  they are there but disabled, with why. Code: `remote_system_test.dart` (the central),
+  `central_mirror_viewer.dart` `sendUnitRestart`, `device_command_provider.dart`,
+  `device_menu.dart`. Tests: `test/central/device_restart_test.dart`, `unit_test_remote_test.dart`,
+  `rede_feedback_test.dart`, `central_mirror_screen_test.dart`.
+
 **The list of users is read before anyone is refused (2026-11-05).** The central's list of users
 (`centralAccessRelationsProvider`) is built the first time something reads it and starts empty; the
 checks of §4.6, §4.9 and §4.10 read it at once, so the **first** request after the tablet's app
@@ -517,6 +558,7 @@ Menu and actions — what a user gets:
 | Acessos | hidden | the operator at the tablet grants access |
 | Identificar | **shown** — asked to the central, which sends it (§3.3) | lights an LED, changes nothing |
 | Testar (a mains unit) | **shown** — an Administrador's, asked to the central (§4.10); disabled for everyone else, with why | raises a test event, changes nothing |
+| Reiniciar (any unit, and the Central's board) | **shown** — an Administrador's, asked to the central (§4.11); disabled for everyone else, with why | restarts the unit, erases nothing |
 | Other unit actions (rename, zone, RESET / Rearmar, silence, retire, Sincronizar com a placa) | hidden | rule 2: no command from a phone |
 | A tap on a unit | its basics, Identificar, Testar and the Dispositivo screen, read only | — |
 
@@ -610,3 +652,5 @@ Left for later: an IAM user with limited rights for cloud administration (today 
    on devices yet.
 6. **Testar one unit from a phone** (§4.10), and the list of users read before a request is
    refused. **In code 2026-11-05**, tested in the app's suite, not run on devices yet.
+7. **Reiniciar one unit from a phone** (§4.11), with `COMMAND RESTART` in the three firmware
+   images. **In code 2026-11-13**, tested in the app's suite, firmware built; not run on devices yet.

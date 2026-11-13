@@ -122,7 +122,14 @@ class SystemTestController extends StateNotifier<SystemTestsState> {
 
   /// Cancels the running test: the units still waiting are "cancelado",
   /// the report says so. False when nothing runs.
-  bool cancel() => _tracker.cancelBroadcast();
+  bool cancel() {
+    // Only a system test: another command to every unit is not this
+    // controller's to cancel.
+    if (_tracker.state[safrBroadcastMac]?.kind != DeviceCommandKind.test) {
+      return false;
+    }
+    return _tracker.cancelBroadcast();
+  }
 
   /// The tracker moved (every change of its state).
   void onCommands(Map<String, DeviceCommandStatus> commands) {

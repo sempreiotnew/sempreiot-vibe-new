@@ -334,6 +334,91 @@ void main() {
     });
 
     testWidgets(
+        'Reiniciar a unit takes two taps; then ✓, ✓✓ and "voltou" — '
+        '${s.key}', (tester) async {
+      final container = await pump(tester, s.value);
+      await tester.tap(find.text('Sirene Hall'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final button = find.byKey(const ValueKey('cmd-restart'));
+      await tester.ensureVisible(button);
+      await tester.pump();
+      await tester.tap(button);
+      await tester.pump();
+      expect(find.text('Confirmar'), findsOneWidget);
+      expect(container.read(deviceCommandProvider)[rootMac], isNull,
+          reason: 'the first tap only arms it');
+      // Left alone, it goes back to what it was.
+      await tester.pump(const Duration(seconds: 5));
+      expect(find.text('Confirmar'), findsNothing);
+      expect(find.text('Reiniciar'), findsOneWidget);
+
+      await tester.tap(button);
+      await tester.pump();
+      await tester.tap(button);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Abrir dispositivo'), findsNothing,
+          reason: 'the popover closes: the map tells the rest');
+      final sent = container.read(deviceCommandProvider)[rootMac]!;
+      expect(sent.kind, DeviceCommandKind.restart);
+      expect(sent.step, DeviceCommandStep.sending);
+
+      boardAck.complete(true);
+      await tester.pump();
+      deliveries.add(rootMac);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(container.read(deviceCommandProvider)[rootMac]!.step,
+          DeviceCommandStep.delivered);
+      // Its first heartbeat after the boot.
+      container.read(safrTrafficProvider).emit(const SafrTrafficTick(
+            mac: rootMac,
+            direction: SafrTrafficDirection.uplink,
+            severity: 0,
+            msgType: SafrMsgType.heartbeat,
+            uptimeS: 0,
+          ));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(container.read(deviceCommandProvider)[rootMac]!.step,
+          DeviceCommandStep.answered);
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(seconds: 6));
+    });
+
+    testWidgets(
+        'Reiniciar central lives in the Central\'s popover, two taps, and '
+        'goes to the board — ${s.key}', (tester) async {
+      final container = await pump(tester, s.value);
+      await tester.tap(find.text('CENTRAL'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final button = find.byKey(const ValueKey('central-restart'));
+      await tester.ensureVisible(button);
+      await tester.pump();
+      await tester.tap(button);
+      await tester.pump();
+      expect(find.text('Toque de novo para reiniciar'), findsOneWidget);
+      expect(container.read(deviceCommandProvider)[boardMac], isNull);
+      await tester.tap(button);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final sent = container.read(deviceCommandProvider)[boardMac]!;
+      expect(sent.kind, DeviceCommandKind.restart);
+      expect(container.read(deviceCommandProvider)[safrBroadcastMac], isNull,
+          reason: 'the board alone, never every unit');
+      boardAck.complete(true);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      // The Central's own ticks say it.
+      expect(find.byKey(CommandTicks.keyOne), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(seconds: 20));
+      await tester.pump(const Duration(seconds: 11));
+    });
+
+    testWidgets(
         'Testar tudo lives in the Central\'s popover and is disabled '
         'while a test runs — ${s.key}', (tester) async {
       final container = await pump(tester, s.value);

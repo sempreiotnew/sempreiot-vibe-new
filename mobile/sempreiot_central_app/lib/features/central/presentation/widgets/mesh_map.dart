@@ -741,7 +741,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
     // a check on the CENTRAL when the board takes it.
     final commands = ref.watch(deviceCommandProvider);
     final viewOnly = ref.watch(mirrorViewOnlyProvider);
-    // A broadcast command (Rearmar from the alarm banner) every unit
+    // A command to every unit at once (the system test) every unit
     // confirmed: a cyan wave down the tree, once, from the moment the last
     // ACK came in.
     // A unit in alarm spreads red rings until its alarm ends: the LED

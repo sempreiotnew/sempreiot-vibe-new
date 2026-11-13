@@ -484,16 +484,30 @@ class SafrDownlink {
     );
   }
 
-  /// Operator alarm reset (spec §7.1.4 — UL 864/NFPA 72). Clears the central
-  /// latch ONLY after the root ACKs; returns false (latch kept) otherwise.
-  /// [dstMac] = one device, or [safrBroadcastMac] for a system-wide reset.
+  /// Operator alarm reset (spec §7.1.4 — UL 864/NFPA 72) to one device.
+  /// True when the root ACKed it. The central's latch is cleared when the
+  /// UNIT itself confirms ([confirmReset], on its own ACK): until then the
+  /// alarm stays held, and the operator can try again.
+  ///
+  /// A unit the registry says is out of communication cannot confirm (it
+  /// may be the one the fire took): for it the root's ACK clears the latch,
+  /// or its alarm could never be reset. So does a system-wide reset
+  /// ([safrBroadcastMac]).
   Future<bool> sendReset(String dstMac) async {
     final ok = await sendCommand(dstMac, SafrCommand.reset);
-    if (ok) {
+    if (ok && (dstMac == safrBroadcastMac || !_isOnline(dstMac))) {
       await _ref.read(appDatabaseProvider).clearAlarmLatch(mac: dstMac);
     }
     return ok;
   }
+
+  /// The unit confirmed an operator RESET: its latch is cleared.
+  Future<void> confirmReset(String mac) =>
+      _ref.read(appDatabaseProvider).clearAlarmLatch(mac: mac);
+
+  bool _isOnline(String mac) => _ref
+      .read(supervisionProvider)
+      .any((s) => s.device.mac == mac && s.online);
 
   // ── Firmware push (§13.3) ──────────────────────────────────────
 

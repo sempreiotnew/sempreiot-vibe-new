@@ -19,6 +19,7 @@ class SafrTrafficTick {
     this.msgType,
     this.eventCode,
     this.uptimeS,
+    this.bootCtr,
   });
 
   /// Uplink: the parent the frame itself names (HEARTBEAT / TOPOLOGY
@@ -47,6 +48,11 @@ class SafrTrafficTick {
   /// HEARTBEAT only: the unit's UPTIME_S — tells a reboot apart (the alarm
   /// lives in RAM on the unit, so a reboot ends it).
   final int? uptimeS;
+
+  /// The frame's BOOT_CTR (header, protocol §3): it goes up on every boot,
+  /// so a frame with another one than the unit's last says it restarted.
+  /// Only on the central (a frame it authenticated); never mirrored.
+  final int? bootCtr;
 }
 
 class SafrTrafficBus {

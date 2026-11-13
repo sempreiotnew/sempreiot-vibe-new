@@ -70,12 +70,20 @@ String? mirrorCommandUser(String identityId, String topic) {
 /// One test at a time: the central refuses while a run is current.
 class MirrorRemoteTest {
   const MirrorRemoteTest(
-      {required this.id, this.cancel = false, this.mac, this.name});
+      {required this.id,
+      this.cancel = false,
+      this.mac,
+      this.restart = false,
+      this.name});
   final String id;
   final bool cancel;
 
-  /// One unit's test (`unit_test`); null = the system test.
+  /// One unit's test (`unit_test`) or restart (`unit_restart`); null = the
+  /// system test.
   final String? mac;
+
+  /// With [mac]: REINICIAR that unit (§4.11) instead of TESTAR.
+  final bool restart;
   final String? name;
 }
 
@@ -106,8 +114,21 @@ String encodeMirrorUnitTest(
       if (name != null && name.isNotEmpty) 'name': name,
     });
 
-/// A `test_start`, a `test_cancel` or a `unit_test`; null = none of them,
-/// or malformed.
+/// Phone → central, on the phone's own command topic: restart the unit
+/// [mac] — the board, a mains unit or a battery unit (§4.11). Administrador
+/// only. A plain restart: nothing is erased.
+String encodeMirrorUnitRestart(
+        {required String id, required String mac, String? name}) =>
+    jsonEncode({
+      'v': mirrorVersion,
+      'type': 'unit_restart',
+      'id': id,
+      'mac': mac,
+      if (name != null && name.isNotEmpty) 'name': name,
+    });
+
+/// A `test_start`, a `test_cancel`, a `unit_test` or a `unit_restart`;
+/// null = none of them, or malformed.
 MirrorRemoteTest? decodeMirrorRemoteTest(String payload) {
   try {
     final map = jsonDecode(payload);
@@ -120,6 +141,8 @@ MirrorRemoteTest? decodeMirrorRemoteTest(String payload) {
         MirrorRemoteTest(id: map['id'] as String, cancel: true, name: name),
       'unit_test' when mac is String && mac.isNotEmpty =>
         MirrorRemoteTest(id: map['id'] as String, mac: mac, name: name),
+      'unit_restart' when mac is String && mac.isNotEmpty => MirrorRemoteTest(
+          id: map['id'] as String, mac: mac, restart: true, name: name),
       _ => null,
     };
   } catch (_) {

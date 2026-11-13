@@ -233,11 +233,17 @@ void main() {
       for (final action in ['Rearmar', 'Som']) {
         expect(find.textContaining(action), findsNothing, reason: action);
       }
-      // Testar is an Administrador's: this user sees it, disabled, and why.
-      expect(find.text('só para Administrador'), findsOneWidget);
+      // Testar and Reiniciar are an Administrador's: this user sees them,
+      // disabled, and why.
+      expect(find.text('só para Administrador'), findsNWidgets(2));
       final before = repo.published.length;
       await tester.tap(find.text('Testar'));
       await tester.pump();
+      expect(repo.published, hasLength(before), reason: 'nothing is asked');
+      await tester.ensureVisible(find.text('Reiniciar'));
+      await tester.tap(find.text('Reiniciar'));
+      await tester.pump();
+      expect(find.text('Confirmar'), findsNothing, reason: 'never armed');
       expect(repo.published, hasLength(before), reason: 'nothing is asked');
       expect(find.text('Abrir dispositivo'), findsOneWidget,
           reason: 'the popover stays');

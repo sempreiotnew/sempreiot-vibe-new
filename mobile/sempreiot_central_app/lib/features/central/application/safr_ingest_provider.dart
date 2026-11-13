@@ -74,8 +74,14 @@ class SafrIngestService {
   /// Journal replay bookkeeping (spec §7.9) — the downlink service persists
   /// the JRN_SEQ high-water mark and paginates with further EVENT_LOG_REQs.
   final void Function(SafrEventLogDataPayload log)? onJournalData;
-  final void Function(String mac, int severity, String? parentMac,
-      SafrMsgType msgType, SafrEventCode? eventCode, int? uptimeS)? onTraffic;
+  final void Function(
+      String mac,
+      int severity,
+      String? parentMac,
+      SafrMsgType msgType,
+      SafrEventCode? eventCode,
+      int? uptimeS,
+      int bootCtr)? onTraffic;
 
   /// A frame whose header SYSTEM_ID is not ours (spec §3.1 "neighbouring
   /// system"). Null = ours again (a valid frame arrived). Feeds the
@@ -166,6 +172,7 @@ class SafrIngestService {
       frame.payload is SafrHeartbeatPayload
           ? (frame.payload as SafrHeartbeatPayload).uptimeS
           : null,
+      frame.bootCtr,
     );
 
     if (frame.msgType == SafrMsgType.ack && frame.payload is SafrAckPayload) {
@@ -835,8 +842,9 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
     onDeviceTableSynced: (listed) =>
         ref.read(boardSyncProvider.notifier).tableArrived(listed),
     onJournalData: downlink.handleJournalData,
-    onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS) =>
-        traffic.emit(SafrTrafficTick(
+    onTraffic:
+        (mac, severity, parentMac, msgType, eventCode, uptimeS, bootCtr) =>
+            traffic.emit(SafrTrafficTick(
       mac: mac,
       direction: SafrTrafficDirection.uplink,
       severity: severity,
@@ -844,6 +852,7 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
       msgType: msgType,
       eventCode: eventCode,
       uptimeS: uptimeS,
+      bootCtr: bootCtr,
     )),
   );
 

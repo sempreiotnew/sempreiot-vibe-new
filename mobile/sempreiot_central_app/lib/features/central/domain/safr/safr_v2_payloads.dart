@@ -103,6 +103,11 @@ enum SafrCommand {
   /// latched alarm (UL 864 / NFPA 72).
   reset(0x05),
 
+  /// v3.10 (spec §7.6): a plain restart of ONE unit — the board, a mains
+  /// unit or a battery unit. Nothing is erased; never broadcast. The unit
+  /// ACKs first and restarts ≈ 300 ms later.
+  restart(0x07),
+
   /// v3.1, POC round 1 (spec §7.6/§7.10): serial-link-only, board replies
   /// with INSTALLATION. Never relayed into the mesh.
   getInstallation(0x10),
@@ -241,7 +246,8 @@ enum SafrAckDetail {
         SafrAckDetail.badArgs => 'argumentos inválidos',
         SafrAckDetail.refused => 'recusado pela placa',
         SafrAckDetail.notInSetupMode => 'a placa já está configurada',
-        SafrAckDetail.unknownId => 'zona ou endereçamento desconhecido na placa',
+        SafrAckDetail.unknownId =>
+          'zona ou endereçamento desconhecido na placa',
         SafrAckDetail.inUse => 'ainda usado por um dispositivo',
         SafrAckDetail.unknown => 'motivo desconhecido',
       };
@@ -813,13 +819,15 @@ class SafrNameAnnouncePayload extends SafrV2Payload {
       final nameLen = p[off];
       off += 1;
       if (nameLen > 32 || off + nameLen > p.length) return null;
-      final name = utf8.decode(p.sublist(off, off + nameLen), allowMalformed: true);
+      final name =
+          utf8.decode(p.sublist(off, off + nameLen), allowMalformed: true);
       off += nameLen;
       if (off >= p.length) return null;
       final zoneLen = p[off];
       off += 1;
       if (zoneLen > 16 || off + zoneLen > p.length) return null;
-      final zone = utf8.decode(p.sublist(off, off + zoneLen), allowMalformed: true);
+      final zone =
+          utf8.decode(p.sublist(off, off + zoneLen), allowMalformed: true);
       off += zoneLen;
       if (off >= p.length) {
         return SafrNameAnnouncePayload(name: name, zone: zone);
@@ -1208,7 +1216,9 @@ class SafrLabelTablePayload extends SafrV2Payload {
 /// chooses the id (next free in its copy); an existing id renames.
 abstract final class SafrSetLabelArgs {
   static Uint8List build(
-          {required SafrLabelKind kind, required int id, required String name}) =>
+          {required SafrLabelKind kind,
+          required int id,
+          required String name}) =>
       Uint8List.fromList([
         kind.wire,
         (id >> 8) & 0xFF,
@@ -1247,7 +1257,6 @@ abstract final class SafrDelLabelArgs {
   }
 }
 
-
 /// ARGS for the single-MAC board commands: RETIRE (0x13), UNRETIRE (0x14),
 /// DECOMMISSION (0x16), FORGET (0x17).
 abstract final class SafrMacArgs {
@@ -1260,7 +1269,8 @@ abstract final class SafrMacArgs {
 /// `REPLACE_DEVICE` ARGS (CMD 0x15): `old_mac[6] ‖ new_mac[6]`.
 abstract final class SafrReplaceDeviceArgs {
   static Uint8List build({required String oldMac, required String newMac}) =>
-      Uint8List.fromList([...safrMacToBytes(oldMac), ...safrMacToBytes(newMac)]);
+      Uint8List.fromList(
+          [...safrMacToBytes(oldMac), ...safrMacToBytes(newMac)]);
 
   static ({String oldMac, String newMac})? parse(Uint8List p) => p.length == 12
       ? (
@@ -1333,8 +1343,7 @@ class SafrDeviceTableEntry {
   bool get seenEver => flags & SafrDeviceFlags.seenEver != 0;
   bool get annotated => flags & SafrDeviceFlags.annotated != 0;
   bool get pendingRename => flags & SafrDeviceFlags.pendingRename != 0;
-  bool get heardWhileRetired =>
-      flags & SafrDeviceFlags.heardWhileRetired != 0;
+  bool get heardWhileRetired => flags & SafrDeviceFlags.heardWhileRetired != 0;
   bool get pendingDecommission =>
       flags & SafrDeviceFlags.pendingDecommission != 0;
 }

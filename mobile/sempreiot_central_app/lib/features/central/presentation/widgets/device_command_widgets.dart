@@ -44,10 +44,14 @@ String commandStepText(DeviceCommandStatus s) {
     DeviceCommandStep.sending => '$verb · enviando',
     DeviceCommandStep.boardAck =>
       s.waitsForWake ? '$verb · aguarda o despertar' : '$verb · placa recebeu',
-    DeviceCommandStep.delivered => s.kind == DeviceCommandKind.test
-        ? 'Testar · aguardando o teste'
-        : '$verb · confirmado',
-    DeviceCommandStep.answered => 'Teste recebido',
+    DeviceCommandStep.delivered => switch (s.kind) {
+        DeviceCommandKind.test => 'Testar · aguardando o teste',
+        DeviceCommandKind.restart => 'Reiniciar · confirmado, reiniciando',
+        _ => '$verb · confirmado',
+      },
+    DeviceCommandStep.answered => s.kind == DeviceCommandKind.restart
+        ? 'Reiniciar · voltou'
+        : 'Teste recebido',
     DeviceCommandStep.failed => s.note == null
         ? '$verb · sem confirmação'
         : '$verb · ${s.note!.toLowerCase()}',

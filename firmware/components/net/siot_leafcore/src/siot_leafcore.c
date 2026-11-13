@@ -117,6 +117,7 @@ static bool            s_ack_hop;      /* parent acknowledged s_ack_wanted */
 static bool            s_ack_central;  /* the central acknowledged s_ack_wanted (walk-test cyan) */
 static siot_leaf_ack_t s_ack_last;
 static int             s_mailbox_left; /* frames the parent said it would send */
+static bool            s_restart_asked; /* RESTART taken in this wake: restart when the wake ends */
 static int             s_mailbox_total; /* DETAIL of the ACK that opened the drain */
 static int64_t         s_stay_awake_until_ms;
 
@@ -533,6 +534,10 @@ static void on_command(const siot_safr_frame_t *f, const uint8_t *raw, size_t ra
         vTaskDelay(pdMS_TO_TICKS(300));
         siot_config_factory_reset();
         esp_restart();
+    case SAFR_CMD_RESTART: /* v3.10: plain restart, this unit only; nothing erased */
+        if (!siot_mac_eq(f->dst_mac, s_my_mac)) { status = SAFR_ACK_ERROR; break; }
+        s_restart_asked = true; /* at the end of this wake: the rest of the mailbox is taken first */
+        break;
     case SAFR_CMD_TEST:
     case SAFR_CMD_RESET:
     case SAFR_CMD_SILENCE:
@@ -1158,6 +1163,14 @@ void siot_leafcore_run(bool has_code)
                             : awake >= (int64_t)HB_INTERVAL_MS ? 1000u
                                                                 : (uint32_t)(HB_INTERVAL_MS - awake);
         s_installed = false;
+        if (s_restart_asked) {
+            /* RESTART (spec §7.6 v3.10): the ACK went out in this wake. A cold
+             * boot: the RTC state starts fresh, so the unit finds its parent
+             * and says its name again; the outbox comes back from NVS. */
+            ESP_LOGW(TAG, "RESTART: asked by the central — restarting");
+            vTaskDelay(pdMS_TO_TICKS(50)); /* let the UART finish the line */
+            esp_restart();
+        }
         leaf_sleep(left, true);
         cause = s_sim_cause; /* LIGHT / NONE only; DEEP never gets here */
     }

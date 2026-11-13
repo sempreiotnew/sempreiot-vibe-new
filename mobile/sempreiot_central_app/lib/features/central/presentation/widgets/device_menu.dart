@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -11,6 +12,7 @@ import '../../../../core/utils/relative_time.dart';
 import '../../application/central_mirror_viewer.dart';
 import '../../application/device_command_provider.dart';
 import '../../application/device_sound_provider.dart';
+import '../../application/device_update_controller.dart';
 import '../../application/device_update_source.dart';
 import '../../application/root_election_provider.dart';
 import '../../application/topology_provider.dart';
@@ -39,9 +41,10 @@ Rect deviceAnchorOf(BuildContext context) {
 /// unit when the unit confirms (device_command_provider.dart).
 ///
 /// On a user's phone viewing a central (the mirror) there are the facts,
-/// Dispositivo, Identificar and Testar — asked to the central, which sends
-/// them. Testar is an Administrador's (central-mirror.md §4.10): everyone
-/// else sees it disabled, and why. Nothing else is commanded from a phone.
+/// Dispositivo, Identificar, Testar and Reiniciar — asked to the central,
+/// which sends them. Testar and Reiniciar are an Administrador's
+/// (central-mirror.md §4.10, §4.11): everyone else sees them disabled, and
+/// why. Nothing else is commanded from a phone.
 Future<void> showDeviceMenu({
   required BuildContext context,
   required WidgetRef ref,
@@ -375,6 +378,13 @@ class _DevicePopover extends ConsumerWidget {
     // "Testar tudo". The central checks it again on its side.
     final canTest = !viewOnly || ref.watch(mirrorCanUpdateProvider);
     final command = ref.watch(deviceCommandProvider)[mac];
+    // Reiniciar waits while the system test or an update runs: both need
+    // every unit where it is. The central checks it again for a phone.
+    final restartWhyNot = ref.watch(deviceUpdateRunProvider)?.running == true
+        ? 'atualização em andamento'
+        : ref.watch(systemTestsViewProvider).running != null
+            ? 'teste em andamento'
+            : null;
     final silenced =
         !viewOnly && ref.watch(deviceSoundProvider).contains(node.mac);
     final isRoot = node.online && election.isRoot(node.mac);
@@ -415,6 +425,7 @@ class _DevicePopover extends ConsumerWidget {
             node: node,
             viewOnly: viewOnly,
             canTest: canTest,
+            restartWhyNot: restartWhyNot,
             silenced: silenced,
             command: command,
           );
@@ -942,6 +953,7 @@ class _Commands extends StatelessWidget {
     required this.node,
     required this.viewOnly,
     required this.canTest,
+    required this.restartWhyNot,
     required this.silenced,
     required this.command,
   });
@@ -950,6 +962,10 @@ class _Commands extends StatelessWidget {
 
   /// The tablet, or a phone whose user is an Administrador of the central.
   final bool canTest;
+
+  /// Why Reiniciar is not offered now (a test or an update runs); null =
+  /// nothing in the way.
+  final String? restartWhyNot;
   final bool silenced;
   final DeviceCommandStatus? command;
 
@@ -989,8 +1005,9 @@ class _Commands extends StatelessWidget {
               ? DeviceCommandKind.soundOn
               : DeviceCommandKind.soundOff),
         ),
-      // The confirmation is what clears the latch, so this stays available
-      // even while the sensor itself is unreachable.
+      // The unit's own confirmation clears the latch; for a unit out of
+      // communication the board's does, so this stays available even while
+      // the unit itself is unreachable.
       if (!viewOnly && node.alarmLatched)
         _CommandButton(
           icon: Icons.restart_alt_rounded,
@@ -1000,6 +1017,17 @@ class _Commands extends StatelessWidget {
           enabled: !busy,
           onTap: () => run(DeviceCommandKind.reset),
         ),
+      // Every unit, mains or battery (protocol §7.6 RESTART): a plain
+      // restart, nothing erased. Two taps — the first one arms it.
+      _RestartButton(
+        key: const ValueKey('cmd-restart'),
+        enabled: canTest && online && !busy && restartWhyNot == null,
+        hint: !canTest
+            ? 'só para Administrador'
+            : restartWhyNot ??
+                (node.isLeaf ? 'no próximo despertar' : 'não apaga nada'),
+        onConfirmed: () => run(DeviceCommandKind.restart),
+      ),
     ];
 
     return Column(
@@ -1054,6 +1082,60 @@ class _Commands extends StatelessWidget {
             );
           }),
       ],
+    );
+  }
+}
+
+/// Reiniciar, in two taps: the first arms it ("Confirmar", red) for a few
+/// seconds, the second sends it. No dialog — the popover stays as it is.
+class _RestartButton extends StatefulWidget {
+  const _RestartButton({
+    super.key,
+    required this.enabled,
+    required this.hint,
+    required this.onConfirmed,
+  });
+  final bool enabled;
+  final String hint;
+  final VoidCallback onConfirmed;
+
+  @override
+  State<_RestartButton> createState() => _RestartButtonState();
+}
+
+class _RestartButtonState extends State<_RestartButton> {
+  static const _armedFor = Duration(seconds: 4);
+  bool _armed = false;
+  Timer? _disarm;
+
+  void _tap() {
+    if (_armed) {
+      _disarm?.cancel();
+      widget.onConfirmed();
+      return;
+    }
+    setState(() => _armed = true);
+    _disarm = Timer(_armedFor, () {
+      if (mounted) setState(() => _armed = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _disarm?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final armed = _armed && widget.enabled;
+    return _CommandButton(
+      icon: Icons.power_settings_new_rounded,
+      label: armed ? 'Confirmar' : 'Reiniciar',
+      hint: armed ? 'toque de novo para reiniciar' : widget.hint,
+      accent: armed ? AppColors.error : null,
+      enabled: widget.enabled,
+      onTap: _tap,
     );
   }
 }
@@ -1235,7 +1317,7 @@ class _OpenButton extends StatelessWidget {
 /// it, ✓✓ with the wave when the LAST unit confirmed. Disabled while a test
 /// runs. On a phone viewing the central: the basics only.
 /// What the Central's popover asks for when it closes.
-enum CentralMenuAction { startTest, cancelTest, history }
+enum CentralMenuAction { startTest, cancelTest, history, restart }
 
 Future<void> showCentralMenu({
   required BuildContext context,
@@ -1281,6 +1363,20 @@ Future<void> showCentralMenu({
       }
     case CentralMenuAction.history:
       if (context.mounted) showSystemTestHistory(context);
+    case CentralMenuAction.restart:
+      // The board itself (protocol §7.6 RESTART): from the tablet it goes
+      // down the link; from an Administrador's phone the central sends it
+      // (central-mirror.md §4.11). The ticks beside the Central tell the
+      // rest: ✓✓ when the board confirmed, "voltou" when it is back.
+      if (board == null) break;
+      final commands = ref.read(deviceCommandProvider.notifier);
+      final ok = await commands.run(board.mac, DeviceCommandKind.restart);
+      if (!ok && context.mounted) {
+        _say(
+            context,
+            ref.read(deviceCommandProvider)[board.mac]?.note ??
+                'A central não confirmou o reinício.');
+      }
     case null:
       break;
   }
@@ -1356,13 +1452,28 @@ class _CentralPopover extends ConsumerWidget {
         ref.watch(topologyProvider).where((n) => n.layer > 0 && n.online);
     final sleepers = units.where((n) => n.isLeaf).length;
     final commands = ref.watch(deviceCommandProvider);
-    final test = commands[safrBroadcastMac];
+    // Only a system test: any other command to every unit is not shown
+    // here as one.
+    final all = commands[safrBroadcastMac];
+    final test = all?.kind == DeviceCommandKind.test ? all : null;
     final running = test?.broadcastRunning == true || record != null;
     final tally = test == null
         ? null
         : ref.read(deviceCommandProvider.notifier).broadcastTally;
     final linkUp = ref.watch(boardLinkUpProvider);
     final b = board;
+    // Reiniciar central: the tablet, or an Administrador's phone. Not
+    // while a test or an update runs, nor with a command still on its way.
+    final restart = b == null ? null : commands[b.mac];
+    final restartWhyNot = !canTest
+        ? 'Só um Administrador desta central pode reiniciá-la.'
+        : !linkUp || b == null
+            ? 'A central não está ligada à placa.'
+            : running
+                ? 'Aguarde o fim do teste.'
+                : ref.watch(deviceUpdateRunProvider)?.running == true
+                    ? 'Aguarde o fim da atualização.'
+                    : null;
     // Every unit, as on Dispositivos, with its outcome in the test.
     final grid = [
       for (final n in ref.watch(topologyProvider))
@@ -1619,6 +1730,18 @@ class _CentralPopover extends ConsumerWidget {
                   ],
                 ),
               ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                child: _CentralRestart(
+                  status: restart?.kind == DeviceCommandKind.restart
+                      ? restart
+                      : null,
+                  whyNot: restartWhyNot,
+                  busy: restart?.inFlight == true,
+                  onConfirmed: () =>
+                      Navigator.of(context).pop(CentralMenuAction.restart),
+                ),
+              ),
               if (grid.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
@@ -1672,6 +1795,116 @@ class _CentralPopover extends ConsumerWidget {
 /// system test — its outcome: the clock (Pendente / Próximo despertar),
 /// cyan ✓✓ Confirmado, red Sem comunicação / Sem resposta. Outside a test,
 /// its state.
+/// REINICIAR CENTRAL in the Central's popover: the board restarts, nothing
+/// is erased. Two taps, as on a unit — the first one arms it.
+class _CentralRestart extends StatefulWidget {
+  const _CentralRestart({
+    required this.status,
+    required this.whyNot,
+    required this.busy,
+    required this.onConfirmed,
+  });
+
+  /// The restart on its way or just over; null = none.
+  final DeviceCommandStatus? status;
+
+  /// Why it is not offered now; null = nothing in the way.
+  final String? whyNot;
+  final bool busy;
+  final VoidCallback onConfirmed;
+
+  @override
+  State<_CentralRestart> createState() => _CentralRestartState();
+}
+
+class _CentralRestartState extends State<_CentralRestart> {
+  static const _armedFor = Duration(seconds: 4);
+  bool _armed = false;
+  Timer? _disarm;
+
+  void _tap() {
+    if (_armed) {
+      _disarm?.cancel();
+      widget.onConfirmed();
+      return;
+    }
+    setState(() => _armed = true);
+    _disarm = Timer(_armedFor, () {
+      if (mounted) setState(() => _armed = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _disarm?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = widget.whyNot == null && !widget.busy;
+    final armed = _armed && enabled;
+    final status = widget.status;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          height: 18,
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'REINICIAR',
+                  style: TextStyle(
+                    color: context.textSecondary,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.0,
+                  ),
+                ),
+              ),
+              if (status != null) CommandTicks(status: status, size: 15),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          status != null
+              ? commandStepText(status)
+              : widget.whyNot ??
+                  'Reinicia a central sem apagar nada. A comunicação com os '
+                      'dispositivos para por alguns segundos e volta sozinha.',
+          key: const ValueKey('central-restart-text'),
+          style: TextStyle(
+            color: context.textSecondary,
+            fontSize: 11,
+            height: 1.3,
+          ),
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          key: const ValueKey('central-restart'),
+          onPressed: enabled ? _tap : null,
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(44),
+            foregroundColor: armed ? AppColors.error : null,
+            side: armed
+                ? BorderSide(color: AppColors.error.withValues(alpha: 0.7))
+                : null,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          icon: const Icon(Icons.power_settings_new_rounded, size: 18),
+          label: Text(
+            armed ? 'Toque de novo para reiniciar' : 'Reiniciar central',
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _TestUnitTile extends StatelessWidget {
   const _TestUnitTile({required this.node, required this.status});
   final TopologyNode node;

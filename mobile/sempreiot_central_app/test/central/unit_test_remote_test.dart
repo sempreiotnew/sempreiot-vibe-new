@@ -32,6 +32,7 @@ void main() {
   const unit = 'AA:00:00:00:00:01';
   const detector = 'CC:00:00:00:00:03';
   const silent = 'AA:00:00:00:00:09';
+  const board = 'BB:00:00:00:00:00';
   final t0 = DateTime.utc(2026, 11, 5, 14);
 
   AccessRelation user(String identityId, AccessLevel level) => AccessRelation(
@@ -46,11 +47,12 @@ void main() {
         updatedAt: t0,
       );
 
-  TopologyNode node(String mac, SafrNodeRole role, {bool online = true}) =>
+  TopologyNode node(String mac, SafrNodeRole role,
+          {bool online = true, int layer = 1}) =>
       TopologyNode(
         mac: mac,
         role: role,
-        layer: 1,
+        layer: layer,
         parentMac: null,
         rssi: -60,
         batteryPct: null,
@@ -160,6 +162,7 @@ void main() {
         node(unit, SafrNodeRole.node),
         node(detector, SafrNodeRole.leaf),
         node(silent, SafrNodeRole.node, online: false),
+        node(board, SafrNodeRole.root, layer: 0),
       ];
       container = ProviderContainer(overrides: [
         appDatabaseProvider.overrideWithValue(db),
@@ -221,6 +224,58 @@ void main() {
       linkUp = false;
       container.invalidate(boardLinkUpProvider);
       expect(await ask(admin, unit), RemoteSystemTest.unitNoLink);
+      expect(sentDown, isEmpty);
+    });
+
+    // ── Reiniciar (§4.11) ────────────────────────────────────────────────
+
+    Future<String?> askRestart(String who, String mac) =>
+        container.read(remoteSystemTestProvider).handle(who,
+            MirrorRemoteTest(id: 'r', mac: mac, restart: true, name: 'Ana'));
+
+    test('an Administrador restarts a mains unit, a battery unit, the board',
+        () async {
+      for (final mac in [unit, detector, board]) {
+        expect(await askRestart(admin, mac), isNull, reason: mac);
+        final status = container.read(deviceCommandProvider)[mac]!;
+        expect(status.kind, DeviceCommandKind.restart);
+        expect(status.by, 'Ana');
+      }
+      expect(sentDown, [
+        (unit, DeviceCommandKind.restart),
+        (detector, DeviceCommandKind.restart),
+        (board, DeviceCommandKind.restart),
+      ]);
+      await pumpEventQueue();
+      expect(await audit(), everyElement('unit_restart_remote_started'));
+      expect(await audit(), hasLength(3));
+    });
+
+    test('a restart: anyone else is refused, and nothing is sent', () async {
+      expect(await askRestart(viewer, unit), RemoteSystemTest.unitNotAdmin);
+      expect(await askRestart('us-east-1:nobody', board),
+          RemoteSystemTest.unitNotAdmin);
+      expect(sentDown, isEmpty);
+      await pumpEventQueue();
+      expect(await audit(),
+          ['unit_restart_remote_refused', 'unit_restart_remote_refused']);
+    });
+
+    test('a restart: only a unit the central hears, with the board on the link',
+        () async {
+      expect(await askRestart(admin, silent), RemoteSystemTest.unitUnreachable);
+      expect(await askRestart(admin, 'AA:00:00:00:00:77'),
+          RemoteSystemTest.unitUnreachable);
+      linkUp = false;
+      container.invalidate(boardLinkUpProvider);
+      expect(await askRestart(admin, board), RemoteSystemTest.unitNoLink);
+      expect(sentDown, isEmpty);
+    });
+
+    test('a restart: not while the system test runs', () async {
+      await container.read(systemTestControllerProvider.notifier).start();
+      sentDown.clear();
+      expect(await askRestart(admin, unit), RemoteSystemTest.unitTestRunning);
       expect(sentDown, isEmpty);
     });
 

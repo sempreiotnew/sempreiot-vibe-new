@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -744,6 +745,17 @@ static bool handle_lifecycle_command(const siot_safr_frame_t *f, const uint8_t *
     }
 }
 
+/* RESTART addressed to the board (spec §7.6 v3.10): the ACK went up the
+ * serial link first. Runs in the esp_timer task, not the rx path. */
+static esp_timer_handle_t s_restart_timer;
+
+static void restart_cb(void *arg)
+{
+    (void)arg;
+    ESP_LOGW(TAG, "RESTART: asked by the central — restarting");
+    esp_restart();
+}
+
 static void handle_downlink(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_len, bool dup)
 {
     if (is_ota_push(f) || is_ota_command(f)) { /* board only, never relayed (§13.3, §13.6) */
@@ -759,6 +771,29 @@ static void handle_downlink(const siot_safr_frame_t *f, const uint8_t *raw, size
     }
     switch (f->msg_type) {
     case SAFR_MSG_COMMAND:   /* every legacy device command */
+        if (f->payload_len >= 1 && f->payload[0] == SAFR_CMD_RESTART) {
+            /* Spec §7.6 v3.10: a plain restart of ONE unit, nothing erased.
+             * Never broadcast. Addressed to the board: the board itself —
+             * the ACK first, the restart 300 ms later, never relayed. To any
+             * other unit: ACKed and relayed below, like every command. */
+            if (siot_mac_is_bcast(f->dst_mac)) {
+                send_ack(f->msg_id, SAFR_ACK_ERROR, SAFR_ACK_D_REFUSED, f->src_mac);
+                return;
+            }
+            if (siot_mac_eq(f->dst_mac, siot_identity_get()->mac)) {
+                if (s_restart_timer == NULL) {
+                    const esp_timer_create_args_t targs = {.callback = restart_cb, .name = "restart"};
+                    esp_timer_create(&targs, &s_restart_timer);
+                }
+                if (s_restart_timer == NULL) {
+                    send_ack(f->msg_id, SAFR_ACK_ERROR, SAFR_ACK_D_REFUSED, f->src_mac);
+                    return;
+                }
+                send_ack(f->msg_id, SAFR_ACK_OK, SAFR_ACK_D_NONE, f->src_mac);
+                if (!dup) esp_timer_start_once(s_restart_timer, 300 * 1000);
+                return;
+            }
+        }
         if (f->payload_len >= 1 && f->payload[0] == SAFR_CMD_LINK_CHECK) {
             /* Spec §9.3: supervision of the tablet → board direction — the
              * board is the "root" that answers it. Not relayed: every node
