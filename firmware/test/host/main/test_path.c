@@ -236,6 +236,49 @@ TEST_CASE("path: only a neighbour that is fresh, complete, with room and not ref
     TEST_ASSERT_FALSE(siot_path_best(&t, now, &c));
 }
 
+TEST_CASE("path: a unit with no path goes to a unit that has one, never to another orphan", "[link][path]")
+{
+    /* The building of 2026-11-16: out of the board's reach, this unit lost its
+     * parent and holds "level 1" with no board. X, heard at -63, is another
+     * orphan calling itself level 1; Y, at -73, is in the real mesh. */
+    start();
+    int64_t now = 0;
+    siot_path_set_parent(&t, NULL);
+    siot_path_advert_t orphan = advert(X, 1, SIOT_PATH_ROOT_DBM, NULL, 0);
+    orphan.complete = false;
+    const uint8_t chain[12] = {0x52, 0, 0, 0, 0, 0x40, 0x52, 0, 0, 0, 0, 0x10};
+    const siot_path_advert_t y = advert(Y, 3, -55, chain, 2);
+    siot_path_choice_t c;
+
+    hear(&now, 3, &orphan, -63);
+    TEST_ASSERT_FALSE(siot_path_rescue(&t, now, &c)); /* nobody with a path: stay, keep the mesh */
+    hear(&now, 3, &y, -73);
+    TEST_ASSERT_TRUE(siot_path_rescue(&t, now, &c));
+    TEST_ASSERT_EQUAL_MEMORY(Y, c.ap, 6);
+    TEST_ASSERT_EQUAL(-73, c.path_new);
+
+    /* The board is off: the real root says so, and so does everything under it. */
+    siot_path_advert_t off = y;
+    off.complete = false;
+    hear(&now, 1, &off, -73);
+    TEST_ASSERT_FALSE(siot_path_rescue(&t, now, &c));
+
+    /* A child with a parent nothing comes down from: any unit with a path, but not that parent. */
+    start();
+    now = 0;
+    siot_path_set_parent(&t, X);
+    siot_path_link_sample(&t, -40);
+    hear(&now, 3, &orphan, -40);
+    TEST_ASSERT_FALSE(siot_path_rescue(&t, now, &c));
+    hear(&now, 3, &y, -80);
+    TEST_ASSERT_TRUE(siot_path_rescue(&t, now, &c));
+    TEST_ASSERT_EQUAL_MEMORY(Y, c.ap, 6);
+    /* ...and what this unit says meanwhile: no path it can vouch for. */
+    siot_path_advert_t own;
+    siot_path_own(&t, now, 2, false, false, false, &own);
+    TEST_ASSERT_FALSE(own.complete);
+}
+
 TEST_CASE("path: the root says a path of its own only with the board behind it", "[link][path]")
 {
     start();

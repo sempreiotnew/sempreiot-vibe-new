@@ -173,6 +173,13 @@ typedef struct {
  * lately, not the parent, not too deep). For the log. */
 bool siot_path_best(const siot_path_table_t *t, int64_t now_ms, siot_path_choice_t *out);
 
+/* For a unit with NO path to the central — the root's role held without the
+ * board, or a parent nothing comes down from: the best neighbour that says it
+ * has a real path (COMPLETE: its chain ends at a root with its session to the
+ * board), whatever the signals — any path beats none. `path_now` is -128.
+ * False when nobody in reach has one: there is nothing to join. */
+bool siot_path_rescue(const siot_path_table_t *t, int64_t now_ms, siot_path_choice_t *out);
+
 /* Called once per SIOT_PATH_ADVERT_MS while the unit may move. True when the
  * path through `out` has been SIOT_PATH_GAIN_DB better than a path below
  * SIOT_PATH_GOOD_DBM for `sustain_ms` in a row: the unit should move now. */

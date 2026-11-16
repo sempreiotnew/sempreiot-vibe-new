@@ -932,6 +932,30 @@ central sees the result in the unit's next HEARTBEAT (PARENT, LAYER) and TOPOLOG
 learns its path is −85, hears the root's advert at −65 and moves to the root by itself; the old
 parent then hears its former child — no longer under it, with a good path — and moves under it.
 
+**A unit with no path (2026-11-16, second part).** A unit that loses its parent and finds no other
+is sent to the board by Mesh-Lite and calls itself level 1 from then on — and a level-1 unit looks
+for the board only, never for a parent again. Out of the board's reach it stayed so for good, took
+other orphans as its children, and a RESTART brought it back the same (the library keeps that state
+in RTC memory); it returned only when carried to where it heard the board (building, 2026-11-16).
+Three rules:
+
+- **It says so.** A unit that is not in the mesh — attached to nothing, or holding the root's role
+  with no board — sends its advert without `COMPLETE` (LEVEL as the library has it, PATH `0`, no
+  CHAIN) instead of staying silent, so the units under it and around it stop believing what it
+  said before at the next advert, not 45 s later.
+- **It leaves the role when the real mesh is in reach.** At level 1, attached to nothing, no
+  session with the board for **60 s** (plus up to 30 s by its address): if a neighbour's advert is
+  `COMPLETE` (and it is not `FULL`, not under this unit, at level ≤ 14), the unit goes to the one
+  with the best path, by the move above — whatever the signals, any path beats none; the waits
+  between moves do not apply. Nobody `COMPLETE` in reach — the board is off, or the unit hears no
+  one — and it **keeps the role and the mesh**, as before (§9.2); it looks again at every advert.
+- **A child whose parent gives it nothing** (§9.3, nothing from the central for 60 s) goes to a
+  `COMPLETE` neighbour when there is one, before it lets Mesh-Lite choose — which takes the
+  shallowest unit heard, another orphan calling itself level 1.
+
+Every start now looks for a parent afresh: the library's RTC state is erased at boot.
+*Written 2026-11-16 after the console log of the stuck unit; builds, host-tested; **not run on units yet**.*
+
 **Bench times.** While `SIOT_PATH_BENCH_TIMES` is 1 (`docs/ota/before-production.md` item 11) the
 three waits above — 3 minutes with the better path in sight, 10 minutes after a command, 10 minutes
 after a move (doubling to 80) — are **1 minute** each (the last doubling to 8).

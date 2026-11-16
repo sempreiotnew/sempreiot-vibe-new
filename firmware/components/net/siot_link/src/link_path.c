@@ -186,9 +186,9 @@ static int8_t path_now(const siot_path_table_t *t, int64_t now_ms)
     return siot_path_fresh(p, now_ms) && p->complete ? weaker(link, p->path) : link;
 }
 
-bool siot_path_best(const siot_path_table_t *t, int64_t now_ms, siot_path_choice_t *out)
+/* The neighbour with the best path among those that can be a parent at all. */
+static bool best_parent(const siot_path_table_t *t, int64_t now_ms, siot_path_choice_t *out)
 {
-    if (!t->has_parent || !t->link_known) return false;
     const siot_path_neighbour_t *best = NULL;
     int8_t best_path = -128;
     for (int i = 0; i < SIOT_PATH_NEIGHBOURS; i++) {
@@ -196,7 +196,7 @@ bool siot_path_best(const siot_path_table_t *t, int64_t now_ms, siot_path_choice
         if (!siot_path_fresh(n, now_ms) || !n->complete || n->full || n->under_me) continue;
         if (n->level > SIOT_PATH_MAX_PARENT_LEVEL) continue;
         if (n->bad_until_ms != 0 && now_ms < n->bad_until_ms) continue;
-        if (memcmp(n->ap, t->parent_ap, 6) == 0) continue;
+        if (t->has_parent && memcmp(n->ap, t->parent_ap, 6) == 0) continue;
         const int8_t path = weaker(siot_path_rssi(n), n->path);
         /* The better path; then the shallower unit; then the one heard better. */
         if (best == NULL || path > best_path ||
@@ -212,8 +212,21 @@ bool siot_path_best(const siot_path_table_t *t, int64_t now_ms, siot_path_choice
     out->level = best->level;
     out->rssi = siot_path_rssi(best);
     out->path_new = best_path;
+    out->path_now = -128;
+    return true;
+}
+
+bool siot_path_best(const siot_path_table_t *t, int64_t now_ms, siot_path_choice_t *out)
+{
+    if (!t->has_parent || !t->link_known) return false;
+    if (!best_parent(t, now_ms, out)) return false;
     out->path_now = path_now(t, now_ms);
     return true;
+}
+
+bool siot_path_rescue(const siot_path_table_t *t, int64_t now_ms, siot_path_choice_t *out)
+{
+    return best_parent(t, now_ms, out);
 }
 
 bool siot_path_evaluate(siot_path_table_t *t, int64_t now_ms, uint32_t sustain_ms, siot_path_choice_t *out)
