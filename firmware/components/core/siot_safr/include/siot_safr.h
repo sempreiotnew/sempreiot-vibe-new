@@ -67,6 +67,9 @@ extern "C" {
 /* v3.8, spec §14: labels and cause-and-effect (board → tablet, paged) */
 #define SAFR_MSG_LABEL_TABLE     0x16 /* §14.2 */
 #define SAFR_MSG_RULE_TABLE      0x17 /* §14.4 (Phase B) */
+/* v3.12, spec §7.16: a mains unit's path to the root, unit to unit on ESP-NOW
+ * only (its own ESP-NOW type; never on the mesh, the board or the tablet) */
+#define SAFR_MSG_PATH_ADVERT     0x18
 
 /* FLAGS */
 #define SAFR_F_ENC      0x01

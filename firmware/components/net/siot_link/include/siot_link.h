@@ -229,6 +229,28 @@ void siot_link_mesh_rejoin(void);
  * root keeps the mesh. siot_netcore restarts a unit that stays out. */
 uint32_t siot_link_mesh_out_s(void);
 
+/* ---- the best path (siot_link_path.h, protocol §7.16 PATH_ADVERT, v3.12) --
+ * A unit does not stay under a parent with a weak path when another unit
+ * offers a clearly better one: every mains unit says its path on ESP-NOW,
+ * every unit compares, and the one with a weak path moves by itself
+ * (link_mesh_node.c, "The best path"). siot_netcore owns the frames. */
+
+/* Node: the PATH_ADVERT payload this unit should broadcast now, written to
+ * `out` (>= SIOT_PATH_ADVERT_MAX_LEN). 0 = it says nothing: not in the mesh,
+ * its access point closed, or in the middle of a move. */
+size_t siot_link_mesh_path_advert(uint8_t *out, size_t cap);
+
+/* Node: the PATH_ADVERT of another unit of this installation — its SAFR
+ * SRC_MAC, BOOT_CTR and MSG_CTR (an older frame is a replay), the signal it
+ * was heard at on ESP-NOW and its payload. Safe from any task. */
+void siot_link_mesh_path_heard(const uint8_t id[6], uint16_t boot_ctr, uint32_t msg_ctr, int8_t rssi,
+                               const uint8_t *payload, size_t len);
+
+/* Node: whether this unit may move to a better parent now. False while it is
+ * in alarm, not ONLINE, or a command passed not long ago (an operator is
+ * working on the installation, or an update runs). Starts false. */
+void siot_link_mesh_path_allow(bool allow);
+
 /* Node: push a downlink frame one hop further, to this node's own children
  * (brief §6.3; the caller dedupes so it is a loop-safe re-broadcast). */
 esp_err_t siot_link_mesh_broadcast_children(const uint8_t *frame, size_t len);

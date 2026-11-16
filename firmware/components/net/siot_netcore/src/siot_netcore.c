@@ -16,6 +16,7 @@
 #include "siot_hbwin.h"
 #include "siot_identity.h"
 #include "siot_link.h"
+#include "siot_link_path.h"
 #include "siot_safr.h"
 #include "siot_survey.h"
 #include "siot_util.h"
@@ -117,6 +118,16 @@ static uint32_t out_restart_wait_s(void)
     const uint32_t wait = (uint32_t)MESH_OUT_RESTART_S << (n > 3 ? 3 : n);
     return wait > MESH_OUT_RESTART_MAX_S ? MESH_OUT_RESTART_MAX_S : wait;
 }
+
+/* The best path (protocol §7.16 PATH_ADVERT, v3.12; siot_link_path.h): this
+ * unit says its path to the root on ESP-NOW every SIOT_PATH_ADVERT_MS, hears
+ * what the others say, and siot_link moves it to a clearly better parent.
+ * netcore owns the frames and says when a move is allowed: ONLINE, no alarm,
+ * no event of ours waiting for its ACK, and no COMMAND seen for PATH_QUIET_MS
+ * — any command but the tablet's LINK_CHECK means somebody is working on the
+ * installation (a test, an update, a rename), and the tree must hold still. */
+#define PATH_QUIET_MS SIOT_PATH_QUIET_MS /* 10 min; 1 min while SIOT_PATH_BENCH_TIMES (before-production item 11) */
+static int64_t s_last_cmd_ms = -1; /* written in the link rx task, read in the netcore task */
 
 static bool s_name_announced;     /* the central acknowledged our NAME_ANNOUNCE */
 static uint16_t s_announce_msg_id; /* the copy waiting for that ACK */
@@ -549,6 +560,7 @@ static void on_command(const siot_safr_frame_t *f, const uint8_t *raw, size_t ra
     }
     note_downlink();
     relay_down(f, raw, raw_len, dup);
+    if (f->payload_len >= 1 && f->payload[0] != SAFR_CMD_LINK_CHECK) s_last_cmd_ms = now_ms(); /* ours or not: see PATH_QUIET_MS */
     if (!for_me(f) || f->payload_len < 2) return;
     const uint8_t cmd = f->payload[0];
     const size_t alen = f->payload[1];
@@ -660,6 +672,23 @@ static void on_link_rx(siot_link_kind_t kind, const uint8_t *frame, size_t len, 
     }
 }
 
+/* ---- the best path (see PATH_QUIET_MS) --------------------------------- */
+
+/* siot_survey's path sink: the PATH_ADVERT of another unit, as heard on
+ * ESP-NOW. Checked like every frame (SYSTEM_ID, key) but kept out of
+ * siot_safr_rx: its replay and dedupe tables are for the traffic of the mesh,
+ * and a dozen neighbours every 10 s would push real frames out of them. The
+ * replay check is the table's own. Runs in the ESP-NOW receive context. */
+static void on_path_advert(const uint8_t src[6], int8_t rssi, const uint8_t *frame, size_t len, void *ctx)
+{
+    (void)src; (void)ctx;
+    static siot_safr_frame_t f; /* one receive context: not on its stack */
+    if (siot_safr_parse_frame(frame, len, &f) != SIOT_SAFR_PARSE_OK) return;
+    if ((f.flags & SAFR_F_ENC) == 0 || f.msg_type != SAFR_MSG_PATH_ADVERT) return;
+    if (siot_mac_eq(f.src_mac, siot_identity_get()->mac)) return;
+    siot_link_mesh_path_heard(f.src_mac, f.boot_ctr, f.msg_ctr, rssi, f.payload, f.payload_len);
+}
+
 /* ---- button ------------------------------------------------------------ */
 
 static void on_button(siot_evt_id_t id, const void *data, void *ctx)
@@ -732,6 +761,7 @@ static void netcore_task(void *arg)
 {
     (void)arg;
     int64_t next_hb_ms = 0;
+    int64_t next_path_ms = 0;
 
     for (;;) {
         const int64_t t = now_ms();
@@ -777,6 +807,18 @@ static void netcore_task(void *arg)
             }
         }
         if (t >= next_hb_ms) { emit_heartbeat(t); next_hb_ms = t + HB_INTERVAL_MS; }
+
+        /* The best path (see PATH_QUIET_MS): may this unit move, and its own
+         * advert — up to 2 s apart from one time to the next, so two units
+         * that started together do not talk over each other for ever. */
+        siot_link_mesh_path_allow(s_state == SIOT_STATE_ONLINE && !s_alarm_active && !s_pending_used &&
+                                  (s_last_cmd_ms < 0 || t - s_last_cmd_ms >= PATH_QUIET_MS));
+        if (t >= next_path_ms) {
+            next_path_ms = t + SIOT_PATH_ADVERT_MS + (int64_t)(esp_timer_get_time() & 0x7FF);
+            uint8_t advert[SIOT_PATH_ADVERT_MAX_LEN];
+            const size_t n = siot_link_mesh_path_advert(advert, sizeof(advert));
+            if (n > 0) siot_safr_send(SAFR_BCAST_MAC, SAFR_MSG_PATH_ADVERT, siot_safr_next_msg_id(), 0, advert, n);
+        }
 
         /* One-way link (see CONFIRM_CHECK_MS): joined under another unit, the
          * central heard, no alarm. */
@@ -871,6 +913,7 @@ esp_err_t siot_netcore_start(void)
     if ((err = siot_safr_register(SAFR_MSG_COMMAND, on_command, NULL)) != ESP_OK) return err;
     siot_safr_set_tx(tx_sink, NULL);
     siot_link_set_rx(on_link_rx, NULL);
+    siot_survey_set_path_sink(on_path_advert, NULL);
     if ((err = siot_evbus_subscribe(SIOT_EVT_BUTTON_TAP, on_button, NULL, NULL)) != ESP_OK) return err;
     if ((err = siot_evbus_subscribe(SIOT_EVT_BUTTON_DOUBLE_TAP, on_button, NULL, NULL)) != ESP_OK) return err;
 

@@ -40,7 +40,8 @@ void siot_survey_set_online(bool online);
 esp_err_t siot_survey_probe(void);
 
 /* TX hook for the SAFR sink owner: true = frame was a probe/offer and went
- * out on ESP-NOW (or was dropped); false = not ours, send it as usual. */
+ * out on ESP-NOW (or was dropped); false = not ours, send it as usual. A
+ * PATH_ADVERT is taken here too. */
 bool siot_survey_tx(const uint8_t *frame, size_t len, const uint8_t dst_mac[6]);
 
 /* Every ESP-NOW frame that is not a PARENT_PROBE / PARENT_OFFER (a leaf's
@@ -50,6 +51,13 @@ bool siot_survey_tx(const uint8_t *frame, size_t len, const uint8_t dst_mac[6]);
  * context: copy and return. NULL = such frames are dropped (Phase 1). */
 typedef void (*siot_survey_raw_cb_t)(const uint8_t src[6], int8_t rssi, const uint8_t *frame, size_t len, void *ctx);
 void siot_survey_set_raw_sink(siot_survey_raw_cb_t cb, void *ctx);
+
+/* PATH_ADVERT (protocol §7.16, v3.12): a mains unit's own advert handed to
+ * siot_survey_tx() goes out as an ESP-NOW broadcast on a type of its own, and
+ * the adverts of the other units come to this sink, raw, with the signal they
+ * were heard at. Same context rule as the raw sink. Node image only: the
+ * board neither sends nor hears them. NULL = dropped. */
+void siot_survey_set_path_sink(siot_survey_raw_cb_t cb, void *ctx);
 
 /* Sends any SAFR frame over ESP-NOW to `dst` (unicast or broadcast), same
  * transport and type byte as the probes. ESP_ERR_INVALID_STATE before init. */

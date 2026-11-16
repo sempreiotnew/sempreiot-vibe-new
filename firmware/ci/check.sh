@@ -108,6 +108,8 @@ grep -q '^const otaPinOncePerSession = true;' "$OTA_PIN_POLICY" 2>/dev/null \
 ROOT_ADVISOR="$FW_DIR/../mobile/sempreiot_central_app/lib/features/central/application/root_advisor_provider.dart"
 grep -q '^const rootAdviceHoldBench = true;' "$ROOT_ADVISOR" 2>/dev/null \
     && RELAXED+=("item 10 tablet: a better root is suggested after 1 minute, not 10 (rootAdviceHoldBench)")
+grep -q '^#define SIOT_PATH_BENCH_TIMES 1' "$FW_DIR/components/net/siot_link/include/siot_link_path.h" \
+    && RELAXED+=("item 11 node: a unit moves to a better parent after 1 minute waits, not 3 / 10 / 10 (SIOT_PATH_BENCH_TIMES)")
 grep -q 'CHANNEL=bench ' "$FW_DIR/tools/ota_release.sh" \
     && RELAXED+=("item 9  Internet releases: one channel, 'bench' — no 'stable' channel for customers yet (ota_release.sh default)")
 

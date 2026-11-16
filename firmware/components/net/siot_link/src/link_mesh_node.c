@@ -34,6 +34,7 @@
 
 #include "siot_identity.h"
 #include "siot_link.h"
+#include "siot_link_path.h"
 #include "siot_util.h"
 
 static const char *TAG = "link_mesh_node";
@@ -282,6 +283,69 @@ static int64_t s_board_rssi_ms; /* 0 = never measured */
 
 static volatile bool s_rejoin_requested; /* siot_link_mesh_rejoin(): the tcp task leaves the parent */
 
+/* The best path (siot_link_path.h, protocol §7.16, 2026-11-16). Mesh-Lite
+ * picks a parent once, at the join, by the signal of that one hop — and looks
+ * again only when the unit's level changes (esp_mesh_lite_check_best_ap,
+ * called from esp_mesh_lite_info_inherit and nowhere else). A unit that
+ * joined the root at -85 dBm stayed at -85 beside units it heard at -50.
+ *
+ * So every unit says its path on ESP-NOW (PATH_ADVERT, siot_netcore sends and
+ * receives; the table is s_path) and, when the path through another unit has
+ * been SIOT_PATH_GAIN_DB better than a weak one for SIOT_PATH_SUSTAIN_MS, it
+ * moves. The move is made WITH the library, through the one hook it has —
+ * read from libesp_mesh_lite_esp32s3.a 1.0.2 (esp_mesh_lite_vendor_ie_cb,
+ * esp_mesh_lite_event_scan_done_handler):
+ *
+ *   - esp_mesh_lite_get_ssid_by_mac_cb_register(cb, true): a candidate that
+ *     would win the library's own comparison is first shown to `cb` with its
+ *     access point's address; NULL drops it, a pointer is taken as its SSID
+ *     (32 bytes are copied). So while a parent is PINNED the callback knows
+ *     one address only, and the library attaches there or nowhere;
+ *   - registered with `false` the callback is asked for an SSID only at the
+ *     connect, and NULL there means "the one of the scan": exactly what the
+ *     library does with no callback. That is the unpinned state.
+ *
+ * The pin stays after the move (PIN_HELD): right after a join the library
+ * looks for "a better parent" by its own rule — a deeper unit heard 10 dB
+ * better wins — and would take the unit straight back. It goes the moment
+ * the station loses that parent, so a unit whose parent dies looks for any
+ * parent exactly as before. Level 1 is barred for the seconds of the move:
+ * with no candidate the library attaches to the board at any signal, and a
+ * unit whose chosen parent was missed by one scan would dial as a second root.
+ *
+ * A unit never moves in alarm, while the central is not heard, for
+ * PATH_QUIET after a command (siot_netcore: siot_link_mesh_path_allow), as
+ * the root, or within PATH_HOLD_MS of its last move — doubling each move up
+ * to PATH_HOLD_MAX_MS, back to the start after PATH_HOLD_FORGET_MS without
+ * one. A parent it could not reach in PATH_MOVE_MS is not tried again for
+ * SIOT_PATH_BAD_MS. RAM only: a restart starts with the library's choice. */
+#define PATH_MOVE_MS            45000
+#define PATH_HOLD_MS           SIOT_PATH_HOLD_MS     /* 10 min; 1 min while SIOT_PATH_BENCH_TIMES */
+#define PATH_HOLD_MAX_MS       SIOT_PATH_HOLD_MAX_MS /* 80 min; 8 min on the bench */
+#define PATH_HOLD_FORGET_MS  21600000
+#define PATH_CENTRAL_S             60
+#define PATH_SAY_MS             60000
+enum { PIN_NONE, PIN_MOVING, PIN_HELD };
+static siot_path_table_t s_path;
+static SemaphoreHandle_t s_path_lock;
+static volatile bool    s_path_allowed;  /* siot_netcore: nothing forbids a move now */
+static volatile uint8_t s_pin_state;
+static volatile bool    s_pin_lost;      /* the station left the pinned parent (event task) */
+static uint8_t  s_pin_ap[6];             /* written only while PIN_NONE */
+static char     s_pin_ssid[33];
+static bool     s_whitelist_on;          /* the library asks on_parent_candidate about every candidate */
+static bool     s_move_barred;           /* level 1 barred for the move */
+static siot_path_choice_t s_move;        /* the move in progress, for the log */
+static int64_t  s_move_until_ms;
+static int64_t  s_move_hold_until_ms;
+static int64_t  s_last_move_ms;
+static uint32_t s_move_hold_ms = PATH_HOLD_MS;
+static int64_t  s_path_next_ms;
+static int64_t  s_path_say_ms;
+static uint8_t  s_ap_max_units;          /* how many stations this unit's access point takes (0 = not read yet) */
+static void pin_release(const char *why, bool unbar);
+static void board_listen_stop(void);
+
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 
 /* Where this unit's station is: on the board's access point (the router SSID
@@ -344,6 +408,7 @@ static void root_bar_start(void)
         s_taking = false;
         esp_mesh_lite_set_allowed_level(0);
     }
+    pin_release("the board says another unit is the root", false);
     s_root_barred = true;
     s_root_bar_until_ms = now_ms() + ROOT_YIELD_BAR_MS;
     ap_close();
@@ -369,6 +434,7 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         if (is_board_ssid(e->ssid, e->ssid_len)) s_board_on_air_s = now_s;
     } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t *e = (const wifi_event_sta_disconnected_t *)data;
+        if (s_pin_state == PIN_HELD) s_pin_lost = true; /* the parent this unit chose: path_poll lets go of it */
         if (!is_board_ssid(e->ssid, e->ssid_len)) return;
         if (e->reason == WIFI_REASON_NO_AP_FOUND) {
             s_board_absent_s = now_s;
@@ -583,6 +649,7 @@ static void take_root_poll(int64_t now, uint8_t level, sta_where_t where, const 
         s_take_requested = false;
         if (where == STA_ON_UNIT && !s_taking) {
             board_listen_stop();
+            pin_release("the central chose this unit to be the root", true);
             if (s_root_barred) {
                 s_root_barred = false;
                 esp_mesh_lite_set_disallowed_level(0);
@@ -609,6 +676,197 @@ static void take_root_poll(int64_t now, uint8_t level, sta_where_t where, const 
         ESP_LOGW(TAG, "one root: the board was not reached in %d s — any level allowed again (%s), looking for a parent",
                  TAKE_ROOT_MS / 1000, esp_err_to_name(err));
     }
+}
+
+/* ---- the best path (see PATH_MOVE_MS) ----------------------------------- */
+
+/* Mesh-Lite's parent whitelist, Wi-Fi / event task: the one access point this
+ * unit may attach to while a parent is pinned; nothing to say otherwise. */
+static const uint8_t *on_parent_candidate(const uint8_t *mac)
+{
+    if (mac == NULL || s_pin_state == PIN_NONE) return NULL;
+    return memcmp(mac, s_pin_ap, 6) == 0 ? (const uint8_t *)s_pin_ssid : NULL;
+}
+
+static void pin_whitelist(bool on)
+{
+    if (on == s_whitelist_on) return; /* each registration frees and allocates in the library: only on a change */
+    s_whitelist_on = on;
+    const esp_err_t err = esp_mesh_lite_get_ssid_by_mac_cb_register(on_parent_candidate, on);
+    if (err != ESP_OK) ESP_LOGE(TAG, "path: parent whitelist %s not set: %s", on ? "on" : "off", esp_err_to_name(err));
+}
+
+/* Any parent again. `unbar`: level 1 too (not when the caller bars it itself). */
+static void pin_release(const char *why, bool unbar)
+{
+    if (s_pin_state == PIN_NONE) return;
+    s_pin_state = PIN_NONE;
+    s_pin_lost = false;
+    pin_whitelist(false);
+    if (s_move_barred) {
+        s_move_barred = false;
+        if (unbar) esp_mesh_lite_set_disallowed_level(0); /* 0 = no level barred */
+    }
+    ESP_LOGW(TAG, "path: %s is no longer the only parent this unit takes — %s", s_pin_ssid, why);
+}
+
+static void path_move_start(int64_t now, const siot_path_choice_t *c, const char *parent)
+{
+    s_pin_state = PIN_NONE; /* a unit that moves again: the callback knows nobody while the pin is rewritten */
+    memcpy(s_pin_ap, c->ap, 6);
+    memset(s_pin_ssid, 0, sizeof(s_pin_ssid));
+    /* The SSID that unit gives its access point (node_start): the same line. */
+    snprintf(s_pin_ssid, sizeof(s_pin_ssid), "%.22s-%02x%02x%02x", s_code.net_ssid, c->id[3], c->id[4], c->id[5]);
+    s_move = *c;
+    s_move_until_ms = now + PATH_MOVE_MS;
+    if (s_last_move_ms != 0 && now - s_last_move_ms > PATH_HOLD_FORGET_MS) s_move_hold_ms = PATH_HOLD_MS;
+    s_last_move_ms = now;
+    s_move_hold_until_ms = now + s_move_hold_ms;
+    const uint32_t hold_s = s_move_hold_ms / 1000;
+    s_move_hold_ms = s_move_hold_ms >= PATH_HOLD_MAX_MS / 2 ? PATH_HOLD_MAX_MS : s_move_hold_ms * 2;
+    s_last_rejoin_ms = now; /* the new parent gets its whole wait to prove its path */
+    board_listen_stop();
+    s_pin_lost = false;
+    s_pin_state = PIN_MOVING;
+    pin_whitelist(true);
+    s_move_barred = true;
+    const esp_err_t bar = esp_mesh_lite_set_disallowed_level(1);
+    ESP_LOGW(TAG, "path: MOVING — the path through %s is %d dBm; through %s (heard at %d dBm, level %u) it would be "
+                  "%d dBm. Leaving %s for it: %d s to attach (level 1 barred meanwhile: %s), no other move for %" PRIu32 " s",
+             parent, c->path_now, s_pin_ssid, c->rssi, c->level, c->path_new, parent, PATH_MOVE_MS / 1000,
+             esp_err_to_name(bar), hold_s);
+    esp_mesh_lite_disconnect();
+    esp_mesh_lite_connect();
+}
+
+/* What this unit knows of the paths around it, once a minute, for the console. */
+static void path_say(int64_t now, const char *parent, bool may, const char *held_by)
+{
+    uint8_t fresh = 0;
+    for (int i = 0; i < SIOT_PATH_NEIGHBOURS; i++) {
+        if (siot_path_fresh(&s_path.n[i], now)) fresh++;
+    }
+    siot_path_choice_t c;
+    if (!siot_path_best(&s_path, now, &c)) {
+        ESP_LOGI(TAG, "path: on %s%s; %u unit(s) heard, none that could be a parent", parent,
+                 s_pin_state == PIN_HELD ? " (chosen)" : "", fresh);
+        return;
+    }
+    char other[SIOT_MAC_STR_LEN];
+    const bool weak = c.path_now < SIOT_PATH_GOOD_DBM;
+    const bool gain = c.path_new >= c.path_now + SIOT_PATH_GAIN_DB;
+    ESP_LOGI(TAG, "path: %d dBm through %s%s; best other parent %s (level %u) heard at %d dBm, path %d dBm; "
+                  "%u unit(s) heard — %s",
+             c.path_now, parent, s_pin_state == PIN_HELD ? " (chosen)" : "", siot_mac_to_str(c.id, other), c.level,
+             c.rssi, c.path_new, fresh,
+             !weak ? "this path is good, staying"
+             : !gain ? "not 10 dB better, staying"
+             : !may ? held_by
+             : "better: moving if it stays so");
+}
+
+/* From mesh_guard_poll. True when it just left the parent for a better one. */
+static bool path_poll(int64_t now, uint8_t level, sta_where_t where, const char *parent)
+{
+    wifi_ap_record_t ap = {0};
+    const bool on_unit = where == STA_ON_UNIT && esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+
+    if (s_pin_state == PIN_MOVING) {
+        if (on_unit && memcmp(ap.bssid, s_pin_ap, 6) == 0) {
+            s_pin_lost = false;
+            s_pin_state = PIN_HELD;
+            if (s_move_barred) {
+                s_move_barred = false;
+                esp_mesh_lite_set_disallowed_level(0);
+            }
+            ESP_LOGW(TAG, "path: MOVED — attached to %s at %d dBm (it said level %u, path %d dBm): it stays this "
+                          "unit's only parent until it is lost", parent, ap.rssi, s_move.level, s_move.path_new);
+        } else if (now >= s_move_until_ms) {
+            xSemaphoreTake(s_path_lock, portMAX_DELAY);
+            siot_path_mark_bad(&s_path, now, s_pin_ap);
+            xSemaphoreGive(s_path_lock);
+            pin_release("it was not reached: any parent now, and not that one again for 30 min", true);
+        }
+        return false;
+    }
+    if (s_pin_state == PIN_HELD && (s_pin_lost || !on_unit || memcmp(ap.bssid, s_pin_ap, 6) != 0)) {
+        pin_release("the station left it: any parent now", true);
+    }
+
+    xSemaphoreTake(s_path_lock, portMAX_DELAY);
+    siot_path_set_parent(&s_path, on_unit ? ap.bssid : NULL);
+    if (now < s_path_next_ms) {
+        xSemaphoreGive(s_path_lock);
+        return false;
+    }
+    s_path_next_ms = now + SIOT_PATH_ADVERT_MS;
+    if (on_unit) siot_path_link_sample(&s_path, ap.rssi);
+
+    const uint32_t now_s = (uint32_t)(now / 1000) + 1;
+    const uint32_t heard_s = s_last_downlink_s;
+    const bool central = heard_s != 0 && now_s - heard_s <= PATH_CENTRAL_S;
+    const char *held_by = !on_unit || level < 2 ? "not a child in the mesh"
+                        : s_root_barred || s_taking || s_ap_closed ? "the root is being settled"
+                        : !central ? "the central is not heard through this parent"
+                        : !s_path_allowed ? "held: alarm, a recent command or not online"
+                        : now < s_move_hold_until_ms ? "held: this unit moved not long ago"
+                        : NULL;
+    const bool may = held_by == NULL;
+    siot_path_choice_t c;
+    bool move = false;
+    if (may) {
+        /* A few seconds apart per unit, so two units do not leave together. */
+        const uint32_t spread_ms = (uint32_t)(siot_identity_get()->mac[5] % 16) * 2000;
+        move = siot_path_evaluate(&s_path, now, SIOT_PATH_SUSTAIN_MS + spread_ms, &c);
+    } else {
+        siot_path_evaluate_reset(&s_path);
+    }
+    if (on_unit && !move && now - s_path_say_ms >= PATH_SAY_MS) {
+        s_path_say_ms = now;
+        path_say(now, parent, may, held_by ? held_by : "");
+    }
+    xSemaphoreGive(s_path_lock);
+
+    if (move) path_move_start(now, &c, parent);
+    return move;
+}
+
+void siot_link_mesh_path_allow(bool allow) { s_path_allowed = allow; }
+
+size_t siot_link_mesh_path_advert(uint8_t *out, size_t cap)
+{
+    if (!s_started || s_path_lock == NULL) return 0;
+    const uint8_t level = esp_mesh_lite_get_level();
+    const sta_where_t where = sta_where(NULL);
+    const bool root = level == 1 && where == STA_ON_BOARD;
+    const bool child = level >= 2 && where == STA_ON_UNIT;
+    /* Only a unit that is in the mesh and takes children says where it is. */
+    if ((!root && !child) || s_ap_closed || s_root_barred || s_pin_state == PIN_MOVING) return 0;
+
+    if (s_ap_max_units == 0) {
+        static wifi_config_t cfg; /* too big for the caller's stack; netcore task only */
+        if (esp_wifi_get_config(WIFI_IF_AP, &cfg) == ESP_OK) s_ap_max_units = cfg.ap.max_connection;
+    }
+    wifi_sta_list_t units;
+    const bool full = s_ap_max_units != 0 && esp_wifi_ap_get_sta_list(&units) == ESP_OK &&
+                      units.num >= s_ap_max_units;
+
+    siot_path_advert_t a;
+    xSemaphoreTake(s_path_lock, portMAX_DELAY);
+    siot_path_own(&s_path, now_ms(), level, root, root && s_tcp_sock >= 0, full, &a);
+    xSemaphoreGive(s_path_lock);
+    return siot_path_advert_encode(&a, out, cap);
+}
+
+void siot_link_mesh_path_heard(const uint8_t id[6], uint16_t boot_ctr, uint32_t msg_ctr, int8_t rssi,
+                               const uint8_t *payload, size_t len)
+{
+    if (!s_started || s_path_lock == NULL || rssi == (int8_t)SIOT_LINK_RSSI_NONE || rssi >= 0) return;
+    siot_path_advert_t a;
+    if (!siot_path_advert_decode(payload, len, &a)) return;
+    xSemaphoreTake(s_path_lock, portMAX_DELAY);
+    siot_path_heard(&s_path, now_ms(), id, boot_ctr, msg_ctr, rssi, &a);
+    xSemaphoreGive(s_path_lock);
 }
 
 static void mesh_guard_poll(void)
@@ -710,11 +968,15 @@ static void mesh_guard_poll(void)
     /* 7. Out of the mesh (see OUT_LOG_MS). */
     out_of_mesh_poll(now, level, where);
 
+    /* 8. A better path through another unit (see PATH_MOVE_MS). */
+    if (path_poll(now, level, where, parent)) return;
+
     /* 6. Asked to leave the parent (siot_netcore: the central hears others
      *    and not this unit). */
     if (s_rejoin_requested) {
         s_rejoin_requested = false;
         if (where == STA_ON_UNIT) {
+            pin_release("asked to look for a parent again", true);
             ESP_LOGW(TAG, "rejoin: leaving %s to look for a parent again", parent);
             s_last_rejoin_ms = now;
             esp_mesh_lite_disconnect();
@@ -741,6 +1003,12 @@ static void mesh_guard_poll(void)
     ESP_LOGW(TAG, "no path: attached to %s for %" PRIu32 " s with nothing from the central — leaving it to look "
                   "for another parent (next look in %" PRIu32 " s if this one has no path either)",
              parent, waited_s, s_rejoin_wait_ms / 1000);
+    if (s_pin_state == PIN_HELD) { /* the parent this unit chose: not again for a while */
+        xSemaphoreTake(s_path_lock, portMAX_DELAY);
+        siot_path_mark_bad(&s_path, now, s_pin_ap);
+        xSemaphoreGive(s_path_lock);
+    }
+    pin_release("it has no path to the central", true);
     esp_mesh_lite_disconnect();
     esp_mesh_lite_connect();
 }
@@ -1006,6 +1274,19 @@ static esp_err_t node_start(void)
 
     err = esp_mesh_lite_raw_msg_action_list_register(s_raw_actions);
     if (err != ESP_OK) return err;
+
+    /* The best path (see PATH_MOVE_MS): the table of what the other units
+     * say, keyed by access point address — this unit's own is what a child
+     * of it sees as its parent. */
+    uint8_t own_ap[6] = {0};
+    err = esp_wifi_get_mac(WIFI_IF_AP, own_ap);
+    if (err != ESP_OK) return err;
+    siot_path_init(&s_path, own_ap);
+    if (s_path_lock == NULL) s_path_lock = xSemaphoreCreateMutex();
+    if (s_path_lock == NULL) return ESP_ERR_NO_MEM;
+    char own_ap_str[SIOT_MAC_STR_LEN];
+    ESP_LOGI(TAG, "path: this unit's access point is %s, a path below %d dBm moves to one %d dB better",
+             siot_mac_to_str(own_ap, own_ap_str), SIOT_PATH_GOOD_DBM, SIOT_PATH_GAIN_DB);
 
     esp_mesh_lite_start();
 

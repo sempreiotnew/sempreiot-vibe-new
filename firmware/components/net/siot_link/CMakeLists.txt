@@ -4,11 +4,11 @@
 # On the linux host only the frame reassembler is built (test/host).
 idf_build_get_property(target IDF_TARGET)
 if(${target} STREQUAL "linux")
-    idf_component_register(SRCS "src/link_core.c"
+    idf_component_register(SRCS "src/link_core.c" "src/link_path.c"
                            INCLUDE_DIRS "include"
                            REQUIRES siot_safr)
 else()
-    set(srcs "src/link_core.c" "src/link_serial.c" "src/link_mesh_board.c")
+    set(srcs "src/link_core.c" "src/link_path.c" "src/link_serial.c" "src/link_mesh_board.c")
     set(priv_reqs esp_wifi esp_netif esp_event lwip esp_timer esp_hw_support
                   siot_hal_serial siot_identity siot_util siot_evbus)
     if(CONFIG_MESH_LITE_ENABLE)

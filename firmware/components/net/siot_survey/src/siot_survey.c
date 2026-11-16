@@ -22,6 +22,12 @@ static const char *TAG = "siot_survey";
  * (esp_mesh_lite_espnow.c) routes on it and strips it; the board does the
  * same by hand. Inside Mesh-Lite's reserved range, above what it uses. */
 #define SIOT_ESPNOW_TYPE 0xD2
+/* PATH_ADVERT (protocol §7.16) has a type of its own: a unit with firmware
+ * from before it has no handler for this byte and never sees the frame. On
+ * SIOT_ESPNOW_TYPE such a unit would take every advert for a frame of a leaf
+ * and pass it up to the central (siot_leafmgr: "anything else: up it goes"),
+ * and a battery unit would spend its wake on it. */
+#define SIOT_ESPNOW_TYPE_PATH 0xD3
 
 static uint8_t s_layer = 0xFF;
 static bool    s_online;
@@ -63,7 +69,7 @@ static esp_err_t ensure_peer(const uint8_t mac[6])
 }
 
 /* ---- transport ------------------------------------------------------------ */
-static esp_err_t transport_send(const uint8_t dst[6], const uint8_t *frame, size_t len);
+static esp_err_t transport_send(uint8_t espnow_type, const uint8_t dst[6], const uint8_t *frame, size_t len);
 
 static siot_survey_raw_cb_t s_raw_cb;
 static void               *s_raw_ctx;
@@ -92,8 +98,17 @@ esp_err_t siot_survey_espnow_send(const uint8_t dst[6], const uint8_t *frame, si
 {
     if (!s_ready) return ESP_ERR_INVALID_STATE;
     esp_err_t err = ensure_peer(dst);
-    if (err == ESP_OK) err = transport_send(dst, frame, len);
+    if (err == ESP_OK) err = transport_send(SIOT_ESPNOW_TYPE, dst, frame, len);
     return err;
+}
+
+static siot_survey_raw_cb_t s_path_cb;
+static void               *s_path_ctx;
+
+void siot_survey_set_path_sink(siot_survey_raw_cb_t cb, void *ctx)
+{
+    s_path_cb = cb;
+    s_path_ctx = ctx;
 }
 
 #if CONFIG_MESH_LITE_ENABLE
@@ -104,19 +119,35 @@ static esp_err_t on_mesh_lite_rx(const esp_now_recv_info_t *info, const uint8_t 
     return ESP_OK;
 }
 
+/* Node: a PATH_ADVERT of another unit, on its own type. */
+static esp_err_t on_mesh_lite_path_rx(const esp_now_recv_info_t *info, const uint8_t *data, int len)
+{
+    if (len < SAFR_MIN_FRAME || len > SAFR_MAX_FRAME || data[0] != SAFR_SOF || data[4] != SAFR_MSG_PATH_ADVERT) return ESP_OK;
+    const siot_survey_raw_cb_t cb = s_path_cb;
+    if (cb == NULL || info == NULL) return ESP_OK;
+    const int8_t rssi = info->rx_ctrl ? (int8_t)info->rx_ctrl->rssi : (int8_t)SAFR_NA_RSSI;
+    cb(info->src_addr, rssi, data, (size_t)len, s_path_ctx);
+    return ESP_OK;
+}
+
 static esp_err_t transport_init(void)
 {
     /* esp_now_init + the one recv callback belong to Mesh-Lite (User Guide
-     * §ESP-NOW); we only register our type. */
-    return esp_mesh_lite_espnow_recv_cb_register((esp_mesh_lite_espnow_data_type_t)SIOT_ESPNOW_TYPE,
-                                                 on_mesh_lite_rx);
+     * §ESP-NOW); we only register our types. */
+    esp_err_t err = esp_mesh_lite_espnow_recv_cb_register((esp_mesh_lite_espnow_data_type_t)SIOT_ESPNOW_TYPE,
+                                                          on_mesh_lite_rx);
+    if (err != ESP_OK) return err;
+    err = esp_mesh_lite_espnow_recv_cb_register((esp_mesh_lite_espnow_data_type_t)SIOT_ESPNOW_TYPE_PATH,
+                                                on_mesh_lite_path_rx);
+    if (err != ESP_OK) ESP_LOGW(TAG, "PATH_ADVERT receive not registered: %s", esp_err_to_name(err));
+    return ESP_OK;
 }
 
-static esp_err_t transport_send(const uint8_t dst[6], const uint8_t *frame, size_t len)
+static esp_err_t transport_send(uint8_t espnow_type, const uint8_t dst[6], const uint8_t *frame, size_t len)
 {
     uint8_t dst_copy[6];
     memcpy(dst_copy, dst, 6);
-    return esp_mesh_lite_espnow_send(SIOT_ESPNOW_TYPE, dst_copy, frame, len);
+    return esp_mesh_lite_espnow_send(espnow_type, dst_copy, frame, len);
 }
 #else
 /* Board: raw ESP-NOW, same one-byte type prefix. */
@@ -133,11 +164,11 @@ static esp_err_t transport_init(void)
     return esp_now_register_recv_cb(on_espnow_rx);
 }
 
-static esp_err_t transport_send(const uint8_t dst[6], const uint8_t *frame, size_t len)
+static esp_err_t transport_send(uint8_t espnow_type, const uint8_t dst[6], const uint8_t *frame, size_t len)
 {
     if (len + 1 > ESP_NOW_MAX_DATA_LEN) return ESP_ERR_INVALID_SIZE;
     uint8_t buf[ESP_NOW_MAX_DATA_LEN];
-    buf[0] = SIOT_ESPNOW_TYPE;
+    buf[0] = espnow_type;
     memcpy(&buf[1], frame, len);
     return esp_now_send(dst, buf, len + 1);
 }
@@ -147,10 +178,16 @@ bool siot_survey_tx(const uint8_t *frame, size_t len, const uint8_t dst_mac[6])
 {
     if (len < 5) return false;
     const uint8_t type = frame[4];
+    if (type == SAFR_MSG_PATH_ADVERT) { /* unit to unit only, always broadcast, on its own ESP-NOW type */
+        if (!s_ready) return true;
+        const esp_err_t perr = transport_send(SIOT_ESPNOW_TYPE_PATH, SAFR_BCAST_MAC, frame, len);
+        if (perr != ESP_OK) ESP_LOGD(TAG, "espnow send PATH_ADVERT: %s", esp_err_to_name(perr));
+        return true;
+    }
     if (type != SAFR_MSG_PARENT_PROBE && type != SAFR_MSG_PARENT_OFFER) return false;
     if (!s_ready) return true;
     esp_err_t err = ensure_peer(dst_mac);
-    if (err == ESP_OK) err = transport_send(dst_mac, frame, len);
+    if (err == ESP_OK) err = transport_send(SIOT_ESPNOW_TYPE, dst_mac, frame, len);
     if (err != ESP_OK) ESP_LOGW(TAG, "espnow send type 0x%02X: %s", type, esp_err_to_name(err));
     return true;
 }

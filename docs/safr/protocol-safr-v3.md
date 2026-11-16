@@ -43,6 +43,10 @@ here. Do **not** keep divergent layout comments in code — cite this file inste
   Revision **3.11** (2026-11-13) adds `BOARD_RSSI` to the node HEARTBEAT (§7.3: how each mains unit
   hears the board) and `COMMAND ROOT_TAKE` (§7.6, `0x08`: the central makes one unit the root, on the
   operator's word) — additive, `VER` unchanged; a 22-byte heartbeat says nothing and changes nothing.
+  Revision **3.12** (2026-11-16) adds `PATH_ADVERT` (§7.16, `0x18`): every mains unit says its path to
+  the root on ESP-NOW and a unit with a weak path moves to a clearly better parent by itself —
+  additive, `VER` unchanged; it never reaches the mesh, the board or the tablet, and a unit that does
+  not know it never sees it. *First run on units 2026-11-16, with the bench times of §7.16.*
 - Status: implemented (uplink + downlink + journal backfill); v3.2 additions: implemented, bench pending;
   v3.3: implemented; **v3.4: specified, firmware Phase 2 (`docs/phases-development/phase2-leaf-brief.md`)**
 - Supersedes: SAFR v2 (`VER = 0x02` — decode-only for stored packets) and
@@ -366,6 +370,7 @@ Sentinels for "not available": `0xFF` (uint8), `0xFFFF` (uint16), `0x7FFF` (int1
 | 0x15 | OTA_ROLLOUT *(v3.5)* | uplink (board → central, serial only) | paged, §13.6 |
 | 0x16 | LABEL_TABLE *(v3.8)* | uplink (board → central, serial only) | paged, §14.2 |
 | 0x17 | RULE_TABLE *(v3.8)* | uplink (board → central, serial only) | paged, §14.4 |
+| 0x18 | PATH_ADVERT *(v3.12)* | mains unit → mains units in radio range (ESP-NOW broadcast only) | 11 + 6·CHAIN_COUNT bytes, §7.16 |
 
 ### 7.1 EVENT — `MSG_TYPE 0x01` (uplink) — payload 17 bytes
 
@@ -861,6 +866,79 @@ node** answers — with its LAYER when ONLINE, with **`LAYER 0xFF`** when it has
 no path to the board ("here, but no board yet"); the **board never answers**
 `PURPOSE = 0` (it is not a leaf's parent). The leaf binds only to a LAYER ≠
 `0xFF` answer; §12.3 has the selection rule and the back-off.
+
+### 7.16 PATH_ADVERT — `MSG_TYPE 0x18` (ESP-NOW broadcast, mains unit → mains units) — payload 11 + 6·CHAIN_COUNT bytes *(v3.12, 2026-11-16)*
+
+**Why.** Mesh-Lite chooses a unit's parent once, when it joins, by the signal of that one hop, and
+looks again only when the unit's level changes. A unit that joined the root at −85 dBm stayed there
+beside units it heard at −50, and the units under it — which heard *it* at −50 — never knew their
+path had a −85 link in it (building, 2026-11-16). With this frame each unit knows the **path** every
+neighbour offers, and moves by itself when another is clearly better.
+
+| Off | Size | Field |
+|----|------|-------|
+| 0 | 1 | VERSION = `1` (another value: the frame is ignored) |
+| 1 | 1 | FLAGS — bit 0 `COMPLETE`: CHAIN reaches the root and PATH counts every link down to this unit · bit 1 `FULL`: its access point takes no more units |
+| 2 | 1 | LEVEL of the sender (1 = the root) |
+| 3 | 1 | PATH — int8 dBm: the **weakest unit-to-unit link** between the root and the sender. The root says `0` (no link above it; its own link to the board is not counted — every path shares it) |
+| 4 | 6 | AP — the address of the sender's access point: what a child attaches to (its SSID is `NET_SSID` + `-` + the last three bytes of `SRC_MAC`) |
+| 10 | 1 | CHAIN_COUNT (0…14) |
+| 11 | 6·n | CHAIN — the access points above the sender, its parent first, the root last |
+
+**Who sends it.** Every mains unit that is in the mesh — the root with its session to the board
+(otherwise without `COMPLETE`), a child attached to another unit — every **10 s** (plus up to 2 s),
+`DST_MAC` broadcast, no `F_ACK_REQ`, encrypted and authenticated like every frame. Not a unit whose
+access point is closed, nor one in the middle of a move. A child's PATH is the weaker of its own
+link to its parent (the station's signal, smoothed) and the PATH its parent last said; it is
+`COMPLETE` only when its parent's was. The board and the battery units never send it.
+
+**Where it travels.** ESP-NOW only, on a type byte of its own (`0xD3`; the survey and the leaf link
+use `0xD2`, §12.1) — so a unit with firmware from before 3.12, a battery unit and the board never
+see it: on `0xD2` an older unit would take it for a frame of a leaf and pass it up to the central.
+It is **never** relayed, never sent on the mesh, never reaches the board or the tablet. It does not
+go through the receiver's replay and dedupe tables of §9.1/§10 (a dozen neighbours every 10 s would
+push real traffic out of them): the receiver keeps the last `(BOOT_CTR, MSG_CTR)` per sender and
+drops anything not newer.
+
+**What a receiver does.** It keeps, per sender, the signal the adverts arrive at (smoothed), and
+believes a sender heard **3 times** with no gap over **45 s**. The path it would have through a
+neighbour is `min(signal the neighbour is heard at, the neighbour's PATH)`; the path it has is
+`min(its link to its parent, its parent's PATH)`. A unit **moves** to the neighbour with the best
+path when all of this holds, for **3 minutes** in a row (plus up to 30 s, by its address, so two
+units do not leave together):
+
+- its own path is **below −75 dBm** — a path that works is left alone;
+- the other path is **≥ 10 dB better** (the margin also covers what one number cannot say: the
+  advert is heard in one direction only);
+- the neighbour is `COMPLETE`, not `FULL`, at level ≤ 14, and the unit itself is **not in its
+  CHAIN** (a unit never attaches to a unit that hangs from it);
+- the unit is a child (never the root — `ROOT_TAKE`, §7.6, is how a root changes), ONLINE, the
+  central heard through its parent in the last 60 s, not in alarm, no event of its own waiting for
+  an ACK, and **no COMMAND seen for 10 minutes** (any command but `LINK_CHECK`: a test, an update or
+  an edit is going on, and the tree holds still);
+- it did not move in the last **10 minutes** — 20, 40, then 80 after each further move, back to 10
+  after 6 hours without one.
+
+**The move.** The unit pins that one access point as the only parent it takes, leaves its parent
+and attaches (a few seconds; its own units stay attached to it and are off the air meanwhile — an
+alarm raised then is retried and arrives late, as on any re-parenting). Level 1 is barred for those
+seconds, so a unit that misses its new parent in one scan never dials the board as a second root.
+Not attached in **45 s**: it takes any parent again and does not try that one for 30 minutes. The
+pin stays until the station loses that parent; from then on it looks for a parent as any unit does.
+Nothing is stored: after a restart the unit joins as before and looks at the paths again. The
+central sees the result in the unit's next HEARTBEAT (PARENT, LAYER) and TOPOLOGY.
+
+**Why a swap needs nobody to step aside.** In the building above, a unit under the −85 parent
+learns its path is −85, hears the root's advert at −65 and moves to the root by itself; the old
+parent then hears its former child — no longer under it, with a good path — and moves under it.
+
+**Bench times.** While `SIOT_PATH_BENCH_TIMES` is 1 (`docs/ota/before-production.md` item 11) the
+three waits above — 3 minutes with the better path in sight, 10 minutes after a command, 10 minutes
+after a move (doubling to 80) — are **1 minute** each (the last doubling to 8).
+
+*Written 2026-11-16; host-tested (`test/host/main/test_path.c`). First run on units the same day, on
+the building above with the bench times: the tree re-formed by itself and was judged to work (seen
+on the map, no console captured). Not yet run with the production times.*
 
 ---
 

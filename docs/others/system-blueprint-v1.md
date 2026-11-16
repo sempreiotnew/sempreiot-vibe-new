@@ -80,6 +80,8 @@ Internet, the tablet's camera, the customer's router, or being near the board wh
 5. Each battery detector wakes on its RTC timer. If it has no bound parent (or the bound parent stopped answering), it broadcasts `PARENT_PROBE` by ESP-NOW; every AC device in reach answers `PARENT_OFFER {mac, level, load}` (authenticated). The detector binds to the best, stores the MAC in RTC memory, sends HEARTBEAT to it, receives the parent's ACK, sleeps.
 6. The board marks each unit *online* on its first authenticated frame (a unit's first HEARTBEAT after provisioning carries its name and zone — new `NAME_ANNOUNCE` payload); the tablet shows it green with its name. Board sends TIME_SYNC down the tree on link-up and hourly; RTCs keep time in between.
 
+**The best path, by the units themselves (2026-11-16; first run on a building the same day, with the one-minute bench waits of `docs/ota/before-production.md` item 11).** Mesh-Lite picks a unit's parent once, at the join, by the signal of that hop. So every AC device also says, on ESP-NOW every 10 s, the weakest link on its own path to the root (`PATH_ADVERT`, protocol §7.16); every unit that hears it knows the path it would have through that neighbour. A unit whose path is below −75 dBm and that hears, for 3 minutes, a neighbour offering a path ≥ 10 dB better moves under it by itself — never in alarm, never while a test, an update or any command is going on, never as the root, never under a unit that hangs from it, and not again for 10 minutes (longer after each move). The choice is by **path signal, not by number of hops**. The central is not involved; the tablet shows the new tree.
+
 Expected cold start to all-green: about 2 minutes for 50 units.
 
 ---
