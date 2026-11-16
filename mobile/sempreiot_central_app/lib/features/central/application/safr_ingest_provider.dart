@@ -81,7 +81,8 @@ class SafrIngestService {
       SafrMsgType msgType,
       SafrEventCode? eventCode,
       int? uptimeS,
-      int bootCtr)? onTraffic;
+      int bootCtr,
+      int? boardRssi)? onTraffic;
 
   /// A frame whose header SYSTEM_ID is not ours (spec §3.1 "neighbouring
   /// system"). Null = ours again (a valid frame arrived). Feeds the
@@ -173,6 +174,9 @@ class SafrIngestService {
           ? (frame.payload as SafrHeartbeatPayload).uptimeS
           : null,
       frame.bootCtr,
+      frame.payload is SafrHeartbeatPayload
+          ? (frame.payload as SafrHeartbeatPayload).boardRssi
+          : null,
     );
 
     if (frame.msgType == SafrMsgType.ack && frame.payload is SafrAckPayload) {
@@ -842,9 +846,9 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
     onDeviceTableSynced: (listed) =>
         ref.read(boardSyncProvider.notifier).tableArrived(listed),
     onJournalData: downlink.handleJournalData,
-    onTraffic:
-        (mac, severity, parentMac, msgType, eventCode, uptimeS, bootCtr) =>
-            traffic.emit(SafrTrafficTick(
+    onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS,
+            bootCtr, boardRssi) =>
+        traffic.emit(SafrTrafficTick(
       mac: mac,
       direction: SafrTrafficDirection.uplink,
       severity: severity,
@@ -853,6 +857,7 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
       eventCode: eventCode,
       uptimeS: uptimeS,
       bootCtr: bootCtr,
+      boardRssi: boardRssi,
     )),
   );
 

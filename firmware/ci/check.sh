@@ -105,6 +105,9 @@ grep -q -- '-' "$FW_DIR/VERSION" && RELAXED+=("item 6  firmware/VERSION is a pre
 OTA_PIN_POLICY="$FW_DIR/../mobile/sempreiot_central_app/lib/features/central/application/ota_pin_policy.dart"
 grep -q '^const otaPinOncePerSession = true;' "$OTA_PIN_POLICY" 2>/dev/null \
     && RELAXED+=("item 8  tablet: the update PIN is asked once per app session (otaPinOncePerSession)")
+ROOT_ADVISOR="$FW_DIR/../mobile/sempreiot_central_app/lib/features/central/application/root_advisor_provider.dart"
+grep -q '^const rootAdviceHoldBench = true;' "$ROOT_ADVISOR" 2>/dev/null \
+    && RELAXED+=("item 10 tablet: a better root is suggested after 1 minute, not 10 (rootAdviceHoldBench)")
 grep -q 'CHANNEL=bench ' "$FW_DIR/tools/ota_release.sh" \
     && RELAXED+=("item 9  Internet releases: one channel, 'bench' — no 'stable' channel for customers yet (ota_release.sh default)")
 

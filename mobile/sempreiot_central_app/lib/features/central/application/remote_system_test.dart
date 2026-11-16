@@ -8,6 +8,7 @@ import '../domain/system_test/system_test_run.dart';
 import 'central_mirror_codec.dart';
 import 'device_command_provider.dart';
 import 'device_update_controller.dart';
+import 'root_advisor_provider.dart';
 import 'root_election_provider.dart';
 import 'system_test_provider.dart';
 import 'topology_provider.dart';
@@ -54,6 +55,7 @@ class RemoteSystemTest {
   static const unitIsBattery = 'Não disponível para detector a bateria';
   static const unitBusy = 'Outro comando em andamento';
   static const unitUpdateRunning = 'Atualização em andamento';
+  static const rootNotSuggested = 'A central não sugere mais essa troca';
   static const unitNoBoardAck = 'A placa não confirmou';
 
   /// Null = done; otherwise why not, in words for the phone.
@@ -65,10 +67,16 @@ class RemoteSystemTest {
     if (mac != null) {
       final refused = user == null
           ? unitNotAdmin
+          : command.takeRoot
+              ? await _takeRoot(mac, _whoOf(by))
+              : command.restart
+                  ? await _restart(mac, _whoOf(by))
+                  : await _unit(mac, _whoOf(by));
+      final what = command.takeRoot
+          ? 'root_take'
           : command.restart
-              ? await _restart(mac, _whoOf(by))
-              : await _unit(mac, _whoOf(by));
-      final what = command.restart ? 'unit_restart' : 'unit_test';
+              ? 'unit_restart'
+              : 'unit_test';
       _audit(
         by,
         refused == null ? '${what}_remote_started' : '${what}_remote_refused',
@@ -158,6 +166,30 @@ class RemoteSystemTest {
     final ok = await _ref.read(deviceCommandProvider.notifier).run(
         mac, DeviceCommandKind.restart,
         waitsForWake: node.sleeping, by: who);
+    return ok ? null : unitNoBoardAck;
+  }
+
+  /// TORNAR ROOT (§4.12): only the unit the central itself suggests now —
+  /// a phone approves, it never chooses. Not while a test or an update
+  /// runs, nor with an alarm held. Null = the board took it.
+  Future<String?> _takeRoot(String mac, String who) async {
+    if (_ref.read(systemTestControllerProvider).running != null) {
+      return unitTestRunning;
+    }
+    if (_ref.read(deviceUpdateProvider)?.running == true) {
+      return unitUpdateRunning;
+    }
+    if (!_ref.read(boardLinkUpProvider)) return unitNoLink;
+    if (_ref.read(rootAdvisorProvider)?.mac != mac) return rootNotSuggested;
+    final commands = _ref.read(deviceCommandProvider);
+    if (commands[mac]?.inFlight == true ||
+        commands[safrBroadcastMac]?.broadcastRunning == true) {
+      return unitBusy;
+    }
+    _ref.read(rootAdvisorProvider.notifier).noteAttempt();
+    final ok = await _ref
+        .read(deviceCommandProvider.notifier)
+        .run(mac, DeviceCommandKind.takeRoot, by: who);
     return ok ? null : unitNoBoardAck;
   }
 

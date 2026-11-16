@@ -20,6 +20,7 @@ class SafrTrafficTick {
     this.eventCode,
     this.uptimeS,
     this.bootCtr,
+    this.boardRssi,
   });
 
   /// Uplink: the parent the frame itself names (HEARTBEAT / TOPOLOGY
@@ -53,6 +54,10 @@ class SafrTrafficTick {
   /// so a frame with another one than the unit's last says it restarted.
   /// Only on the central (a frame it authenticated); never mirrored.
   final int? bootCtr;
+
+  /// HEARTBEAT only: BOARD_RSSI (protocol §7.3, v3.11) — how the unit hears
+  /// the central's board, dBm; null = not said, or not heard.
+  final int? boardRssi;
 }
 
 class SafrTrafficBus {

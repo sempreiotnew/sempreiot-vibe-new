@@ -140,6 +140,7 @@ extern "C" {
 #define SAFR_CMD_RESET      0x05 /* operator reset — only alarm-latch clear */
 #define SAFR_CMD_SOUND      0x06 /* v3.8 §14.5 -- MODE u8 ‖ DURATION_S u16 (Phase B) */
 #define SAFR_CMD_RESTART    0x07 /* v3.10 §7.6 -- plain restart of ONE unit (board, node or leaf): nothing erased, never broadcast */
+#define SAFR_CMD_ROOT_TAKE  0x08 /* v3.11 §7.6 -- central → ONE mains unit: leave your parent, be the root on the board */
 #define SAFR_CMD_GET_INSTALLATION 0x10 /* v3.1, POC round 1 -- spec §7.6 */
 #define SAFR_CMD_SET_INSTALLATION 0x11 /* v3.2, Case B: setup channel only -- spec §7.6 */
 #define SAFR_CMD_SET_DEVICE       0x12 /* v3.2 -- mac ‖ name ‖ zone */

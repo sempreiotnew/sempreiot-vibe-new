@@ -715,6 +715,16 @@ class _Facts extends StatelessWidget {
         valueColor: node.zone == null ? context.textSecondary : null,
       ),
       _SignalTile(rssi: node.rssi, sleeping: node.sleeping),
+      // How it hears the central's board (BOARD_RSSI): what its link would
+      // be as the root. Mains units that say it; the root's own link is
+      // the tile above.
+      if (!node.isLeaf && node.layer >= 2 && node.boardRssi != null)
+        _FactTile(
+          icon: Icons.router_outlined,
+          label: 'SINAL ATÉ A CENTRAL',
+          value: '${node.boardRssi} dBm',
+          valueColor: signalColor(node.boardRssi),
+        ),
       _FactTile(
         icon: Icons.schedule_rounded,
         label: 'ÚLTIMO SINAL',

@@ -13,6 +13,7 @@ import '../../../features/central/application/firmware_release_provider.dart';
 import '../../../features/central/application/central_mirror_viewer.dart';
 import '../../../features/central/application/central_status_publisher.dart';
 import '../../../features/central/application/device_led_provider.dart';
+import '../../../features/central/application/root_advisor_provider.dart';
 import '../../../features/central/application/central_storage_publisher.dart';
 import '../../../features/iot/application/presence_provider.dart';
 import '../../../features/centrais/presentation/screens/centrais_list_screen.dart';
@@ -113,6 +114,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       // The on-screen LEDs must hear every frame from the start, whatever
       // tab is open (read, not watch: its ticks must not rebuild this screen).
       ref.read(deviceLedProvider);
+      // "Another unit hears the central better than the root" needs ten
+      // minutes of readings: counted from the start, not from the first
+      // time Rede is opened (root_advisor_provider).
+      ref.read(rootAdvisorProvider);
     }
 
     ref.listen(centralAuthProvider, (prev, next) {

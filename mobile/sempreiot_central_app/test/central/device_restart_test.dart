@@ -192,8 +192,8 @@ void main() {
     });
   });
 
-  test('on the wire it is a new kind at the end: the old ones keep theirs', () {
-    expect(DeviceCommandKind.values.last, DeviceCommandKind.restart);
+  test('on the wire it is a new kind after the old ones: they keep theirs', () {
+    expect(DeviceCommandKind.restart.index, 8);
     expect(DeviceCommandKind.unitEvent.index, 7);
     final wire = DeviceCommandStatus(
       mac: unit,

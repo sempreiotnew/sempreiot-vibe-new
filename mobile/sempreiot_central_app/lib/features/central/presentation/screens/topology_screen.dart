@@ -14,6 +14,7 @@ import '../widgets/mesh_status_bar.dart';
 import '../widgets/device_update_rede_line.dart';
 import '../widgets/link_down_banner.dart';
 import '../widgets/network_3d/device_model_sprites.dart';
+import '../widgets/root_advice_banner.dart';
 import '../widgets/root_election_banner.dart';
 
 /// Rede — live map of the fire-alarm mesh (the map itself: [MeshMap]),
@@ -85,6 +86,9 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
         // on the map is read as live.
         const LinkDownBanner(),
         RootElectionBanner(election: election, nodes: nodes),
+        // Another unit hears the central better than the root: said here,
+        // with the button that makes the change (root_advice_banner).
+        RootAdviceBanner(nodes: nodes),
         if (!viewOnly)
           BoardSyncBanner(
             sync: sync,

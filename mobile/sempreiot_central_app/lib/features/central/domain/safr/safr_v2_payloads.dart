@@ -108,6 +108,11 @@ enum SafrCommand {
   /// ACKs first and restarts ≈ 300 ms later.
   restart(0x07),
 
+  /// v3.11 (spec §7.6): the central chose ONE mains unit to be the root —
+  /// it leaves its parent and attaches to the board, which then tells the
+  /// old root to yield. Never broadcast, never the board.
+  rootTake(0x08),
+
   /// v3.1, POC round 1 (spec §7.6/§7.10): serial-link-only, board replies
   /// with INSTALLATION. Never relayed into the mesh.
   getInstallation(0x10),
@@ -366,9 +371,16 @@ class SafrHeartbeatPayload extends SafrV2Payload {
     required this.layer,
     this.dlHeard,
     this.dlMap,
+    this.boardRssi,
   });
 
   static const wireLength = 20;
+
+  /// v3.11 BOARD_RSSI (spec §7.3): how this unit hears the board's access
+  /// point, dBm — what its link would be if it were the root. Null when
+  /// not sent (a heartbeat of 22 bytes or less: a leaf, older firmware) or
+  /// 0x7F (the board is not heard from there).
+  final int? boardRssi;
 
   /// v3.6 DL_HEARD (spec §7.3): board heartbeats heard in the last 120 s,
   /// 0..[dlHeardExpected]. Null = not sent (20-byte heartbeat: a leaf, or
@@ -418,6 +430,9 @@ class SafrHeartbeatPayload extends SafrV2Payload {
       layer: p[19],
       dlHeard: dlHeard,
       dlMap: dlMap,
+      boardRssi: p.length > wireLength + 2 && p[22] != 0x7F
+          ? p[22].toSigned(8)
+          : null,
     );
   }
 }

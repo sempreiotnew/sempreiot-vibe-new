@@ -13,6 +13,7 @@ import 'package:sempreiot_central_app/features/central/application/central_mirro
 import 'package:sempreiot_central_app/features/central/application/central_mirror_publisher.dart';
 import 'package:sempreiot_central_app/features/central/application/device_command_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/remote_system_test.dart';
+import 'package:sempreiot_central_app/features/central/application/root_advisor_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/root_election_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/system_test_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/topology_provider.dart';
@@ -152,8 +153,10 @@ void main() {
     late List<(String, DeviceCommandKind)> sentDown;
     late bool boardTakes;
     late bool linkUp;
+    late RootAdvisor advisor;
 
     setUp(() {
+      advisor = RootAdvisor();
       db = AppDatabase.forTesting(NativeDatabase.memory());
       sentDown = [];
       boardTakes = true;
@@ -168,6 +171,7 @@ void main() {
         appDatabaseProvider.overrideWithValue(db),
         topologyProvider.overrideWithValue(nodes),
         boardLinkUpProvider.overrideWith((_) => linkUp),
+        rootAdvisorProvider.overrideWith((ref) => advisor),
         centralAccessRelationsProvider.overrideWith((ref) => _Relations(ref, [
               user(admin, AccessLevel.level4),
               user(viewer, AccessLevel.level1),
@@ -277,6 +281,73 @@ void main() {
       sentDown.clear();
       expect(await askRestart(admin, unit), RemoteSystemTest.unitTestRunning);
       expect(sentDown, isEmpty);
+    });
+
+    // ── Tornar root (§4.12) ──────────────────────────────────────────────
+
+    Future<String?> askRoot(String who, String mac) =>
+        container.read(remoteSystemTestProvider).handle(who,
+            MirrorRemoteTest(id: 'k', mac: mac, takeRoot: true, name: 'Ana'));
+
+    /// The central suggests [unit]: 20 dB better than the root, for 11 min.
+    void suggest() {
+      var now = t0;
+      final a = advisor = RootAdvisor(
+          clock: () => now, holdFor: RootAdvisor.productionHoldFor);
+      final seen = [
+        node(board, SafrNodeRole.root, layer: 0),
+        TopologyNode(
+          mac: silent,
+          role: SafrNodeRole.root,
+          layer: 1,
+          parentMac: null,
+          rssi: -75,
+          batteryPct: null,
+          online: true,
+          lastSeenAt: t0,
+          alarmLatched: false,
+          boardRssi: -75,
+        ),
+        TopologyNode(
+          mac: unit,
+          role: SafrNodeRole.node,
+          layer: 2,
+          parentMac: silent,
+          rssi: -60,
+          batteryPct: null,
+          online: true,
+          lastSeenAt: t0,
+          alarmLatched: false,
+          boardRssi: -55,
+        ),
+      ];
+      a.update(seen, rootMac: silent, linkUp: true);
+      now = t0.add(const Duration(minutes: 11));
+      a.update(seen, rootMac: silent, linkUp: true);
+      expect(a.state?.mac, unit);
+      container.invalidate(rootAdvisorProvider);
+    }
+
+    test('an Administrador approves the unit the central suggests', () async {
+      suggest();
+      expect(await askRoot(admin, unit), isNull);
+      expect(sentDown, [(unit, DeviceCommandKind.takeRoot)]);
+      expect(container.read(rootAdvisorProvider), isNull,
+          reason: 'tried: the central stops suggesting for a while');
+      await pumpEventQueue();
+      expect(await audit(), ['root_take_remote_started']);
+    });
+
+    test('a phone approves, it never chooses: any other unit is refused',
+        () async {
+      expect(await askRoot(admin, unit), RemoteSystemTest.rootNotSuggested,
+          reason: 'nothing is suggested');
+      suggest();
+      expect(await askRoot(admin, detector), RemoteSystemTest.rootNotSuggested);
+      expect(await askRoot(viewer, unit), RemoteSystemTest.unitNotAdmin);
+      expect(sentDown, isEmpty);
+      await pumpEventQueue();
+      expect(await audit(), everyElement('root_take_remote_refused'));
     });
 
     test('the board did not take it: said so', () async {

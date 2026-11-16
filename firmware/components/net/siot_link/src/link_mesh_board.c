@@ -210,6 +210,36 @@ static void set_keepalive(int fd)
     setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
 }
 
+/* The unit the central chose to be the root (ROOT_TAKE), and until when. */
+static portMUX_TYPE s_designate_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint8_t s_designated[6];
+static int64_t s_designated_until_ms;
+
+void siot_link_mesh_board_designate_root(const uint8_t mac[6])
+{
+    if (mac == NULL) return;
+    const int64_t until = now_ms() + SIOT_LINK_ROOT_DESIGNATE_MS;
+    taskENTER_CRITICAL(&s_designate_mux);
+    memcpy(s_designated, mac, 6);
+    s_designated_until_ms = until;
+    taskEXIT_CRITICAL(&s_designate_mux);
+}
+
+/* Is `mac` the unit the central chose, and still in its time? Asked once it
+ * dialled; a yes uses the choice up. */
+static bool take_designation(const uint8_t mac[6])
+{
+    bool yes = false;
+    const int64_t now = now_ms();
+    taskENTER_CRITICAL(&s_designate_mux);
+    if (now < s_designated_until_ms && memcmp(s_designated, mac, 6) == 0) {
+        yes = true;
+        s_designated_until_ms = 0;
+    }
+    taskEXIT_CRITICAL(&s_designate_mux);
+    return yes;
+}
+
 /* This session is the root's from now on. */
 static void adopt_root(int *client, siot_link_reasm_t *reasm, int fd, struct in_addr ip)
 {
@@ -249,9 +279,17 @@ static void settle_challengers(int *client, siot_link_reasm_t *reasm)
         int8_t root_rssi = 0, new_rssi = 0;
         const bool root_known = station_of(s_client_ip, root_mac, &root_rssi);
         const bool new_known = station_of(c->ip, new_mac, &new_rssi);
-        if (siot_link_root_challenger_wins(root_known, root_rssi, new_known, new_rssi)) {
-            ESP_LOGW(TAG, "one root: the root's link is weak (%d dBm) — %s (%d dBm) takes the root, the old root is told to yield",
-                     root_rssi, who, new_rssi);
+        /* The central chose this unit (ROOT_TAKE, protocol §7.6): it takes
+         * the root whatever the signals say. */
+        const bool chosen = new_known && take_designation(new_mac);
+        if (chosen || siot_link_root_challenger_wins(root_known, root_rssi, new_known, new_rssi)) {
+            if (chosen) {
+                ESP_LOGW(TAG, "one root: the central chose %s (%d dBm) to be the root — the old root (%d dBm) is told to yield",
+                         who, new_rssi, root_rssi);
+            } else {
+                ESP_LOGW(TAG, "one root: the root's link is weak (%d dBm) — %s (%d dBm) takes the root, the old root is told to yield",
+                         root_rssi, who, new_rssi);
+            }
             const int old = *client;
             const struct in_addr old_ip = s_client_ip;
             s_client_fd = -1; /* nothing more goes down the old session */
@@ -444,6 +482,8 @@ bool    siot_link_mesh_parent(uint8_t mac[6], int8_t *rssi) { (void)mac; (void)r
 size_t  siot_link_mesh_children(uint8_t (*macs)[6], int8_t *rssi, size_t max) { (void)macs; (void)rssi; (void)max; return 0; }
 bool    siot_link_mesh_board_up(void) { return false; }
 void    siot_link_mesh_yield_root(void) {}
+void    siot_link_mesh_take_root(void) {}
+int8_t  siot_link_mesh_board_rssi(void) { return SIOT_LINK_RSSI_NONE; }
 void    siot_link_mesh_describe(char *out, size_t cap) { if (out && cap) out[0] = 0; }
 void    siot_link_mesh_rejoin(void) {}
 uint32_t siot_link_mesh_out_s(void) { return 0; }

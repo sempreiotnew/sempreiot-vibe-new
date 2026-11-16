@@ -11,6 +11,7 @@ import 'alarm_latch_provider.dart';
 import 'central_iot_provider.dart';
 import '../domain/ota/firmware_release.dart';
 import 'central_mirror_codec.dart';
+import 'central_mirror_viewer.dart' show asSuggestedRoot;
 import 'device_command_provider.dart';
 import 'device_labels_provider.dart';
 import 'device_led_provider.dart';
@@ -20,6 +21,7 @@ import 'device_update_source.dart';
 import 'firmware_release_provider.dart';
 import 'remote_ota.dart';
 import 'remote_system_test.dart';
+import 'root_advisor_provider.dart';
 import 'device_update_state.dart';
 import 'ota_push_report.dart';
 import 'ota_push_state.dart';
@@ -689,7 +691,16 @@ final centralMirrorPublisherProvider = Provider<void>((ref) {
         return false;
       }
     },
-    nodes: () => ref.read(topologyProvider),
+    // The unit the central suggests as the root is marked on the snapshot:
+    // a phone shows the same suggestion, never one of its own.
+    nodes: () {
+      final nodes = ref.read(topologyProvider);
+      final advice = ref.read(rootAdvisorProvider);
+      if (advice == null) return nodes;
+      return [
+        for (final n in nodes) n.mac == advice.mac ? asSuggestedRoot(n) : n,
+      ];
+    },
     link: () => ref.read(serialLinkProvider).name,
     commands: () => ref.read(deviceCommandProvider).values.toList(),
     // Read once a second while a user is watching, never listened to: with

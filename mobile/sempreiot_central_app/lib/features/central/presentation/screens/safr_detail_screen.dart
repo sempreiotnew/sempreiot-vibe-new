@@ -1257,6 +1257,13 @@ class _WireDetailScaffold extends ConsumerWidget {
                   'que chegaram. O monitor do dispositivo desenha os perdidos '
                   'como vazios.',
             ),
+          if (p.boardRssi != null)
+            (
+              'Sinal até a central',
+              '${p.boardRssi} dBm',
+              'BOARD_RSSI (v3.11, §7.3): como esta unidade ouve a placa da '
+                  'central — o enlace que teria se fosse o root.',
+            ),
         ];
       case v2p.SafrTopologyPayload p:
         return [
@@ -1332,6 +1339,10 @@ class _WireDetailScaffold extends ConsumerWidget {
               v2p.SafrCommand.restart =>
                 'REINICIAR: a unidade confirma e reinicia em seguida. Não '
                     'apaga nada; nunca em broadcast.',
+              v2p.SafrCommand.rootTake =>
+                'TORNAR ROOT: a central escolheu esta unidade para ser o '
+                    'root — ela deixa o pai e se liga à placa, que manda o '
+                    'root antigo ceder.',
               v2p.SafrCommand.getInstallation =>
                 'Pede à placa a identidade da instalação (resposta: INST).',
               v2p.SafrCommand.setInstallation =>

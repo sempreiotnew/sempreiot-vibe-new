@@ -37,6 +37,8 @@ alarms held on the panel, always** (decided 2026-10-03).
    - **Reiniciar** (decided 2026-11-13): an **Administrador** may restart one unit — the central's
      board, a mains unit or a battery unit — from the phone (§4.11). A plain restart: nothing is
      erased, and the alarms held on the panel stay held.
+   - **Tornar root** (decided 2026-11-13): an **Administrador** may approve, from the phone, the
+     change of root **the central itself suggests** (§4.12). A phone approves; it never chooses.
 3. **Never in the fire path.** Publishing runs beside the SAFR pipeline and never delays an ACK, a
    latch or a siren. If publishing fails, the tablet carries on.
 4. **Never stale as live.** Every message carries a sequence number and a time. The phone shows the
@@ -71,6 +73,7 @@ alarms held on the panel, always** (decided 2026-10-03).
 | `{id}/cmd/{user}` | phone → central | no | an Administrador taps Testar tudo / Cancelar teste | `test_start` / `test_cancel` (§4.9), answered by a `test_answer` event |
 | `{id}/cmd/{user}` | phone → central | no | an Administrador taps Testar on a unit | `unit_test` (§4.10), answered by a `test_answer` event; its steps follow as `command` events |
 | `{id}/cmd/{user}` | phone → central | no | an Administrador taps Reiniciar on a unit or on the Central | `unit_restart` (§4.11), answered by a `test_answer` event; its steps follow as `command` events |
+| `{id}/cmd/{user}` | phone → central | no | an Administrador taps Tornar root on Rede | `root_take` (§4.12), answered by a `test_answer` event; its steps follow as `command` events |
 | `{id}/cmd/{user}` *(planned 2026-10-28)* | phone → central | no | an Administrador edits Causa e efeito | `label_set` / `label_del` / `rule_set` / `rule_del` (§4.8) |
 | `{id}/rules` *(planned)* | central → cloud | no | watched: on hello, then on change | the label tables and the rule table **as the board confirmed them** (§4.8) |
 | `{id}/mesh/up` · `{id}/mesh/down` *(planned, names to settle — Phase C)* | island root ↔ central | no | always while an island exists | SAFR frames, end-to-end authenticated, tunnelled over MQTT (`phase4-cause-and-effect-brief.md` §2.4) |
@@ -481,6 +484,34 @@ own board** (the Central's popover). A plain restart — nothing is erased.
   `device_menu.dart`. Tests: `test/central/device_restart_test.dart`, `unit_test_remote_test.dart`,
   `rede_feedback_test.dart`, `central_mirror_screen_test.dart`.
 
+### 4.12 Tornar root from a phone (`{id}/cmd/{user}`) — 2026-11-13
+
+```json
+{"v":1,"type":"root_take","id":"muvia60t-4","mac":"AA:BB:CC:DD:EE:FF","name":"…"}
+```
+
+The central works out by itself when another unit hears its board clearly better than the root
+does (`root_advisor_provider.dart`: at least **10 dB** better for **10 minutes** without a break,
+from every mains unit's `BOARD_RSSI`, protocol §7.3) and shows it on Rede with **Tornar root**.
+
+- **What the snapshot carries.** Each unit of `state` has `brd` (its `BOARD_RSSI`, dBm, like `rssi`:
+  not part of what makes a new snapshot) and the suggested unit has `rootHint: true` (it is: the
+  snapshot goes out when the suggestion appears or goes). The phone shows the suggestion from that
+  mark and never works one out by itself.
+- **Who may / the checks.** An accepted Administrador or Master, as §4.10. Then: no system test, no
+  update, the board on the link, **`mac` is the unit the central suggests at that moment** ("A
+  central não sugere mais essa troca" otherwise), no other command on its way to it.
+- **What follows.** The central sends `COMMAND ROOT_TAKE` (protocol §7.6) and stops suggesting for
+  one hour. The steps reach every phone as `command` events (kind **9**): ✓✓ the unit confirmed,
+  then `answered` — "Tornar root · é o root agora" — when the tablet's own map shows the unit at
+  level 1, or `failed` with "não assumiu" after 120 s.
+- **Audit.** `root_take_remote_started` / `root_take_remote_refused`.
+- **On the phone.** The same line as on the tablet (Rede, under the strip), two taps; disabled with
+  why for anyone below Administrador. "Agora não" is the tablet's only. Code:
+  `root_advisor_provider.dart`, `root_advice_banner.dart`, `remote_system_test.dart`,
+  `central_mirror_viewer.dart` `sendRootTake`. Tests: `test/central/root_advice_test.dart`,
+  `unit_test_remote_test.dart`.
+
 **The list of users is read before anyone is refused (2026-11-05).** The central's list of users
 (`centralAccessRelationsProvider`) is built the first time something reads it and starts empty; the
 checks of §4.6, §4.9 and §4.10 read it at once, so the **first** request after the tablet's app
@@ -559,6 +590,7 @@ Menu and actions — what a user gets:
 | Identificar | **shown** — asked to the central, which sends it (§3.3) | lights an LED, changes nothing |
 | Testar (a mains unit) | **shown** — an Administrador's, asked to the central (§4.10); disabled for everyone else, with why | raises a test event, changes nothing |
 | Reiniciar (any unit, and the Central's board) | **shown** — an Administrador's, asked to the central (§4.11); disabled for everyone else, with why | restarts the unit, erases nothing |
+| Tornar root (the line on Rede, when the central suggests a better root) | **shown** — an Administrador's, asked to the central (§4.12); disabled for everyone else, with why | changes which unit is the root; the mesh re-forms for some seconds |
 | Other unit actions (rename, zone, RESET / Rearmar, silence, retire, Sincronizar com a placa) | hidden | rule 2: no command from a phone |
 | A tap on a unit | its basics, Identificar, Testar and the Dispositivo screen, read only | — |
 
@@ -654,3 +686,6 @@ Left for later: an IAM user with limited rights for cloud administration (today 
    refused. **In code 2026-11-05**, tested in the app's suite, not run on devices yet.
 7. **Reiniciar one unit from a phone** (§4.11), with `COMMAND RESTART` in the three firmware
    images. **In code 2026-11-13**, tested in the app's suite, firmware built; not run on devices yet.
+8. **The better root, suggested and approved** (§4.12), with `BOARD_RSSI` and `COMMAND ROOT_TAKE`
+   in the node and board images. **In code 2026-11-13**, tested in the app's suite, firmware built;
+   not run on devices yet.

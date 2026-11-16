@@ -303,7 +303,7 @@ static void emit_event(int64_t t, uint8_t evt_type, uint8_t evt_code, bool ack_r
 
 static void emit_heartbeat(int64_t t)
 {
-    uint8_t p[22]; /* 20 (§7.3) + DL_HEARD (v3.6) + DL_MAP (v3.7) */
+    uint8_t p[23]; /* 20 (§7.3) + DL_HEARD (v3.6) + DL_MAP (v3.7) + BOARD_RSSI (v3.11) */
     siot_put_u32(&p[0], now_epoch(t));
     siot_put_u32(&p[4], (uint32_t)(t / 1000)); /* UPTIME_S */
     p[8] = SAFR_PWR_AC_OK | SAFR_PWR_CHARGING;
@@ -326,6 +326,9 @@ static void emit_heartbeat(int64_t t)
      * s_lock, which netcore_task holds around every emit. */
     p[20] = siot_hbwin_heard(&s_hbwin, t);
     p[21] = siot_hbwin_map(&s_hbwin, t);
+    /* BOARD_RSSI (v3.11): how this unit hears the board's access point —
+     * what its link would be if it were the root. 0x7F = not heard. */
+    p[22] = (uint8_t)siot_link_mesh_board_rssi();
     send_uplink(SAFR_MSG_HEARTBEAT, siot_safr_next_msg_id(), 0, p, sizeof(p));
 }
 
@@ -591,6 +594,15 @@ static void on_command(const siot_safr_frame_t *f, const uint8_t *raw, size_t ra
             }
             if (s_restart_timer) esp_timer_start_once(s_restart_timer, 300 * 1000);
             else status = SAFR_ACK_ERROR;
+            break;
+        case SAFR_CMD_ROOT_TAKE: /* v3.11: the central chose this unit to be the root */
+            /* This unit only, a child in the mesh, and never in alarm: for the
+             * seconds it takes, nothing of this unit reaches the central. */
+            if (!siot_mac_eq(f->dst_mac, siot_identity_get()->mac) || siot_link_mesh_level() < 2 || s_alarm_active) {
+                status = SAFR_ACK_ERROR;
+                break;
+            }
+            siot_link_mesh_take_root();
             break;
         case SAFR_CMD_IDENTIFY: {
             const siot_evt_identify_t ev = {.seconds = f->payload_len >= 3 ? f->payload[2] : 0};

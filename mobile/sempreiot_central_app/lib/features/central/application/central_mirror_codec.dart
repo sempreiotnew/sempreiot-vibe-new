@@ -74,6 +74,7 @@ class MirrorRemoteTest {
       this.cancel = false,
       this.mac,
       this.restart = false,
+      this.takeRoot = false,
       this.name});
   final String id;
   final bool cancel;
@@ -84,6 +85,10 @@ class MirrorRemoteTest {
 
   /// With [mac]: REINICIAR that unit (§4.11) instead of TESTAR.
   final bool restart;
+
+  /// With [mac]: make that unit the root (§4.12) — the one the central
+  /// itself suggests.
+  final bool takeRoot;
   final String? name;
 }
 
@@ -127,8 +132,20 @@ String encodeMirrorUnitRestart(
       if (name != null && name.isNotEmpty) 'name': name,
     });
 
-/// A `test_start`, a `test_cancel`, a `unit_test` or a `unit_restart`;
-/// null = none of them, or malformed.
+/// Phone → central, on the phone's own command topic: make the unit [mac]
+/// the root — the one the central suggests (§4.12). Administrador only.
+String encodeMirrorRootTake(
+        {required String id, required String mac, String? name}) =>
+    jsonEncode({
+      'v': mirrorVersion,
+      'type': 'root_take',
+      'id': id,
+      'mac': mac,
+      if (name != null && name.isNotEmpty) 'name': name,
+    });
+
+/// A `test_start`, a `test_cancel`, a `unit_test`, a `unit_restart` or a
+/// `root_take`; null = none of them, or malformed.
 MirrorRemoteTest? decodeMirrorRemoteTest(String payload) {
   try {
     final map = jsonDecode(payload);
@@ -143,6 +160,8 @@ MirrorRemoteTest? decodeMirrorRemoteTest(String payload) {
         MirrorRemoteTest(id: map['id'] as String, mac: mac, name: name),
       'unit_restart' when mac is String && mac.isNotEmpty => MirrorRemoteTest(
           id: map['id'] as String, mac: mac, restart: true, name: name),
+      'root_take' when mac is String && mac.isNotEmpty => MirrorRemoteTest(
+          id: map['id'] as String, mac: mac, takeRoot: true, name: name),
       _ => null,
     };
   } catch (_) {
@@ -375,6 +394,8 @@ Map<String, dynamic> _unitToJson(TopologyNode n, {bool volatile = true}) => {
       if (n.parentMac != null) 'parent': n.parentMac,
       if (volatile && n.rssi != null) 'rssi': n.rssi,
       if (volatile && n.dlHeard != null) 'dl': n.dlHeard,
+      if (volatile && n.boardRssi != null) 'brd': n.boardRssi,
+      if (n.suggestedRoot) 'rootHint': true,
       if (n.linkDegraded) 'degraded': true,
       if (n.batteryPct != null) 'bat': n.batteryPct,
       'online': n.online,
@@ -460,6 +481,8 @@ TopologyNode? _unitFromJson(Object? raw, DateTime fallbackSeen) {
     parentMac: raw['parent'] as String?,
     rssi: (raw['rssi'] as num?)?.toInt(),
     dlHeard: (raw['dl'] as num?)?.toInt(),
+    boardRssi: (raw['brd'] as num?)?.toInt(),
+    suggestedRoot: raw['rootHint'] == true,
     linkDegraded: raw['degraded'] == true,
     batteryPct: (raw['bat'] as num?)?.toInt(),
     online: raw['online'] == true,

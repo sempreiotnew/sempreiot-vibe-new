@@ -47,11 +47,14 @@ String commandStepText(DeviceCommandStatus s) {
     DeviceCommandStep.delivered => switch (s.kind) {
         DeviceCommandKind.test => 'Testar · aguardando o teste',
         DeviceCommandKind.restart => 'Reiniciar · confirmado, reiniciando',
+        DeviceCommandKind.takeRoot => 'Tornar root · confirmado, trocando',
         _ => '$verb · confirmado',
       },
-    DeviceCommandStep.answered => s.kind == DeviceCommandKind.restart
-        ? 'Reiniciar · voltou'
-        : 'Teste recebido',
+    DeviceCommandStep.answered => switch (s.kind) {
+        DeviceCommandKind.restart => 'Reiniciar · voltou',
+        DeviceCommandKind.takeRoot => 'Tornar root · é o root agora',
+        _ => 'Teste recebido',
+      },
     DeviceCommandStep.failed => s.note == null
         ? '$verb · sem confirmação'
         : '$verb · ${s.note!.toLowerCase()}',

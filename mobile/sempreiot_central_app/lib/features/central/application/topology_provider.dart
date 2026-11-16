@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/safr/safr_product.dart';
 import '../domain/safr/safr_v2_payloads.dart';
+import 'board_signal_provider.dart';
 import 'central_mirror_viewer.dart';
 import 'device_labels_provider.dart';
 import 'ota_rollout_controller.dart';
@@ -40,7 +41,19 @@ class TopologyNode {
     this.awaitingSignal = false,
     this.dlHeard,
     this.linkDegraded = false,
+    this.boardRssi,
+    this.suggestedRoot = false,
   });
+
+  /// How this mains unit hears the central's board, dBm (protocol §7.3
+  /// BOARD_RSSI, v3.11): what its link would be if it were the root. Null =
+  /// not reported (a battery unit, older firmware) or not heard from there.
+  final int? boardRssi;
+
+  /// The central suggests this unit as the root (root_advisor_provider).
+  /// Set only on the snapshot the central publishes: a phone reads the
+  /// suggestion from it, the tablet from its own advisor.
+  final bool suggestedRoot;
 
   final String mac;
   final SafrNodeRole role;
@@ -239,6 +252,7 @@ final topologyProvider = Provider<List<TopologyNode>>((ref) {
   final updatingUnits = ref.watch(otaUpdatingUnitsProvider);
   final grace = ref.watch(otaRolloutTimingsProvider).updatingGrace;
   final labels = ref.watch(labelIndexProvider);
+  final boardSignal = ref.watch(boardSignalProvider);
   final now = DateTime.now();
 
   final parents =
@@ -285,6 +299,7 @@ final topologyProvider = Provider<List<TopologyNode>>((ref) {
         heard: linkUp && s.heard,
         dlHeard: s.device.dlHeard,
         linkDegraded: s.device.linkDegraded == 1,
+        boardRssi: boardSignal[s.device.mac],
       ),
   ]..sort((a, b) {
       final byLayer = a.layer.compareTo(b.layer);

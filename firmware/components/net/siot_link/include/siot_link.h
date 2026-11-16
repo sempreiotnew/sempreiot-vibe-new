@@ -149,6 +149,14 @@ esp_err_t siot_link_mesh_board_init(const siot_installation_t *code);
 typedef size_t (*siot_link_root_yield_fn)(const uint8_t root_mac[6], uint8_t *out, size_t cap);
 void siot_link_mesh_board_set_root_yield(siot_link_root_yield_fn fn);
 
+/* Board: the central chose `mac` to be the root (protocol §7.6 ROOT_TAKE,
+ * v3.11). For SIOT_LINK_ROOT_DESIGNATE_MS, when that unit dials while the
+ * root is alive it takes the root whatever the signals say, and the old root
+ * is told to yield. Nothing happens until it dials: a unit that never
+ * reaches the board changes nothing. Safe from any task. */
+#define SIOT_LINK_ROOT_DESIGNATE_MS 60000
+void siot_link_mesh_board_designate_root(const uint8_t mac[6]);
+
 /* Board: the tablet link over siot_hal_serial. */
 esp_err_t siot_link_serial_init(void);
 
@@ -186,6 +194,23 @@ bool    siot_link_mesh_board_up(void);                    /* root with the TCP s
  * may be gone by then: failover). Nothing when it is not at level 1. Safe from
  * the link's rx path: the mesh task does the work. */
 void siot_link_mesh_yield_root(void);
+
+/* Node, on ROOT_TAKE from the central (protocol §7.6, v3.11): this unit is a
+ * child and the central chose it to be the root. It leaves its parent and may
+ * be at level 1 only, so it attaches to the board; the restriction goes as
+ * soon as it has its session with the board, or after 45 s when it never got
+ * there (it then looks for a parent as any unit does). Nothing for a unit
+ * that is not attached to another unit. Safe from the link's rx path: the
+ * mesh task does the work. */
+void siot_link_mesh_take_root(void);
+
+/* Node: how this unit hears the BOARD's access point, in dBm (protocol §7.3
+ * BOARD_RSSI, v3.11) — the root from its own station, any other unit by
+ * listening to the board's beacons for 1.5 s once a minute (no scan, no
+ * frame sent, the unit stays on its channel). SIOT_LINK_RSSI_NONE = not
+ * heard in the last three minutes. */
+#define SIOT_LINK_RSSI_NONE 0x7F
+int8_t siot_link_mesh_board_rssi(void);
 
 /* Node: one line that says where this unit hangs, for the logs — the
  * library's level, its parent's SSID and signal, its station's address and

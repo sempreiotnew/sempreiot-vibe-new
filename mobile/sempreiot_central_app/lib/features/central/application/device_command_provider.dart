@@ -37,7 +37,11 @@ enum DeviceCommandKind {
 
   /// A plain restart of one unit — the Central's board, a mains unit, a
   /// battery unit (protocol §7.6 RESTART). Nothing is erased.
-  restart('Reiniciar');
+  restart('Reiniciar'),
+
+  /// The central's suggestion accepted: this unit becomes the root
+  /// (protocol §7.6 ROOT_TAKE, root_advisor_provider).
+  takeRoot('Tornar root');
 
   const DeviceCommandKind(this.label, {this.fromUnit = false});
   final String label;
@@ -102,7 +106,8 @@ class DeviceCommandStatus {
       !kind.fromUnit &&
       (step == DeviceCommandStep.sending ||
           ((kind == DeviceCommandKind.test ||
-                  kind == DeviceCommandKind.restart) &&
+                  kind == DeviceCommandKind.restart ||
+                  kind == DeviceCommandKind.takeRoot) &&
               step == DeviceCommandStep.delivered));
 
   DeviceCommandStatus copyWith(
@@ -202,6 +207,12 @@ const unitAckWindow = Duration(seconds: 15);
 /// the bench yet (2026-11-13).
 const restartReturnWindow = Duration(seconds: 120);
 
+/// TORNAR ROOT: the unit confirmed; it must be seen as the root within
+/// this, or it is red — "não assumiu". The unit itself gives up after 45 s
+/// (link_mesh_node.c TAKE_ROOT_MS); the rest is the mesh re-forming and
+/// the map settling. Not measured on the bench yet (2026-11-13).
+const rootTakeWindow = Duration(seconds: 120);
+
 /// IDENTIFY: how long the unit blinks.
 const identifyBlinkSeconds = 10;
 
@@ -249,6 +260,7 @@ class DeviceCommandTracker
     DeviceCommandKind.identify,
     DeviceCommandKind.test,
     DeviceCommandKind.restart,
+    DeviceCommandKind.takeRoot,
   };
 
   /// The UNIT confirmed a command to it (its own ACK came back up): what
@@ -484,6 +496,9 @@ class DeviceCommandTracker
 
   /// REINICIAR: the unit confirmed, and nothing came from it after.
   static const notBackNote = 'não voltou';
+
+  /// TORNAR ROOT: the unit confirmed, and never showed up as the root.
+  static const notRootNote = 'não assumiu';
 
   /// A unit still waiting when the operator cancelled the test.
   static const cancelledNote = 'cancelado';
@@ -721,6 +736,16 @@ class DeviceCommandTracker
       // HEARTBEAT whose uptime started after the confirmation says the
       // same. Never before the unit's own ACK: a battery unit starts a new
       // boot at every wake, and its wake is not a restart.
+      // TORNAR ROOT: done when the map itself says the unit is at level 1
+      // — its own heartbeat, from the board's side of the mesh.
+      if (cur != null &&
+          cur.kind == DeviceCommandKind.takeRoot &&
+          cur.step == DeviceCommandStep.delivered &&
+          (_nodes?.call() ?? const <TopologyNode>[])
+              .any((n) => n.mac == tick.mac && n.layer == 1 && n.online)) {
+        _advance(tick.mac, DeviceCommandStep.answered);
+        return;
+      }
       if (cur != null &&
           cur.kind == DeviceCommandKind.restart &&
           cur.step == DeviceCommandStep.delivered) {
@@ -917,7 +942,8 @@ class DeviceCommandTracker
     // The board took a command to one unit: its ✓ waits for the unit's
     // own ACK — seconds for a mains unit, the next wake for a detector.
     // REINICIAR: the unit confirmed; now its first frame after the boot.
-    final awaitsReturn = s.kind == DeviceCommandKind.restart &&
+    final awaitsReturn = (s.kind == DeviceCommandKind.restart ||
+            s.kind == DeviceCommandKind.takeRoot) &&
         s.step == DeviceCommandStep.delivered;
     final awaitsUnit = s.mac != safrBroadcastMac &&
         !s.kind.fromUnit &&
@@ -929,7 +955,9 @@ class DeviceCommandTracker
     } else if (awaitsUnit) {
       linger = s.waitsForWake ? _wakeWindow : unitAckWindow;
     } else if (awaitsReturn) {
-      linger = restartReturnWindow;
+      linger = s.kind == DeviceCommandKind.takeRoot
+          ? rootTakeWindow
+          : restartReturnWindow;
     } else if (s.kind == DeviceCommandKind.test &&
         s.step == DeviceCommandStep.delivered) {
       linger = _testAnswerWithin;
@@ -968,7 +996,9 @@ class DeviceCommandTracker
         _restartBoot.remove(s.mac);
         _put(s.copyWith(
             step: DeviceCommandStep.failed,
-            note: notBackNote,
+            note: s.kind == DeviceCommandKind.takeRoot
+                ? notRootNote
+                : notBackNote,
             updatedAt: _clock()));
         return;
       }
@@ -1016,6 +1046,9 @@ final deviceCommandProvider = StateNotifierProvider<DeviceCommandTracker,
         if (kind == DeviceCommandKind.test) return mirror.sendUnitTest(mac);
         if (kind == DeviceCommandKind.restart) {
           return mirror.sendUnitRestart(mac);
+        }
+        if (kind == DeviceCommandKind.takeRoot) {
+          return mirror.sendRootTake(mac);
         }
         final outcome = await mirror.sendIdentify(mac);
         return switch (outcome) {
@@ -1075,6 +1108,8 @@ final deviceCommandProvider = StateNotifierProvider<DeviceCommandTracker,
           return downlink.sendReset(mac);
         case DeviceCommandKind.restart:
           return downlink.sendCommand(mac, SafrCommand.restart);
+        case DeviceCommandKind.takeRoot:
+          return downlink.sendCommand(mac, SafrCommand.rootTake);
         case DeviceCommandKind.unitTest:
         case DeviceCommandKind.unitAlarm:
         case DeviceCommandKind.unitEvent:

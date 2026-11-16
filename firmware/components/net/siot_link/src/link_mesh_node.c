@@ -248,6 +248,38 @@ static int     s_dial_errno;            /* why the last dial to the board failed
 static volatile uint32_t s_board_on_air_s;
 static volatile uint32_t s_board_absent_s;
 static volatile uint8_t  s_board_fail_reason;
+/* ROOT_TAKE (protocol §7.6, v3.11): the central chose this unit — a child —
+ * to be the root. It may be at level 1 only (esp_mesh_lite_set_allowed_level:
+ * the library leaves its parent and looks again, and the only level-1 parent
+ * is the board), then the restriction goes: the moment it has its session
+ * with the board, or after TAKE_ROOT_MS when it never got there. Left set it
+ * would defeat failover (a unit that can be nothing but the root). */
+#define TAKE_ROOT_MS           45000
+static volatile bool s_take_requested; /* siot_link_mesh_take_root(): the tcp task acts on it */
+static bool    s_taking;
+static int64_t s_take_until_ms;
+
+/* How this unit hears the BOARD (protocol §7.3 BOARD_RSSI, v3.11). The root
+ * reads its own station. Any other unit listens: once every
+ * BOARD_LISTEN_EVERY_MS the radio hands every management frame on the channel
+ * to on_board_beacon for BOARD_LISTEN_MS (promiscuous mode, management frames
+ * only) and the board's beacons — its SSID, which no unit's access point has
+ * (theirs carry a suffix) — are averaged. Nothing is sent, the channel is not
+ * left, and it is not a scan: the library's own scans and their results are
+ * untouched. Only while the unit is attached to another unit, never in the
+ * middle of a search for a parent. */
+#define BOARD_LISTEN_EVERY_MS  60000
+#define BOARD_LISTEN_MS         1500
+#define BOARD_RSSI_STALE_MS   200000
+static volatile int32_t  s_listen_sum;
+static volatile uint32_t s_listen_n;
+static size_t  s_board_ssid_len;
+static bool    s_listening;
+static int64_t s_listen_until_ms;
+static int64_t s_listen_next_ms;
+static int8_t  s_board_rssi = SIOT_LINK_RSSI_NONE;
+static int64_t s_board_rssi_ms; /* 0 = never measured */
+
 static volatile bool s_rejoin_requested; /* siot_link_mesh_rejoin(): the tcp task leaves the parent */
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
@@ -308,6 +340,10 @@ static void ap_open(void)
  * mode change does not land in the middle of the scan that follows. */
 static void root_bar_start(void)
 {
+    if (s_taking) { /* the board says another unit is the root: the choice is over */
+        s_taking = false;
+        esp_mesh_lite_set_allowed_level(0);
+    }
     s_root_barred = true;
     s_root_bar_until_ms = now_ms() + ROOT_YIELD_BAR_MS;
     ap_close();
@@ -467,12 +503,124 @@ uint32_t siot_link_mesh_out_s(void)
 /* Every 500 ms (parked) or second (root with a session), from the tcp task:
  * the guards that keep a unit from being a root it is not, and from staying
  * under a parent that leads nowhere. */
+/* Wi-Fi task: one management frame heard on the channel. A beacon (or probe
+ * response) of the board carries its SSID as the first element, right after
+ * the 24-byte header and the 12 fixed bytes. */
+static void on_board_beacon(void *buf, wifi_promiscuous_pkt_type_t type)
+{
+    if (type != WIFI_PKT_MGMT || buf == NULL) return;
+    const wifi_promiscuous_pkt_t *pkt = (const wifi_promiscuous_pkt_t *)buf;
+    const uint8_t *f = pkt->payload;
+    if (pkt->rx_ctrl.sig_len < 38 + s_board_ssid_len) return;
+    if (f[0] != 0x80 && f[0] != 0x50) return;
+    if (f[36] != 0 || f[37] != s_board_ssid_len || memcmp(&f[38], s_code.net_ssid, s_board_ssid_len) != 0) return;
+    if (s_listen_n >= 64) return;
+    s_listen_sum += pkt->rx_ctrl.rssi;
+    s_listen_n++;
+}
+
+static void board_listen_stop(void)
+{
+    if (!s_listening) return;
+    s_listening = false;
+    esp_wifi_set_promiscuous(false);
+}
+
+/* BOARD_RSSI: see BOARD_LISTEN_EVERY_MS. */
+static void board_listen_poll(int64_t now, sta_where_t where)
+{
+    if (where == STA_ON_BOARD) { /* the root: its own station hears the board */
+        board_listen_stop();
+        wifi_ap_record_t ap;
+        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+            s_board_rssi = ap.rssi;
+            s_board_rssi_ms = now;
+        }
+        return;
+    }
+    if (s_listening) {
+        if (where == STA_ON_UNIT && now < s_listen_until_ms) return;
+        board_listen_stop();
+        const uint32_t n = s_listen_n;
+        if (n > 0) {
+            s_board_rssi = (int8_t)(s_listen_sum / (int32_t)n);
+            s_board_rssi_ms = now;
+            ESP_LOGI(TAG, "the board is heard at %d dBm (%" PRIu32 " beacons)", s_board_rssi, n);
+        }
+        return;
+    }
+    if (where != STA_ON_UNIT || s_taking || now < s_listen_next_ms) return;
+    s_listen_next_ms = now + BOARD_LISTEN_EVERY_MS;
+    s_listen_sum = 0;
+    s_listen_n = 0;
+    const wifi_promiscuous_filter_t filter = {.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT};
+    esp_err_t err = esp_wifi_set_promiscuous_filter(&filter);
+    if (err == ESP_OK) err = esp_wifi_set_promiscuous_rx_cb(on_board_beacon);
+    if (err == ESP_OK) err = esp_wifi_set_promiscuous(true);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "listening for the board not started: %s", esp_err_to_name(err));
+        return;
+    }
+    s_listening = true;
+    s_listen_until_ms = now + BOARD_LISTEN_MS;
+}
+
+int8_t siot_link_mesh_board_rssi(void)
+{
+    const int64_t at = s_board_rssi_ms;
+    return at != 0 && now_ms() - at <= BOARD_RSSI_STALE_MS ? s_board_rssi : (int8_t)SIOT_LINK_RSSI_NONE;
+}
+
+void siot_link_mesh_take_root(void)
+{
+    s_take_requested = true;
+}
+
+/* ROOT_TAKE: see TAKE_ROOT_MS. */
+static void take_root_poll(int64_t now, uint8_t level, sta_where_t where, const char *parent)
+{
+    if (s_take_requested) {
+        s_take_requested = false;
+        if (where == STA_ON_UNIT && !s_taking) {
+            board_listen_stop();
+            if (s_root_barred) {
+                s_root_barred = false;
+                esp_mesh_lite_set_disallowed_level(0);
+            }
+            s_taking = true;
+            s_take_until_ms = now + TAKE_ROOT_MS;
+            const esp_err_t err = esp_mesh_lite_set_allowed_level(1);
+            ESP_LOGW(TAG, "one root: the central chose this unit to be the root — leaving %s for the board "
+                          "(level 1 only: %s), %d s at most",
+                     parent, esp_err_to_name(err), TAKE_ROOT_MS / 1000);
+        } else {
+            ESP_LOGW(TAG, "one root: chosen to be the root, but this unit is not attached to another unit — nothing to do");
+        }
+        return;
+    }
+    if (!s_taking) return;
+    const bool there = level == 1 && where == STA_ON_BOARD && s_tcp_sock >= 0;
+    if (!there && now < s_take_until_ms) return;
+    s_taking = false;
+    const esp_err_t err = esp_mesh_lite_set_allowed_level(0); /* 0 = no restriction */
+    if (there) {
+        ESP_LOGW(TAG, "one root: this unit is the root now, on the board — any level allowed again (%s)", esp_err_to_name(err));
+    } else {
+        ESP_LOGW(TAG, "one root: the board was not reached in %d s — any level allowed again (%s), looking for a parent",
+                 TAKE_ROOT_MS / 1000, esp_err_to_name(err));
+    }
+}
+
 static void mesh_guard_poll(void)
 {
     const int64_t now = now_ms();
     const uint8_t level = esp_mesh_lite_get_level(); /* the library's own, unfiltered */
     char parent[33] = "";
     const sta_where_t where = sta_where(parent);
+
+    /* 0. Chosen to be the root; and how the board is heard from here. */
+    take_root_poll(now, level, where, parent);
+    board_listen_poll(now, where);
 
     /* 1. A false root: the library says level 1, the station is on a unit. */
     if (level == 1 && where == STA_ON_UNIT) {
@@ -910,6 +1058,7 @@ esp_err_t siot_link_mesh_node_init(const siot_installation_t *code)
 {
     if (code == NULL) return ESP_ERR_INVALID_ARG;
     s_code = *code;
+    s_board_ssid_len = strlen(s_code.net_ssid);
     if (s_tcp_lock == NULL) s_tcp_lock = xSemaphoreCreateMutex();
     return siot_link_register(SIOT_LINK_MESH, &s_node_ops);
 }

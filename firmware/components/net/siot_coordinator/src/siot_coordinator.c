@@ -794,6 +794,18 @@ static void handle_downlink(const siot_safr_frame_t *f, const uint8_t *raw, size
                 return;
             }
         }
+        if (f->payload_len >= 1 && f->payload[0] == SAFR_CMD_ROOT_TAKE) {
+            /* Spec §7.6 v3.11: the central chose ONE unit to be the root.
+             * Never broadcast, never the board. The board remembers the
+             * choice (when that unit dials, it takes the root and the old
+             * root is told to yield — link_mesh_board.c), then ACKs and
+             * relays the command below, like every command. */
+            if (siot_mac_is_bcast(f->dst_mac) || siot_mac_eq(f->dst_mac, siot_identity_get()->mac)) {
+                send_ack(f->msg_id, SAFR_ACK_ERROR, SAFR_ACK_D_REFUSED, f->src_mac);
+                return;
+            }
+            siot_link_mesh_board_designate_root(f->dst_mac);
+        }
         if (f->payload_len >= 1 && f->payload[0] == SAFR_CMD_LINK_CHECK) {
             /* Spec §9.3: supervision of the tablet → board direction — the
              * board is the "root" that answers it. Not relayed: every node

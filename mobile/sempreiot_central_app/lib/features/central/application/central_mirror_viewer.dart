@@ -456,6 +456,11 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
   Future<String?> sendUnitRestart(String mac) =>
       _sendOta((id) => encodeMirrorUnitRestart(id: id, mac: mac, name: _who()));
 
+  /// Asks the central to make the unit [mac] the root — the one it
+  /// suggests (§4.12). Null when the board took it; otherwise why not.
+  Future<String?> sendRootTake(String mac) =>
+      _sendOta((id) => encodeMirrorRootTake(id: id, mac: mac, name: _who()));
+
   /// One request on this phone's own command topic, answered by an
   /// `ota_answer` / `test_answer` event that carries the same id.
   Future<String?> _sendOta(String Function(String id) payload) {
@@ -622,12 +627,17 @@ class CentralMirrorViewer extends StateNotifier<CentralMirrorView> {
 /// out here is lost on the phone at the unit's next frame, and for every
 /// unit when the picture is not live (2026-11-06: a unit never heard was
 /// drawn on the map, a weak link lost its mark).
+/// [n] as the unit the central suggests for the root: what the central's
+/// snapshot carries (central_mirror_publisher).
+TopologyNode asSuggestedRoot(TopologyNode n) => _copy(n, suggestedRoot: true);
+
 TopologyNode _copy(
   TopologyNode n, {
   DateTime? lastSeenAt,
   bool? online,
   bool? heard,
   bool? updating,
+  bool? suggestedRoot,
 }) =>
     TopologyNode(
       mac: n.mac,
@@ -656,6 +666,8 @@ TopologyNode _copy(
       awaitingSignal: n.awaitingSignal,
       dlHeard: n.dlHeard,
       linkDegraded: n.linkDegraded,
+      boardRssi: n.boardRssi,
+      suggestedRoot: suggestedRoot ?? n.suggestedRoot,
     );
 
 /// The mirror of the viewed central; rebuilt (and the old one unsubscribed)
