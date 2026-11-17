@@ -313,7 +313,15 @@ static volatile bool s_rejoin_requested; /* siot_link_mesh_rejoin(): the tcp tas
  * with no candidate the library attaches to the board at any signal, and a
  * unit whose chosen parent was missed by one scan would dial as a second root.
  *
- * A unit never moves in alarm, while the central is not heard, for
+ * Only a path below SIOT_PATH_GOOD_DBM (-80) is ever left, and for one
+ * SIOT_PATH_GAIN_DB better — SIOT_PATH_JOIN_GAIN_DB for SIOT_PATH_JOIN_MS
+ * after the unit attached to a parent it did not choose by its path (the
+ * library's join, the way out of "no path": after a power cut each unit takes
+ * the first one it hears; s_join_until_ms).
+ *
+ * A unit never moves in alarm, while any unit it hears of is in alarm
+ * (siot_path_alarm: said in the adverts, from unit to unit), while the
+ * central is not heard, for
  * PATH_QUIET after a command (siot_netcore: siot_link_mesh_path_allow), as
  * the root, or within PATH_HOLD_MS of its last move — doubling each move up
  * to PATH_HOLD_MAX_MS, back to the start after PATH_HOLD_FORGET_MS without
@@ -368,6 +376,10 @@ static int64_t  s_path_say_ms;
 static uint8_t  s_ap_max_units;          /* how many stations this unit's access point takes (0 = not read yet) */
 static int64_t  s_orphan_since_ms;       /* level 1, attached to nothing, no session since (0 = not so) */
 static int64_t  s_rescue_next_ms;        /* no other rescue before */
+static bool     s_move_rescue;           /* the move in progress is the way out of "no path" */
+static bool     s_parent_seen;           /* s_parent_last is the parent of the last look */
+static uint8_t  s_parent_last[6];
+static int64_t  s_join_until_ms;         /* SIOT_PATH_JOIN_GAIN_DB is enough until then (0 = it is not) */
 static void pin_release(const char *why, bool unbar);
 static void board_listen_stop(void);
 
@@ -747,6 +759,7 @@ static void path_move_start(int64_t now, const siot_path_choice_t *c, const char
     /* The SSID that unit gives its access point (node_start): the same line. */
     snprintf(s_pin_ssid, sizeof(s_pin_ssid), "%.22s-%02x%02x%02x", s_code.net_ssid, c->id[3], c->id[4], c->id[5]);
     s_move = *c;
+    s_move_rescue = rescue;
     s_move_until_ms = now + PATH_MOVE_MS;
     uint32_t hold_s = 0;
     if (rescue) {
@@ -794,7 +807,7 @@ static bool path_rescue(int64_t now, const char *parent, bool at_level1)
 }
 
 /* What this unit knows of the paths around it, once a minute, for the console. */
-static void path_say(int64_t now, const char *parent, bool may, const char *held_by)
+static void path_say(int64_t now, const char *parent, bool may, const char *held_by, int8_t gain_db)
 {
     uint8_t fresh = 0;
     for (int i = 0; i < SIOT_PATH_NEIGHBOURS; i++) {
@@ -808,13 +821,13 @@ static void path_say(int64_t now, const char *parent, bool may, const char *held
     }
     char other[SIOT_MAC_STR_LEN];
     const bool weak = c.path_now < SIOT_PATH_GOOD_DBM;
-    const bool gain = c.path_new >= c.path_now + SIOT_PATH_GAIN_DB;
+    const bool gain = c.path_new >= c.path_now + gain_db;
     ESP_LOGI(TAG, "path: %d dBm through %s%s; best other parent %s (level %u) heard at %d dBm, path %d dBm; "
                   "%u unit(s) heard — %s",
              c.path_now, parent, s_pin_state == PIN_HELD ? " (chosen)" : "", siot_mac_to_str(c.id, other), c.level,
              c.rssi, c.path_new, fresh,
-             !weak ? "this path is good, staying"
-             : !gain ? "not 10 dB better, staying"
+             !weak ? "this path is not below -80, staying"
+             : !gain ? (gain_db == SIOT_PATH_GAIN_DB ? "not 10 dB better, staying" : "not 5 dB better (just joined), staying")
              : !may ? held_by
              : "better: moving if it stays so");
 }
@@ -859,6 +872,17 @@ static bool path_poll(int64_t now, uint8_t level, sta_where_t where, const char 
         if (path_rescue(now, parent, true)) return true;
     }
 
+    /* A parent this unit did not have at the last look: one it chose by its
+     * path (a move that is not a rescue) is judged as any other; any other
+     * one may be the first it heard (see SIOT_PATH_JOIN_GAIN_DB). */
+    if (!on_unit) {
+        s_parent_seen = false;
+    } else if (!s_parent_seen || memcmp(s_parent_last, ap.bssid, 6) != 0) {
+        s_parent_seen = true;
+        memcpy(s_parent_last, ap.bssid, 6);
+        s_join_until_ms = s_pin_state == PIN_HELD && !s_move_rescue ? 0 : now + SIOT_PATH_JOIN_MS;
+    }
+
     xSemaphoreTake(s_path_lock, portMAX_DELAY);
     siot_path_set_parent(&s_path, on_unit ? ap.bssid : NULL);
     if (now < s_path_next_ms) {
@@ -875,21 +899,23 @@ static bool path_poll(int64_t now, uint8_t level, sta_where_t where, const char 
                         : s_root_barred || s_taking || s_ap_closed ? "the root is being settled"
                         : !central ? "the central is not heard through this parent"
                         : !s_path_allowed ? "held: alarm, a recent command or not online"
+                        : siot_path_alarm(&s_path, now, false) != 0 ? "held: a unit near this one is in alarm"
                         : now < s_move_hold_until_ms ? "held: this unit moved not long ago"
                         : NULL;
     const bool may = held_by == NULL;
+    const int8_t gain_db = now < s_join_until_ms ? SIOT_PATH_JOIN_GAIN_DB : SIOT_PATH_GAIN_DB;
     siot_path_choice_t c;
     bool move = false;
     if (may) {
         /* A few seconds apart per unit, so two units do not leave together. */
         const uint32_t spread_ms = (uint32_t)(siot_identity_get()->mac[5] % 16) * 2000;
-        move = siot_path_evaluate(&s_path, now, SIOT_PATH_SUSTAIN_MS + spread_ms, &c);
+        move = siot_path_evaluate(&s_path, now, SIOT_PATH_SUSTAIN_MS + spread_ms, gain_db, &c);
     } else {
         siot_path_evaluate_reset(&s_path);
     }
     if (on_unit && !move && now - s_path_say_ms >= PATH_SAY_MS) {
         s_path_say_ms = now;
-        path_say(now, parent, may, held_by ? held_by : "");
+        path_say(now, parent, may, held_by ? held_by : "", gain_db);
     }
     xSemaphoreGive(s_path_lock);
 
@@ -899,7 +925,7 @@ static bool path_poll(int64_t now, uint8_t level, sta_where_t where, const char 
 
 void siot_link_mesh_path_allow(bool allow) { s_path_allowed = allow; }
 
-size_t siot_link_mesh_path_advert(uint8_t *out, size_t cap)
+size_t siot_link_mesh_path_advert(uint8_t *out, size_t cap, bool alarm)
 {
     if (!s_started || s_path_lock == NULL) return 0;
     const uint8_t level = esp_mesh_lite_get_level();
@@ -915,6 +941,7 @@ size_t siot_link_mesh_path_advert(uint8_t *out, size_t cap)
         siot_path_advert_t none;
         xSemaphoreTake(s_path_lock, portMAX_DELAY);
         siot_path_own(&s_path, now_ms(), level ? level : 1, true, false, false, &none);
+        none.alarm = siot_path_alarm(&s_path, now_ms(), alarm);
         xSemaphoreGive(s_path_lock);
         return siot_path_advert_encode(&none, out, cap);
     }
@@ -930,6 +957,7 @@ size_t siot_link_mesh_path_advert(uint8_t *out, size_t cap)
     siot_path_advert_t a;
     xSemaphoreTake(s_path_lock, portMAX_DELAY);
     siot_path_own(&s_path, now_ms(), level, root, root && s_tcp_sock >= 0, full, &a);
+    a.alarm = siot_path_alarm(&s_path, now_ms(), alarm);
     xSemaphoreGive(s_path_lock);
     return siot_path_advert_encode(&a, out, cap);
 }

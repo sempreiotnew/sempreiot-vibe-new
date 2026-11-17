@@ -86,15 +86,15 @@ TEST_CASE("path: the unit at -85 on the root moves under a unit with a good path
     TEST_ASSERT_EQUAL_MEMORY(Y, c.ap, 6);
 
     /* Better now is not enough: it must stay so. */
-    TEST_ASSERT_FALSE(siot_path_evaluate(&t, now, SIOT_PATH_SUSTAIN_MS, &c));
+    TEST_ASSERT_FALSE(siot_path_evaluate(&t, now, SIOT_PATH_SUSTAIN_MS, SIOT_PATH_GAIN_DB, &c));
     for (int i = 0; i < SIOT_PATH_SUSTAIN_MS / SIOT_PATH_ADVERT_MS - 1; i++) {
         hear(&now, 1, &root, -85);
         TEST_ASSERT_TRUE(siot_path_heard(&t, now, Y, 1, ++s_ctr, -60, &y));
-        TEST_ASSERT_FALSE(siot_path_evaluate(&t, now, SIOT_PATH_SUSTAIN_MS, &c));
+        TEST_ASSERT_FALSE(siot_path_evaluate(&t, now, SIOT_PATH_SUSTAIN_MS, SIOT_PATH_GAIN_DB, &c));
     }
     hear(&now, 1, &root, -85);
     TEST_ASSERT_TRUE(siot_path_heard(&t, now, Y, 1, ++s_ctr, -60, &y));
-    TEST_ASSERT_TRUE(siot_path_evaluate(&t, now, SIOT_PATH_SUSTAIN_MS, &c));
+    TEST_ASSERT_TRUE(siot_path_evaluate(&t, now, SIOT_PATH_SUSTAIN_MS, SIOT_PATH_GAIN_DB, &c));
     TEST_ASSERT_EQUAL_MEMORY(Y, c.ap, 6);
     TEST_ASSERT_EQUAL(2, c.level);
 }
@@ -117,7 +117,7 @@ TEST_CASE("path: a strong hop to a parent with a weak path is a weak path", "[li
     TEST_ASSERT_EQUAL(-85, c.path_now);
     TEST_ASSERT_EQUAL(-65, c.path_new);
     TEST_ASSERT_EQUAL_MEMORY(ROOT, c.ap, 6);
-    TEST_ASSERT_FALSE(siot_path_evaluate(&t, now, 0, &c) && c.level != 1);
+    TEST_ASSERT_FALSE(siot_path_evaluate(&t, now, 0, SIOT_PATH_GAIN_DB, &c) && c.level != 1);
 
     /* What this unit says of itself: X above it, then the root; path -85. */
     siot_path_advert_t own;
@@ -163,11 +163,12 @@ TEST_CASE("path: a path that works is left alone, and so is a small gain", "[lin
     const siot_path_advert_t y = advert(Y, 2, -40, ROOT, 1);
     siot_path_choice_t c;
 
-    /* -75 is good: -40 next door changes nothing. */
+    /* -80 is not below -80: -40 next door changes nothing. */
+    TEST_ASSERT_EQUAL(-80, SIOT_PATH_GOOD_DBM);
     siot_path_link_sample(&t, SIOT_PATH_GOOD_DBM);
-    hear(&now, 3, &root, -75);
+    hear(&now, 3, &root, -80);
     hear(&now, 3, &y, -40);
-    TEST_ASSERT_FALSE(siot_path_evaluate(&t, now, 0, &c));
+    TEST_ASSERT_FALSE(siot_path_evaluate(&t, now, 0, SIOT_PATH_GAIN_DB, &c));
 
     /* -85 against -76: 9 dB, one short. */
     start();
@@ -178,7 +179,7 @@ TEST_CASE("path: a path that works is left alone, and so is a small gain", "[lin
     hear(&now, 3, &y, -76);
     TEST_ASSERT_TRUE(siot_path_best(&t, now, &c));
     TEST_ASSERT_EQUAL(-76, c.path_new);
-    TEST_ASSERT_FALSE(siot_path_evaluate(&t, now, 0, &c));
+    TEST_ASSERT_FALSE(siot_path_evaluate(&t, now, 0, SIOT_PATH_GAIN_DB, &c));
     /* One dB more and it is enough. */
     start();
     now = 0;
@@ -186,7 +187,7 @@ TEST_CASE("path: a path that works is left alone, and so is a small gain", "[lin
     siot_path_link_sample(&t, -85);
     hear(&now, 3, &root, -85);
     hear(&now, 3, &y, -75);
-    TEST_ASSERT_TRUE(siot_path_evaluate(&t, now, 0, &c));
+    TEST_ASSERT_TRUE(siot_path_evaluate(&t, now, 0, SIOT_PATH_GAIN_DB, &c));
 }
 
 TEST_CASE("path: only a neighbour that is fresh, complete, with room and not refused", "[link][path]")
@@ -298,4 +299,67 @@ TEST_CASE("path: the root says a path of its own only with the board behind it",
     TEST_ASSERT_EQUAL(-62, own.path);
     TEST_ASSERT_EQUAL(1, own.chain_n);
     TEST_ASSERT_EQUAL_MEMORY(X, own.chain[0], 6);
+}
+
+TEST_CASE("path: a unit that just joined moves for 5 dB, but only from below -80", "[link][path]")
+{
+    /* After a power cut this unit took the first parent it heard: the root at
+     * -88, with Y (path -40) heard at -82. 6 dB: not enough later, enough now. */
+    start();
+    int64_t now = 0;
+    siot_path_set_parent(&t, ROOT);
+    siot_path_link_sample(&t, -88);
+    const siot_path_advert_t root = advert(ROOT, 1, SIOT_PATH_ROOT_DBM, NULL, 0);
+    const siot_path_advert_t y = advert(Y, 2, -40, ROOT, 1);
+    siot_path_choice_t c;
+    hear(&now, 3, &root, -88);
+    hear(&now, 3, &y, -82);
+    TEST_ASSERT_FALSE(siot_path_evaluate(&t, now, 0, SIOT_PATH_GAIN_DB, &c));
+    TEST_ASSERT_TRUE(siot_path_evaluate(&t, now, 0, SIOT_PATH_JOIN_GAIN_DB, &c));
+    TEST_ASSERT_EQUAL_MEMORY(Y, c.ap, 6);
+
+    /* On the root at -79: left alone whatever is next door, joined or not. */
+    start();
+    now = 0;
+    siot_path_set_parent(&t, ROOT);
+    siot_path_link_sample(&t, -79);
+    hear(&now, 3, &root, -79);
+    hear(&now, 3, &y, -40);
+    TEST_ASSERT_FALSE(siot_path_evaluate(&t, now, 0, SIOT_PATH_JOIN_GAIN_DB, &c));
+}
+
+TEST_CASE("path: an alarm is told from unit to unit and dies with its source", "[link][path]")
+{
+    start();
+    int64_t now = 0;
+    TEST_ASSERT_EQUAL(0, siot_path_alarm(&t, now, false));
+    TEST_ASSERT_EQUAL(1, siot_path_alarm(&t, now, true)); /* this unit's own */
+
+    /* X is in alarm, Y heard of one two hops from it: the nearest counts. */
+    siot_path_advert_t x = advert(X, 2, -50, ROOT, 1), y = advert(Y, 2, -50, ROOT, 1), b;
+    x.alarm = 1;
+    y.alarm = 3;
+    uint8_t buf[SIOT_PATH_ADVERT_MAX_LEN];
+    const size_t n = siot_path_advert_encode(&x, buf, sizeof(buf));
+    TEST_ASSERT_TRUE(siot_path_advert_decode(buf, n, &b));
+    TEST_ASSERT_EQUAL(1, b.alarm);
+    TEST_ASSERT_TRUE(b.complete);
+    hear(&now, 1, &y, -60);
+    TEST_ASSERT_EQUAL(4, siot_path_alarm(&t, now, false));
+    hear(&now, 1, &x, -60); /* one advert is enough */
+    TEST_ASSERT_EQUAL(2, siot_path_alarm(&t, now, false));
+
+    /* The alarm is reset: X says so, and Y's word is still believed... */
+    x.alarm = 0;
+    hear(&now, 1, &x, -60);
+    TEST_ASSERT_EQUAL(4, siot_path_alarm(&t, now, false));
+    /* ...until Y is as far as the word goes, or silent. */
+    y.alarm = SIOT_PATH_ALARM_MAX;
+    hear(&now, 1, &y, -60);
+    TEST_ASSERT_EQUAL(0, siot_path_alarm(&t, now, false));
+    y.alarm = 2;
+    hear(&now, 1, &y, -60);
+    TEST_ASSERT_EQUAL(3, siot_path_alarm(&t, now, false));
+    now += SIOT_PATH_FRESH_MS + 1;
+    TEST_ASSERT_EQUAL(0, siot_path_alarm(&t, now, false));
 }

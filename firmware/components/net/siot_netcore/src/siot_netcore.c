@@ -125,7 +125,10 @@ static uint32_t out_restart_wait_s(void)
  * netcore owns the frames and says when a move is allowed: ONLINE, no alarm,
  * no event of ours waiting for its ACK, and no COMMAND seen for PATH_QUIET_MS
  * — any command but the tablet's LINK_CHECK means somebody is working on the
- * installation (a test, an update, a rename), and the tree must hold still. */
+ * installation (a test, an update, a rename), and the tree must hold still.
+ * An alarm of ANOTHER unit is not seen here (its frames go straight to the
+ * root): this unit says its own in its advert, and siot_link holds every unit
+ * that hears of one (SIOT_PATH_F_ALARM_MASK). */
 #define PATH_QUIET_MS SIOT_PATH_QUIET_MS /* 10 min; 1 min while SIOT_PATH_BENCH_TIMES (before-production item 11) */
 static int64_t s_last_cmd_ms = -1; /* written in the link rx task, read in the netcore task */
 
@@ -816,7 +819,7 @@ static void netcore_task(void *arg)
         if (t >= next_path_ms) {
             next_path_ms = t + SIOT_PATH_ADVERT_MS + (int64_t)(esp_timer_get_time() & 0x7FF);
             uint8_t advert[SIOT_PATH_ADVERT_MAX_LEN];
-            const size_t n = siot_link_mesh_path_advert(advert, sizeof(advert));
+            const size_t n = siot_link_mesh_path_advert(advert, sizeof(advert), s_alarm_active);
             if (n > 0) siot_safr_send(SAFR_BCAST_MAC, SAFR_MSG_PATH_ADVERT, siot_safr_next_msg_id(), 0, advert, n);
         }
 

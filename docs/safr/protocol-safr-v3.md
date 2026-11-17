@@ -878,7 +878,7 @@ neighbour offers, and moves by itself when another is clearly better.
 | Off | Size | Field |
 |----|------|-------|
 | 0 | 1 | VERSION = `1` (another value: the frame is ignored) |
-| 1 | 1 | FLAGS — bit 0 `COMPLETE`: CHAIN reaches the root and PATH counts every link down to this unit · bit 1 `FULL`: its access point takes no more units |
+| 1 | 1 | FLAGS — bit 0 `COMPLETE`: CHAIN reaches the root and PATH counts every link down to this unit · bit 1 `FULL`: its access point takes no more units · bits 2–4 `ALARM` *(2026-11-16)*: `0` = no alarm known, `1` = the sender is in alarm, `n` = a unit in alarm is n−1 radio hops from the sender (up to 7) · bits 5–7 zero |
 | 2 | 1 | LEVEL of the sender (1 = the root) |
 | 3 | 1 | PATH — int8 dBm: the **weakest unit-to-unit link** between the root and the sender. The root says `0` (no link above it; its own link to the board is not counted — every path shares it) |
 | 4 | 6 | AP — the address of the sender's access point: what a child attaches to (its SSID is `NET_SSID` + `-` + the last three bytes of `SRC_MAC`) |
@@ -907,15 +907,24 @@ neighbour is `min(signal the neighbour is heard at, the neighbour's PATH)`; the 
 path when all of this holds, for **3 minutes** in a row (plus up to 30 s, by its address, so two
 units do not leave together):
 
-- its own path is **below −75 dBm** — a path that works is left alone;
+- its own path is **below −80 dBm** — a path that works is left alone (−75 until 2026-11-16; −80 by
+  the owner's decision: only units under −80 are reorganised);
 - the other path is **≥ 10 dB better** (the margin also covers what one number cannot say: the
-  advert is heard in one direction only);
+  advert is heard in one direction only) — **≥ 5 dB** for the first **10 minutes** after the unit
+  attached to a parent it did not choose by its path (Mesh-Lite's join, or the way out of "no
+  path" below): after a power cut the units return in any order and each takes the first one it
+  hears;
 - the neighbour is `COMPLETE`, not `FULL`, at level ≤ 14, and the unit itself is **not in its
   CHAIN** (a unit never attaches to a unit that hangs from it);
 - the unit is a child (never the root — `ROOT_TAKE`, §7.6, is how a root changes), ONLINE, the
   central heard through its parent in the last 60 s, not in alarm, no event of its own waiting for
   an ACK, and **no COMMAND seen for 10 minutes** (any command but `LINK_CHECK`: a test, an update or
   an edit is going on, and the tree holds still);
+- **no unit it hears of is in alarm**: a unit in alarm says `ALARM = 1` in its advert, a unit that
+  hears a number says the smallest it hears plus one (nothing above 7), and nobody moves while its
+  own number is not 0. One advert is enough, no older than 45 s; when the alarm is reset the word
+  dies out by itself in about a minute. (An alarm's frames go straight to the root: a unit on the
+  way never sees them, so this is how it knows.) A battery unit's alarm is not said this way;
 - it did not move in the last **10 minutes** — 20, 40, then 80 after each further move, back to 10
   after 6 hours without one.
 
@@ -958,11 +967,13 @@ Every start now looks for a parent afresh: the library's RTC state is erased at 
 
 **Bench times.** While `SIOT_PATH_BENCH_TIMES` is 1 (`docs/ota/before-production.md` item 11) the
 three waits above — 3 minutes with the better path in sight, 10 minutes after a command, 10 minutes
-after a move (doubling to 80) — are **1 minute** each (the last doubling to 8).
+after a move (doubling to 80) — are **1 minute** each (the last doubling to 8), and the 10 minutes
+of the 5 dB margin after a join are **3**.
 
 *Written 2026-11-16; host-tested (`test/host/main/test_path.c`). First run on units the same day, on
 the building above with the bench times: the tree re-formed by itself and was judged to work (seen
-on the map, no console captured). Not yet run with the production times.*
+on the map, no console captured). Not yet run with the production times. The −80 line, the 5 dB
+margin after a join and `ALARM` were written later the same day: host-tested, **not run on units**.*
 
 ---
 

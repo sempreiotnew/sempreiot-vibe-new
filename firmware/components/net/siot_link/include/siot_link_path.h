@@ -31,14 +31,22 @@ extern "C" {
 
 /* ---- the rules ----------------------------------------------------------- */
 
-/* A path at or above this is left alone: the survey's green (lifecycle §6).
- * Moving a unit takes its branch off the air for some seconds; it is done for
- * a path that needs it, never to polish one that works. */
-#define SIOT_PATH_GOOD_DBM      (-75)
+/* A path at or above this is left alone. Moving a unit takes its branch off
+ * the air for some seconds; it is done for a path that needs it, never to
+ * polish one that works. -80 by the owner's word (2026-11-16; it was the
+ * survey's green, -75): only units BELOW -80 are reorganised. */
+#define SIOT_PATH_GOOD_DBM      (-80)
 /* The other path must be this much better than the one the unit has. It also
  * covers what one number cannot say: a neighbour's frame is heard in ONE
  * direction, and a signal moves a few dB by itself. */
 #define SIOT_PATH_GAIN_DB        10
+/* ...and this much is enough for SIOT_PATH_JOIN_MS after the unit attached to
+ * a parent it did not choose by its path — the library's join, or the way out
+ * of "no path" (building, 2026-11-16: after a power cut the units come back
+ * in any order, and each takes the first one it hears, or the only one with a
+ * path so far). Still only below SIOT_PATH_GOOD_DBM, still for the whole
+ * SIOT_PATH_SUSTAIN_MS, and the move it leads to starts the usual hold. */
+#define SIOT_PATH_JOIN_GAIN_DB    5
 /* RELAXED FOR THE BENCH (docs/ota/before-production.md item 11, requested
  * 2026-11-16): with 1 the three waits below are one minute each, so a move
  * can be watched without a quarter of an hour of waiting. 0 in production —
@@ -49,6 +57,7 @@ extern "C" {
 #define SIOT_PATH_QUIET_MS     60000
 #define SIOT_PATH_HOLD_MS      60000
 #define SIOT_PATH_HOLD_MAX_MS 480000
+#define SIOT_PATH_JOIN_MS     180000
 #else
 /* ...and stay so for this long before the unit moves. */
 #define SIOT_PATH_SUSTAIN_MS  180000
@@ -58,6 +67,8 @@ extern "C" {
 /* No other move for this long after one; doubles each move up to the max. */
 #define SIOT_PATH_HOLD_MS     600000
 #define SIOT_PATH_HOLD_MAX_MS 4800000
+/* How long after such a join the smaller gain is enough. */
+#define SIOT_PATH_JOIN_MS     600000
 #endif
 /* A neighbour counts once SIOT_PATH_MIN_HEARD of its adverts were heard with
  * no gap longer than SIOT_PATH_FRESH_MS (4 missed adverts). */
@@ -81,6 +92,14 @@ extern "C" {
 #define SIOT_PATH_ADVERT_VER      1
 #define SIOT_PATH_F_COMPLETE   0x01 /* CHAIN reaches the root and PATH counts every link down to this unit */
 #define SIOT_PATH_F_FULL       0x02 /* its access point takes no more units */
+/* Bits 2..4, ALARM: 0 = no alarm known; 1 = this unit is in alarm; n = a unit
+ * in alarm is n-1 radio hops from this one. Nobody moves while it is not 0
+ * (the alarm's frames, and the ones that follow, need every path as it is).
+ * A unit says the smallest number it hears plus one, up to
+ * SIOT_PATH_ALARM_MAX, so the word dies by itself when its source stops. */
+#define SIOT_PATH_F_ALARM_SHIFT   2
+#define SIOT_PATH_F_ALARM_MASK 0x1C
+#define SIOT_PATH_ALARM_MAX       7
 #define SIOT_PATH_ADVERT_MIN_LEN 11
 #define SIOT_PATH_ADVERT_MAX_LEN (SIOT_PATH_ADVERT_MIN_LEN + 6 * SIOT_PATH_MAX_CHAIN)
 
@@ -88,6 +107,7 @@ typedef struct {
     uint8_t level;      /* 1 = the root */
     bool    complete;
     bool    full;
+    uint8_t alarm;      /* 0, or 1..SIOT_PATH_ALARM_MAX (SIOT_PATH_F_ALARM_MASK) */
     int8_t  path;       /* dBm: the weakest unit-to-unit link from the root to this unit */
     uint8_t ap[6];      /* its access point's address: what a child attaches to */
     uint8_t chain_n;    /* the access points above it, its parent first */
@@ -114,6 +134,7 @@ typedef struct {
     int8_t   path;
     bool     complete;
     bool     full;
+    uint8_t  alarm;        /* what it last said (SIOT_PATH_F_ALARM_MASK) */
     bool     under_me;     /* this unit is in its chain: it hangs from us */
     int64_t  bad_until_ms; /* 0 = never refused us */
 } siot_path_neighbour_t;
@@ -181,9 +202,16 @@ bool siot_path_best(const siot_path_table_t *t, int64_t now_ms, siot_path_choice
 bool siot_path_rescue(const siot_path_table_t *t, int64_t now_ms, siot_path_choice_t *out);
 
 /* Called once per SIOT_PATH_ADVERT_MS while the unit may move. True when the
- * path through `out` has been SIOT_PATH_GAIN_DB better than a path below
- * SIOT_PATH_GOOD_DBM for `sustain_ms` in a row: the unit should move now. */
-bool siot_path_evaluate(siot_path_table_t *t, int64_t now_ms, uint32_t sustain_ms, siot_path_choice_t *out);
+ * path through `out` has been `gain_db` (SIOT_PATH_GAIN_DB, or
+ * SIOT_PATH_JOIN_GAIN_DB) better than a path below SIOT_PATH_GOOD_DBM for
+ * `sustain_ms` in a row: the unit should move now. */
+bool siot_path_evaluate(siot_path_table_t *t, int64_t now_ms, uint32_t sustain_ms, int8_t gain_db,
+                        siot_path_choice_t *out);
+
+/* The ALARM number this unit says: 1 when `own` (it is in alarm), else one
+ * more than the smallest heard in the last SIOT_PATH_FRESH_MS, 0 when none is
+ * heard or it is already SIOT_PATH_ALARM_MAX hops away. Not 0 = no move. */
+uint8_t siot_path_alarm(const siot_path_table_t *t, int64_t now_ms, bool own);
 /* The unit may not move now (alarm, update, just moved): the wait starts over. */
 void siot_path_evaluate_reset(siot_path_table_t *t);
 

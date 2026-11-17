@@ -21,7 +21,9 @@ size_t siot_path_advert_encode(const siot_path_advert_t *a, uint8_t *out, size_t
     const size_t len = SIOT_PATH_ADVERT_MIN_LEN + 6u * a->chain_n;
     if (cap < len) return 0;
     out[0] = SIOT_PATH_ADVERT_VER;
-    out[1] = (uint8_t)((a->complete ? SIOT_PATH_F_COMPLETE : 0) | (a->full ? SIOT_PATH_F_FULL : 0));
+    const uint8_t alarm = a->alarm > SIOT_PATH_ALARM_MAX ? SIOT_PATH_ALARM_MAX : a->alarm;
+    out[1] = (uint8_t)((a->complete ? SIOT_PATH_F_COMPLETE : 0) | (a->full ? SIOT_PATH_F_FULL : 0) |
+                       (alarm << SIOT_PATH_F_ALARM_SHIFT));
     out[2] = a->level;
     out[3] = (uint8_t)a->path;
     memcpy(&out[4], a->ap, 6);
@@ -39,6 +41,7 @@ bool siot_path_advert_decode(const uint8_t *p, size_t len, siot_path_advert_t *o
     memset(out, 0, sizeof(*out));
     out->complete = (p[1] & SIOT_PATH_F_COMPLETE) != 0;
     out->full = (p[1] & SIOT_PATH_F_FULL) != 0;
+    out->alarm = (uint8_t)((p[1] & SIOT_PATH_F_ALARM_MASK) >> SIOT_PATH_F_ALARM_SHIFT);
     out->level = p[2];
     out->path = (int8_t)p[3];
     memcpy(out->ap, &p[4], 6);
@@ -113,6 +116,7 @@ bool siot_path_heard(siot_path_table_t *t, int64_t now_ms, const uint8_t id[6], 
     e->path = a->path;
     e->complete = a->complete;
     e->full = a->full;
+    e->alarm = a->alarm;
     e->under_me = false;
     for (uint8_t i = 0; i < a->chain_n; i++) {
         if (memcmp(a->chain[i], t->self_ap, 6) == 0) { e->under_me = true; break; }
@@ -229,11 +233,26 @@ bool siot_path_rescue(const siot_path_table_t *t, int64_t now_ms, siot_path_choi
     return best_parent(t, now_ms, out);
 }
 
-bool siot_path_evaluate(siot_path_table_t *t, int64_t now_ms, uint32_t sustain_ms, siot_path_choice_t *out)
+uint8_t siot_path_alarm(const siot_path_table_t *t, int64_t now_ms, bool own)
+{
+    if (own) return 1;
+    /* One advert is enough here (no SIOT_PATH_MIN_HEARD): the cost of
+     * believing it is a move that waits. */
+    uint8_t nearest = 0;
+    for (int i = 0; i < SIOT_PATH_NEIGHBOURS; i++) {
+        const siot_path_neighbour_t *n = &t->n[i];
+        if (!n->used || n->alarm == 0 || now_ms - n->last_ms > SIOT_PATH_FRESH_MS) continue;
+        if (nearest == 0 || n->alarm < nearest) nearest = n->alarm;
+    }
+    return nearest != 0 && nearest < SIOT_PATH_ALARM_MAX ? (uint8_t)(nearest + 1) : 0;
+}
+
+bool siot_path_evaluate(siot_path_table_t *t, int64_t now_ms, uint32_t sustain_ms, int8_t gain_db,
+                        siot_path_choice_t *out)
 {
     siot_path_choice_t c;
     if (!siot_path_best(t, now_ms, &c) || c.path_now >= SIOT_PATH_GOOD_DBM ||
-        c.path_new < c.path_now + SIOT_PATH_GAIN_DB) {
+        c.path_new < c.path_now + gain_db) {
         t->better_since_ms = 0;
         return false;
     }

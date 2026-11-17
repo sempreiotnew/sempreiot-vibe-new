@@ -236,9 +236,10 @@ uint32_t siot_link_mesh_out_s(void);
  * (link_mesh_node.c, "The best path"). siot_netcore owns the frames. */
 
 /* Node: the PATH_ADVERT payload this unit should broadcast now, written to
- * `out` (>= SIOT_PATH_ADVERT_MAX_LEN). 0 = it says nothing: not in the mesh,
- * its access point closed, or in the middle of a move. */
-size_t siot_link_mesh_path_advert(uint8_t *out, size_t cap);
+ * `out` (>= SIOT_PATH_ADVERT_MAX_LEN). 0 = it says nothing: its access point
+ * closed, or in the middle of a move. `alarm`: this unit is in alarm — the
+ * units around it hear so and none of them moves (SIOT_PATH_F_ALARM_MASK). */
+size_t siot_link_mesh_path_advert(uint8_t *out, size_t cap, bool alarm);
 
 /* Node: the PATH_ADVERT of another unit of this installation — its SAFR
  * SRC_MAC, BOOT_CTR and MSG_CTR (an older frame is a replay), the signal it
