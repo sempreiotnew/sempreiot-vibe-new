@@ -411,10 +411,20 @@ static void offer(unit_t *u)
     u->offer_tries++;
 }
 
+/* The image a unit runs, by how it lives on the network (reference §2.1): a
+ * leaf by the role it announces, everything else mains. Never the family byte
+ * of its PRODUCT, which is the product's native family: a SIOT-SMOKE-01 on
+ * the node image (0x0301, bench 2026-11-18) was left out of every node
+ * rollout and offered the leaf image, which it refuses. */
+static uint8_t unit_family(const siot_devtab_entry_t *e)
+{
+    return e->role == SAFR_ROLE_LEAF ? SAFR_FAMILY_LEAF : SAFR_FAMILY_NODE;
+}
+
 static bool passes(const siot_devtab_entry_t *e, const siot_ota_control_t *c)
 {
     if (e->state != SIOT_DEV_ONLINE) return false;
-    if (e->product == SAFR_PRODUCT_UNKNOWN || (e->product >> 8) != c->family) return false;
+    if (e->product == SAFR_PRODUCT_UNKNOWN || unit_family(e) != c->family) return false;
     switch (c->filter) {
     case SIOT_OTA_FILTER_ALL:     return true;
     case SIOT_OTA_FILTER_PRODUCT: return e->product == c->product;

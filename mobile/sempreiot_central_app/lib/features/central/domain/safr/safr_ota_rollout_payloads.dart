@@ -216,8 +216,8 @@ class SafrOtaControlArgs {
   }
 
   /// Null = short, long or out of range, by the rules of the board
-  /// (`siot_ota_control_decode`): a product of another family, an empty
-  /// zone and the broadcast address are refused.
+  /// (`siot_ota_control_decode`): an unknown product, an empty zone and
+  /// the broadcast address are refused.
   static SafrOtaControlArgs? parse(Uint8List p) {
     if (p.length < 3) return null;
     final action = SafrOtaAction.fromWire(p[0]);
@@ -233,9 +233,9 @@ class SafrOtaControlArgs {
         if (off + 2 > p.length) return null;
         final product = (p[off] << 8) | p[off + 1];
         off += 2;
-        if (product == safrProductUnknown || (product >> 8) != family) {
-          return null;
-        }
+        // Any known product: one may run on the other family's image
+        // (reference §2.1), and the board queues by how the unit lives.
+        if (product == safrProductUnknown) return null;
         filter = SafrOtaFilter.product(product);
       case SafrOtaFilterKind.zone:
         if (off >= p.length) return null;

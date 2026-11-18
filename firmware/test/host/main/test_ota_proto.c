@@ -225,9 +225,11 @@ TEST_CASE("ota: OTA_CONTROL filters", "[ota][control]")
     TEST_ASSERT_TRUE(siot_ota_control_decode(p, n, &b));
     TEST_ASSERT_EQUAL_HEX16(0x0201, b.product);
 
-    /* "only sirens" with the LEAF image: a product of another family is refused */
+    /* "only sirens" with the LEAF image: taken — a product may run the other
+     * family's image (reference §2.1); the board matches units by their role */
     p[1] = SAFR_FAMILY_LEAF;
-    TEST_ASSERT_FALSE(siot_ota_control_decode(p, n, &b));
+    TEST_ASSERT_TRUE(siot_ota_control_decode(p, n, &b));
+    TEST_ASSERT_EQUAL_HEX8(SAFR_FAMILY_LEAF, b.family);
     p[1] = SAFR_FAMILY_NODE;
     p[3] = 0; p[4] = 0;
     TEST_ASSERT_FALSE(siot_ota_control_decode(p, n, &b));

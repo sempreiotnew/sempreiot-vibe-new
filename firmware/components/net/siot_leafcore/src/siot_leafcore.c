@@ -43,7 +43,7 @@ static const char *TAG = "siot_leaf";
 #define ESPNOW_TYPE        0xD2      /* same prefix as siot_survey: Mesh-Lite routes on it */
 #define RX_QUEUE_LEN       8
 #define SEND_WAIT_MS       50        /* MAC-layer ACK arrives well under 10 ms */
-#define RTC_MAGIC          0x4C454147u /* "LEAG": layout changed 2026-10-29 (announce_left) */
+#define RTC_MAGIC          0x4C454148u /* "LEAH": layout changed 2026-11-18 (parent_path, the better-parent fields) */
 #define LEAF_REANNOUNCE_WAKES 10u /* NAME_ANNOUNCE again every 10th wake (§12.9 insurance) */
 #define LEAF_ANNOUNCE_WAKES    3u /* TOPOLOGY + NAME_ANNOUNCE on this many bound wakes after provisioning */
 #define HB_INTERVAL_MS     ((uint32_t)CONFIG_SIOT_LEAF_HB_INTERVAL_S * 1000u)
@@ -77,6 +77,10 @@ typedef struct {
     bool     heard_any;         /* last probe got offers (none online) → probe every wake */
     bool     bound_ever;        /* bound at least once since provisioning (first contact over, §12.3) */
     uint16_t wakes_since_probe;
+    int8_t   parent_path;       /* dBm, what the parent said of its own path (0x7F = nothing) */
+    uint8_t  weak_wakes;        /* heartbeats in a row on a path below SIOT_LEAF_PATH_GOOD_DBM */
+    uint16_t improve_wait;      /* wakes before the next search for a better parent */
+    uint16_t improve_backoff;   /* the wait the next search starts (0 = SIOT_LEAF_IMPROVE_WAIT_WAKES) */
     uint16_t msg_id;            /* last MSG_ID used: continues across wakes (spec §12.2) */
     uint32_t wake_count;
     siot_leaf_outbox_t outbox;
@@ -120,6 +124,8 @@ static int             s_mailbox_left; /* frames the parent said it would send *
 static bool            s_restart_asked; /* RESTART taken in this wake: restart when the wake ends */
 static int             s_mailbox_total; /* DETAIL of the ACK that opened the drain */
 static int64_t         s_stay_awake_until_ms;
+static bool            s_parent_heard; /* the parent's ACK was heard on this wake... */
+static int8_t          s_parent_rssi;  /* ...at this signal */
 
 /* wake cause in LIGHT / NONE mode (DEEP asks esp_sleep) */
 static esp_sleep_wakeup_cause_t s_sim_cause = ESP_SLEEP_WAKEUP_UNDEFINED;
@@ -213,6 +219,7 @@ static void rtc_reset(void)
     s_rtc.system_id = s_code->system_id;
     s_rtc.parent_layer = 0xFF;
     s_rtc.parent_link = (int8_t)SAFR_NA_RSSI;
+    s_rtc.parent_path = (int8_t)SAFR_NA_RSSI;
     s_rtc.verdict_pending = true;
     s_rtc.announce_left = LEAF_ANNOUNCE_WAKES;
     /* No RTC state to continue from (power-on): start away from the ids the
@@ -391,6 +398,10 @@ static void on_ack(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_le
                  from_central ? "the central" : "the board", a.acked_msg_id,
                  a.acked_msg_id == s_ack_wanted ? " (the one I am waiting for)" : " (an earlier event)");
     }
+    if (from_parent) { /* one hop, from the parent's own radio: how its side of the link is heard now */
+        s_parent_heard = true;
+        s_parent_rssi = s_rx_rssi;
+    }
     if (a.acked_msg_id != s_ack_wanted) return;
     if (from_central) s_ack_central = true;
     if (from_parent || (!from_central && s_rtc.bind != BIND_BOUND)) {
@@ -405,6 +416,8 @@ static void on_offer(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_
     (void)raw; (void)raw_len; (void)dup; (void)ctx;
     if (!s_probing || f->payload_len < 3 || f->payload[0] != s_probe_purpose) return;
     const int8_t link = siot_leaf_link((int8_t)f->payload[1], s_rx_rssi);
+    /* v3.13: the unit's own path. Absent on older firmware = it says nothing. */
+    const int8_t path = f->payload_len >= 4 ? (int8_t)f->payload[3] : (int8_t)SAFR_NA_RSSI;
     for (uint8_t i = 0; i < s_cand_n; i++) {
         if (siot_mac_eq(s_cand[i].mac, f->src_mac)) { /* a repeated copy: keep the better reading */
             if (link > s_cand[i].link) s_cand[i].link = link;
@@ -412,14 +425,16 @@ static void on_offer(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_
         }
     }
     char src[SIOT_MAC_STR_LEN];
-    ESP_LOGI(TAG, "offer from %s: they saw %d dBm, we see %d dBm → link %d, layer %u",
-             siot_mac_to_str(f->src_mac, src), (int8_t)f->payload[1], s_rx_rssi, link, f->payload[2]);
+    ESP_LOGI(TAG, "offer from %s: they saw %d dBm, we see %d dBm → link %d, layer %u, its path %d%s",
+             siot_mac_to_str(f->src_mac, src), (int8_t)f->payload[1], s_rx_rssi, link, f->payload[2], path,
+             path == (int8_t)SAFR_NA_RSSI ? " (not said)" : " dBm");
     if (s_cand_n < SIOT_LEAF_CANDIDATES_MAX) {
         siot_leaf_candidate_t *c = &s_cand[s_cand_n++];
         memcpy(c->mac, f->src_mac, 6);
         memcpy(c->peer, s_rx_src, 6);
         c->link = link;
         c->layer = f->payload[2];
+        c->path = path;
     }
     /* Survey only, and through siot_ui_led like a node's (reference §3.7 row
      * 7.7): one blink per answering unit in its link colour, a dark gap after
@@ -602,13 +617,16 @@ static void bind_to(const siot_leaf_candidate_t *c)
     memcpy(s_rtc.parent_peer, c->peer, 6);
     s_rtc.parent_layer = c->layer;
     s_rtc.parent_link = c->link;
+    s_rtc.parent_path = c->path;
+    s_rtc.weak_wakes = 0;
     s_rtc.misses = 0;
     s_rtc.no_path = false;
     s_rtc.bound_ever = true;
     siot_safr_set_level(leaf_level());
     char m[SIOT_MAC_STR_LEN];
-    ESP_LOGW(TAG, "bound to %s (layer %u, link %d dBm%s)", siot_mac_to_str(c->mac, m), c->layer, c->link,
-             c->link < SIOT_LEAF_BIND_MIN_DBM ? ", WEAK" : "");
+    ESP_LOGW(TAG, "bound to %s (layer %u, link %d dBm%s, path through it %d dBm)", siot_mac_to_str(c->mac, m),
+             c->layer, c->link, c->link < SIOT_LEAF_BIND_MIN_DBM ? ", WEAK" : "",
+             siot_leaf_path_through(c->link, c->path));
 }
 
 static void emit_topology(void)
@@ -654,6 +672,7 @@ static bool discover(bool first_contact)
             memcpy(c.peer, c.mac, 6);
             c.layer = 0xFF;
             c.link = (int8_t)SAFR_NA_RSSI;
+            c.path = (int8_t)SAFR_NA_RSSI;
             ESP_LOGW(TAG, "no offer: binding to the bench parent %s", CONFIG_SIOT_LEAF_BENCH_PARENT_MAC);
             bind_to(&c);
         }
@@ -674,10 +693,94 @@ static bool discover(bool first_contact)
     return true;
 }
 
-/* ---- 5. heartbeat cycle ------------------------------------------------------ */
-
 /* The parent was replaced on this wake already: one search per wake. */
 static bool s_rebound;
+
+/* A better parent (§12.3, v3.13). A leaf used to keep the parent of its first
+ * bind for as long as it answered — 24 h at least — whatever stood between
+ * them since, and whoever came up nearer (building, 2026-11-18: after a power
+ * cut each leaf took the first unit that had a path, and stayed). Now it does
+ * what a mains unit does (§7.16), on its own clock: the path it has is the
+ * weaker of its link (how the parent's ACK is heard on this wake, and the
+ * two-way number of the last search) and the parent's own path; when that
+ * has been below SIOT_LEAF_PATH_GOOD_DBM for SIOT_LEAF_WEAK_WAKES heartbeats
+ * it asks who is around (2 probe copies, after the heartbeat and the mailbox,
+ * so a search never costs a command) and moves only for a path
+ * SIOT_LEAF_MOVE_GAIN_DB better. The parent's own answer to that search
+ * renews what the leaf knows of it, whether it moves or not. */
+static void improve_parent(int8_t path_est)
+{
+    if (s_rtc.improve_backoff == 0) s_rtc.improve_backoff = SIOT_LEAF_IMPROVE_WAIT_WAKES;
+    s_rtc.improve_wait = s_rtc.improve_backoff;
+    s_rtc.improve_backoff = s_rtc.improve_backoff >= SIOT_LEAF_IMPROVE_WAIT_MAX_WAKES / 2
+                                ? SIOT_LEAF_IMPROVE_WAIT_MAX_WAKES : (uint16_t)(s_rtc.improve_backoff * 2);
+    char pm[SIOT_MAC_STR_LEN], bm[SIOT_MAC_STR_LEN];
+    siot_mac_to_str(s_rtc.parent_mac, pm);
+    ESP_LOGW(TAG, "path %d dBm through %s for %u wakes: looking for a better parent", path_est, pm, s_rtc.weak_wakes);
+    const uint8_t n = probe(SAFR_PROBE_PARENT, SIOT_LEAF_IMPROVE_COPIES, SIOT_LEAF_PROBE_SPACING_MS,
+                            siot_leaf_probe_window_ms(SIOT_LEAF_IMPROVE_COPIES, SIOT_LEAF_PROBE_SPACING_MS));
+    siot_leaf_candidate_t others[SIOT_LEAF_CANDIDATES_MAX];
+    size_t no = 0;
+    int8_t path_now = path_est;
+    for (uint8_t i = 0; i < n; i++) {
+        if (s_cand[i].layer == 0xFF) continue; /* here, but with no path to the board */
+        if (siot_mac_eq(s_cand[i].mac, s_rtc.parent_mac)) { /* the parent itself: both directions, and its path now */
+            s_rtc.parent_link = s_cand[i].link;
+            s_rtc.parent_path = s_cand[i].path;
+            s_rtc.parent_layer = s_cand[i].layer;
+            memcpy(s_rtc.parent_peer, s_cand[i].peer, 6);
+            siot_safr_set_level(leaf_level());
+            path_now = siot_leaf_path_through(s_cand[i].link, s_cand[i].path);
+            continue;
+        }
+        others[no++] = s_cand[i];
+    }
+    const int best = siot_leaf_pick_parent(others, no);
+    const int8_t path_new = best < 0 ? (int8_t)-128 : siot_leaf_path_through(others[best].link, others[best].path);
+    if (best < 0 || !siot_leaf_should_move(path_now, path_new)) {
+        if (best < 0) {
+            ESP_LOGW(TAG, "no other parent answered: staying on %s (path %d dBm), looking again in %u wakes", pm,
+                     path_now, s_rtc.improve_wait);
+        } else {
+            ESP_LOGW(TAG, "best other parent %s: path %d dBm against %d dBm through %s — %s, staying (again in %u wakes)",
+                     siot_mac_to_str(others[best].mac, bm), path_new, path_now, pm,
+                     path_now >= SIOT_LEAF_PATH_GOOD_DBM ? "this path is not below -80" : "not 10 dB better",
+                     s_rtc.improve_wait);
+        }
+        return;
+    }
+    ESP_LOGW(TAG, "MOVING: the path through %s is %d dBm, through %s (link %d dBm, layer %u) it is %d dBm",
+             pm, path_now, siot_mac_to_str(others[best].mac, bm), others[best].link, others[best].layer, path_new);
+    bind_to(&others[best]);
+    /* As after any bind (discover): TOPOLOGY names the new parent first, the
+     * name follows; the old parent's mailbox for us runs out by itself. */
+    emit_topology();
+    s_rtc.announced = false;
+    announce_if_due();
+}
+
+/* After a heartbeat the parent answered. */
+static void improve_if_due(void)
+{
+    if (s_rtc.bind != BIND_BOUND || s_rebound || !s_parent_heard || s_rtc.no_path) return;
+    const int8_t link = s_parent_rssi < s_rtc.parent_link ? s_parent_rssi : s_rtc.parent_link;
+    const int8_t path = siot_leaf_path_through(link, s_rtc.parent_path);
+    if (path >= SIOT_LEAF_PATH_GOOD_DBM) {
+        s_rtc.weak_wakes = 0;
+        s_rtc.improve_wait = 0;
+        s_rtc.improve_backoff = SIOT_LEAF_IMPROVE_WAIT_WAKES;
+        return;
+    }
+    if (s_rtc.weak_wakes < 0xFF) s_rtc.weak_wakes++;
+    if (s_rtc.improve_wait > 0) { s_rtc.improve_wait--; return; }
+    if (s_rtc.weak_wakes < SIOT_LEAF_WEAK_WAKES) return;
+    /* Nothing of ours on its way through this parent, nothing of the central's waiting in it. */
+    if (siot_leaf_outbox_count(&s_rtc.outbox) > 0 || s_mailbox_left > 0 || s_restart_asked) return;
+    improve_parent(path);
+}
+
+/* ---- 5. heartbeat cycle ------------------------------------------------------ */
+
 
 /* The parent did not take a frame at the radio (no MAC ACK, twice): it is off
  * or out of reach. Look for another one NOW — 200 ms — instead of after two
@@ -1022,6 +1125,7 @@ static void one_wake(esp_sleep_wakeup_cause_t cause)
     s_rtc.wake_count++;
     s_rtc.wakes_since_probe++;
     s_rebound = false;
+    s_parent_heard = false;
     ESP_LOGW(TAG, "wake #%lu cause=%s bind=%s misses=%u outbox=%u ch=%u", (unsigned long)s_rtc.wake_count,
              cause_name(cause), s_rtc.bind == BIND_BOUND ? "bound" : s_rtc.bind == BIND_COMM_FAULT ? "COMM_FAULT" : "none",
              s_rtc.misses, siot_leaf_outbox_count(&s_rtc.outbox), s_rtc.channel);
@@ -1108,6 +1212,10 @@ static void one_wake(esp_sleep_wakeup_cause_t cause)
             }
         }
     }
+    /* A better parent, when this one's path has been weak for a while — last,
+     * so the heartbeat, the mailbox and the update never wait for it; never
+     * on the wake that proves a new image, or with its result still to say. */
+    if (heard && !ota_wants_parent) improve_if_due();
     /* IDENTIFY from the mailbox keeps us awake for its duration. */
     while (now_ms() < s_stay_awake_until_ms) pump(100);
 }

@@ -962,6 +962,21 @@ size_t siot_link_mesh_path_advert(uint8_t *out, size_t cap, bool alarm)
     return siot_path_advert_encode(&a, out, cap);
 }
 
+int8_t siot_link_mesh_own_path(void)
+{
+    if (!s_started || s_path_lock == NULL) return (int8_t)SIOT_LINK_RSSI_NONE;
+    const uint8_t level = esp_mesh_lite_get_level();
+    const sta_where_t where = sta_where(NULL);
+    const bool root = level == 1 && where == STA_ON_BOARD;
+    const bool child = level >= 2 && where == STA_ON_UNIT;
+    if ((!root && !child) || s_ap_closed || s_root_barred || s_pin_state == PIN_MOVING) return (int8_t)SIOT_LINK_RSSI_NONE;
+    siot_path_advert_t a;
+    xSemaphoreTake(s_path_lock, portMAX_DELAY);
+    siot_path_own(&s_path, now_ms(), level, root, root && s_tcp_sock >= 0, false, &a);
+    xSemaphoreGive(s_path_lock);
+    return a.complete ? a.path : (int8_t)SIOT_LINK_RSSI_NONE;
+}
+
 void siot_link_mesh_path_heard(const uint8_t id[6], uint16_t boot_ctr, uint32_t msg_ctr, int8_t rssi,
                                const uint8_t *payload, size_t len)
 {

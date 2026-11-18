@@ -104,30 +104,6 @@ void main() {
 
   const ring = ValueKey('ota-board-ring');
 
-  group('a weak link (protocol §9.4, 2026-10-26)', () {
-    testWidgets('the legend counts it and says where the new node goes',
-        (tester) async {
-      final far = TopologyNode(
-        mac: '5A:46:52:00:00:02',
-        role: SafrNodeRole.node,
-        layer: 2,
-        parentMac: root,
-        rssi: -91,
-        batteryPct: null,
-        online: true,
-        lastSeenAt: now,
-        alarmLatched: false,
-      );
-      await pump(tester, showOta: false, units: [...mesh, far]);
-      expect(find.text('1 enlace fraco · falta um nó no caminho'),
-          findsOneWidget);
-    });
-
-    testWidgets('a good link has no such row', (tester) async {
-      await pump(tester, showOta: false);
-      expect(find.textContaining('enlace fraco'), findsNothing);
-    });
-  });
   const tablet = ValueKey('ota-tablet-chip');
 
   testWidgets('showOta: a running push is drawn (ring, tablet beside it)',
@@ -153,7 +129,12 @@ void main() {
         (tester) async {
       // An earlier map in this file started the tablet's load under the
       // fake clock, where it never finishes — and the asset bundle caches
-      // that pending read. Forget both and load afresh, for real.
+      // that pending read. Forget both and load afresh, for real — once
+      // that earlier decode is out of the engine's way: started again
+      // while it is still in flight (the map just before this test began
+      // it), the new one sometimes never comes back.
+      await tester
+          .runAsync(() => Future<void>.delayed(const Duration(seconds: 1)));
       rootBundle.clear();
       DeviceModelSprites.resetCache();
       await tester.runAsync(() => DeviceModelSprites.load(deviceCentralModel!));

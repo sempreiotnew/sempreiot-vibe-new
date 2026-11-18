@@ -1242,8 +1242,7 @@ class _WireDetailScaffold extends ConsumerWidget {
               '${p.dlHeard} de ${v2p.SafrHeartbeatPayload.dlHeardExpected} '
                   '(últimos 2 min)',
               'DL_HEARD (v3.6, §7.3): a perda no enlace de descida, contada '
-                  'pela própria unidade. ≤ 6 de 8 gera o TROUBLE "qualidade '
-                  'do enlace degradada" (§9.4).',
+                  'pela própria unidade.',
             ),
           if (p.dlMap != null)
             (

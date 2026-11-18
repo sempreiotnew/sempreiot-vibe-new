@@ -118,6 +118,36 @@ TEST_CASE("leaf pick: best link wins, lower layer breaks ties, off-mesh never be
     TEST_ASSERT_EQUAL(-83, siot_leaf_link(-70, -83));
 }
 
+TEST_CASE("leaf pick: the path through a parent, not the one hop (v3.13)", "[leaf][bind][path]")
+{
+    /* A near unit whose own path is weak loses to a farther one with a good path. */
+    siot_leaf_candidate_t c[3];
+    c[0] = cand(-50, 3); c[0].path = -88;  /* path through it: -88 */
+    c[1] = cand(-70, 2); c[1].path = -60;  /* -70 */
+    c[2] = cand(-72, 1); c[2].path = 0;    /* the root: the link alone, -72 */
+    TEST_ASSERT_EQUAL(1, siot_leaf_pick_parent(c, 3));
+
+    /* A parent that says no path (older firmware) counts by its link. */
+    c[0].path = 0x7F;
+    TEST_ASSERT_EQUAL(0, siot_leaf_pick_parent(c, 3));
+
+    TEST_ASSERT_EQUAL(-88, siot_leaf_path_through(-50, -88));
+    TEST_ASSERT_EQUAL(-70, siot_leaf_path_through(-70, -60));
+    TEST_ASSERT_EQUAL(-72, siot_leaf_path_through(-72, 0));
+    TEST_ASSERT_EQUAL(-50, siot_leaf_path_through(-50, 0x7F));
+}
+
+TEST_CASE("leaf move: only a path below -80, only for 10 dB better", "[leaf][bind][path]")
+{
+    TEST_ASSERT_FALSE(siot_leaf_should_move(-80, -40)); /* -80 is not below -80 */
+    TEST_ASSERT_FALSE(siot_leaf_should_move(-75, -40));
+    TEST_ASSERT_FALSE(siot_leaf_should_move(-85, -76)); /* 9 dB */
+    TEST_ASSERT_TRUE(siot_leaf_should_move(-85, -75));
+    TEST_ASSERT_TRUE(siot_leaf_should_move(-90, -50));
+    TEST_ASSERT_FALSE(siot_leaf_should_move(-90, -128)); /* nobody else */
+    TEST_ASSERT_TRUE(siot_leaf_should_move(-128, -118)); /* no overflow at the bottom */
+}
+
 static void ev(uint8_t out[17], uint8_t type, uint16_t seq)
 {
     memset(out, 0, 17);

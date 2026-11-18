@@ -47,6 +47,11 @@ here. Do **not** keep divergent layout comments in code — cite this file inste
   the root on ESP-NOW and a unit with a weak path moves to a clearly better parent by itself —
   additive, `VER` unchanged; it never reaches the mesh, the board or the tablet, and a unit that does
   not know it never sees it. *First run on units 2026-11-16, with the bench times of §7.16.*
+  Revision **3.13** (2026-11-18) gives `PARENT_OFFER` a fourth byte, `PATH` (§7.15), and a battery unit
+  the mains units' rule (§12.3): it binds by the path through a parent, and leaves a path below −80 dBm
+  for one 10 dB better — additive, `VER` unchanged; an older leaf ignores the byte, an older node's
+  3-byte offer says no path. The rollout queue of §13.6 goes by the unit's `ROLE`, never by the family
+  byte of its `PRODUCT`. *Built and host-tested 2026-11-18, not yet run on units.*
 - Status: implemented (uplink + downlink + journal backfill); v3.2 additions: implemented, bench pending;
   v3.3: implemented; **v3.4: specified, firmware Phase 2 (`docs/phases-development/phase2-leaf-brief.md`)**
 - Supersedes: SAFR v2 (`VER = 0x02` — decode-only for stored packets) and
@@ -845,13 +850,14 @@ with the installation key like every frame; `DST_MAC` = broadcast.
 |----|------|-------|
 | 0 | 1 | PURPOSE: `0` parent discovery (battery leaf looking for an AC parent) · `1` survey (range test, TEST button on a unit with no network) |
 
-### 7.15 PARENT_OFFER — `MSG_TYPE 0x0E` (ESP-NOW unicast, neighbour → prober) — payload 3 bytes
+### 7.15 PARENT_OFFER — `MSG_TYPE 0x0E` (ESP-NOW unicast, neighbour → prober) — payload 4 bytes (3 before v3.13)
 
 | Off | Size | Field |
 |----|------|-------|
 | 0 | 1 | PURPOSE (echoes the probe) |
 | 1 | 1 | RSSI_SEEN (int8 dBm) at which the probe was received |
 | 2 | 1 | LAYER of the answering unit (`0xFF` = not on a mesh) — lets a leaf prefer a shallow parent |
+| 3 | 1 | PATH *(v3.13, 2026-11-18)*: int8 dBm, the weakest unit-to-unit link between the root and the answering unit — what it says in its `PATH_ADVERT` (§7.16) when that is `COMPLETE`; `0` = it is the root; `0x7F` = not known (no path, in a move, a parent whose advert is not believed, the board). Absent in a 3-byte offer = not known. |
 
 Survey (`PURPOSE = 1`): the prober is any provisioned AC node or leaf with no
 path to the board; it sends the probe four times 1.2 s apart under the same
@@ -1236,10 +1242,29 @@ provisioning, a button press, and the COMM_FAULT chirp (§12.8).
   its button was pressed. A leaf that has bound once re-probes with one copy.
 - **Link quality** of a candidate = the weaker direction:
   `min(RSSI_SEEN in the offer, RSSI at which the leaf received the offer)`.
-- **Selection:** best link wins; lower `LAYER` breaks ties. Prefer candidates
+- **Selection** *(v3.13)*: the best **path** wins — the weaker of the link and
+  the `PATH` of the offer (§7.15; a parent that says none, or is the root,
+  counts by the link alone) — and lower `LAYER` breaks ties. A near unit that
+  itself hangs from a −88 dBm link is a −88 path. Prefer candidates
   with link ≥ **−85 dBm**; if none reaches it, bind to the best anyway (a weak
   parent beats none) — the leaf's `TOPOLOGY` (§12.7) exposes the weakness to the
   tablet.
+- **A better parent** *(v3.13, 2026-11-18)*: a leaf used to keep the parent of
+  its first bind for as long as it answered, whoever came up nearer since
+  (after a power cut each leaf took the first unit that had a path, and stayed
+  for 24 h). Now, on every heartbeat the parent ACKs, the leaf's path is
+  `min(RSSI of that ACK, link of the last probe, PATH of the parent)`. Below
+  **−80 dBm** for **3 heartbeats in a row**, it probes — **2 copies 300 ms
+  apart**, after the heartbeat and the mailbox drain, so a search never costs
+  a command — and moves only to a path **10 dB better**; the parent's own
+  answer renews what the leaf knows of it (link in both directions, `PATH`,
+  `LAYER`) whether it moves or not. Then `TOPOLOGY` and `NAME_ANNOUNCE` to the
+  new parent, as after any bind. No other search for **10 wakes**, doubling
+  each time up to **80**, back to 10 once the path is good: a leaf with
+  nothing better in reach spends one search every 80 min. Never with an event
+  in the outbox, frames left in the mailbox, after `NO_PATH` (its own rule
+  below), or on the wake of a firmware self-test or result. The same numbers
+  as a mains unit's (§7.16), on the leaf's clock.
 - **After a bind:** `NAME_ANNOUNCE` (once after provisioning, RTC flag; §7.11
   — *and again every 10th wake since 2026-10-29, ~10 min, one frame: the one
   announce could be lost between the parent and the board and nothing would
@@ -1474,6 +1499,7 @@ are always awake to answer a leaf's probe.
 | Post-provisioning verdict window | ≤ 30 s awake | §12.8 |
 | Bind preference / weak-link flag | link ≥ −85 dBm / < −75 dBm reported, < −85 flagged | §12.3, §12.7 |
 | Re-probe | 2nd consecutive miss; next wake after `NO_PATH`; every 24 h | §12.3 |
+| A better parent *(v3.13)* | path < −80 dBm for 3 heartbeats → 2 probe copies; move for ≥ 10 dB; then 10 wakes of wait, doubling to 80 | §12.3 |
 | Unbound back-off | every wake (nodes heard) / every 5 min (nobody) | §12.3 |
 | Missing at the board | 3 × 60 s = 180 s (NFPA 72 200 s, EN 54-25 300 s) | §9.2 |
 | Mailbox | 4 per leaf, same-`CMD` replace, drain ≤ 4 per wake, expiry 180 s | §12.5 |
@@ -1486,7 +1512,7 @@ are always awake to answer a leaf's probe.
 
 ### 12.11 Parent duties (AC node) — checklist
 
-1. Offer on `PARENT_PROBE {0}` always: `LAYER` when ONLINE, `0xFF` when there is no path to the board; echo `RSSI_SEEN`. (The board never offers on `{0}`.)
+1. Offer on `PARENT_PROBE {0}` always: `LAYER` when ONLINE, `0xFF` when there is no path to the board; echo `RSSI_SEEN`; say its own `PATH` *(v3.13)*. (The board never offers on `{0}`.)
 2. Add the leaf as an unencrypted peer on its frame, answer, drop the peer.
 3. ACK every leaf `HEARTBEAT` / `EVENT` at once with the 9-byte leaf ACK: set
    `PENDING` + `DETAIL` from the mailbox, `NO_PATH` when the board is silent
@@ -1795,7 +1821,8 @@ leaf acts.
 
 `ACTION`: `1` start · `2` pause · `3` resume · `4` abort.
 `FILTER`: `0` all units of the family (no data) · `1` one product
-(`PRODUCT u16`, which must belong to `FAMILY`) · `2` one zone by its **string**
+(`PRODUCT u16`, not `0x0000`; since 2026-11-18 it need not be of `FAMILY`'s
+native family — a product may run the other image) · `2` one zone by its **string**
 (`ZONE_LEN u8 ‖ ZONE`; kept for pre-v3.8 boards, which a v3.8 board matches
 against nothing) · `3` one unit (`MAC[6]`, never broadcast) · *(v3.8)* `4` one
 **zone id** (`ZONE_ID u16`, §14.1).
@@ -1832,9 +1859,14 @@ per family that has something stored (or a rollout), each with its own pages.
 - `start`: needs a stored image of `FAMILY` (`BAD_ARGS` without one), no
   rollout running (`BUSY`), no ALARM in the last 10 minutes (`BUSY_ALARM`).
   `FAMILY 0x03` (leaf) is refused with `BAD_ARGS` until §13.5 exists. The
-  queue = the units of the board's device table that are **online**, whose
-  `PRODUCT` is of that family (a unit that never announced one is not
-  offered anything) and that pass the filter. An empty queue → `BAD_ARGS`.
+  queue = the units of the board's device table that are **online**, that
+  **run that family's image** — by the `ROLE` they announce: a leaf is a
+  battery unit (`0x03`), every other unit a mains one (`0x02`); never by the
+  family byte of `PRODUCT`, which is the product's native family (2026-11-18:
+  a `SIOT-SMOKE-01` on the node image, `0x0301`, was left out of every node
+  rollout and offered the leaf image) — that announced a `PRODUCT` (a unit
+  that never did is not offered anything) and that pass the filter. An empty
+  queue → `BAD_ARGS`.
 - **Order:** one unit at a time; the unit that is the mesh root goes last.
 - **A unit that fails** (refusal, no status in 30 s, no result by
   `DEADLINE_S`, `OTA_RESULT` not ok) is offered the image once more, after

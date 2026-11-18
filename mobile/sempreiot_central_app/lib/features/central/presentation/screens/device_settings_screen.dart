@@ -200,28 +200,14 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
               valueColor: signalColor(node.rssi),
             ),
           ],
-          // v3.6 DL_HEARD (protocol §7.3): the downlink loss, counted by the
-          // unit on the board's own heartbeats — against the beats the
-          // tablet heard the board send in the same 2 min (heartbeat_log).
+          // v3.6 DL_HEARD (protocol §7.3): the unit's own count of the
+          // board's heartbeats in the last 2 min. A reading, never a flag.
           if (!node.isLeaf) ...[
             const InfoRowDivider(),
             _Fact(
               icon: Icons.favorite_rounded,
               label: 'Batimentos da placa',
               value: _heartbeatsText(node),
-              valueColor: node.linkDegraded ? AppColors.trouble : null,
-            ),
-          ],
-          if (node.linkAttention) ...[
-            const InfoRowDivider(),
-            _Fact(
-              icon: Icons.warning_amber_rounded,
-              label: 'Enlace fraco',
-              value: node.parentMac == null
-                  ? 'Instale um nó entre esta unidade e a central.'
-                  : 'Instale um nó entre esta unidade e '
-                      '${nameOf(node.parentMac!)}.',
-              valueColor: AppColors.trouble,
             ),
           ],
           if (node.isLeaf) ...[
@@ -245,15 +231,10 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
                 value: '${node.batteryPct}%'),
           ],
         ]),
-        if (node.isLeaf &&
-            node.online &&
-            (node.singleParent || node.weakLink)) ...[
+        if (node.isLeaf && node.online && node.singleParent) ...[
           const SizedBox(height: 10),
-          if (node.singleParent)
-            const _Notice(
-                'Só um pai ao alcance — instale um dispositivo AC mais perto.'),
-          if (node.weakLink)
-            const _Notice('Sinal fraco com o pai (abaixo de −85 dBm).'),
+          const _Notice(
+              'Só um pai ao alcance — instale um dispositivo AC mais perto.'),
         ],
         const SizedBox(height: 24),
         const InfoSectionHeader('ESTADO'),

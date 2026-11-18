@@ -193,6 +193,54 @@ void main() {
     });
   }
 
+  /// The real network of 2026-11-18: a chain of mains units, a detector
+  /// on the root, a small cluster at the end.
+  const c2 = '5A:46:52:00:0C:02', c3 = '5A:46:52:00:0C:03';
+  const c4 = '5A:46:52:00:0C:04', c5 = '5A:46:52:00:0C:05';
+  final chain = [
+    node(board, 0, SafrNodeRole.root, null),
+    node(root, 1, SafrNodeRole.root, board, name: 'outside', product: 0x0202),
+    node('5A:46:52:00:0C:10', 2, SafrNodeRole.leaf, root,
+        name: '2 andar', product: 0x0301),
+    node(c2, 2, SafrNodeRole.node, root, name: '1 andar', product: 0x0202),
+    node(c3, 3, SafrNodeRole.node, c2, name: '1 andar', product: 0x0202),
+    node(c4, 4, SafrNodeRole.node, c3, name: '2 andar', product: 0x0202),
+    node(c5, 5, SafrNodeRole.node, c4, name: '1 andar', product: 0x0202),
+    for (var i = 0; i < 3; i++)
+      node('5A:46:52:00:0C:2$i', 5, SafrNodeRole.leaf, c4,
+          name: '3 andar', product: 0x0301),
+    node('5A:46:52:00:0C:30', 6, SafrNodeRole.leaf, '5A:46:52:00:0C:20',
+        name: '2 andar', product: 0x0301),
+  ];
+
+  testWidgets(
+      'a chain: the links near the hub are no longer than the ones far '
+      'from it (2026-11-18: each level made them half as long again)',
+      (tester) async {
+    await pumpMap(tester, const Size(524, 711), chain);
+    Offset at(String mac) => tester.getCenter(find.byKey(radialChipKey(mac)));
+    final hops = [
+      (at(root) - at(c2)).distance,
+      (at(c2) - at(c3)).distance,
+      (at(c3) - at(c4)).distance,
+      (at(c4) - at(c5)).distance,
+    ];
+    for (final h in hops) {
+      expect(h, closeTo(hops.last, hops.last * 0.25),
+          reason: 'the chain\'s links, hub outward: $hops');
+    }
+    final rects = [
+      for (final n in chain.where((n) => n.layer > 0))
+        tester.getRect(find.byKey(radialChipKey(n.mac))),
+    ];
+    for (var i = 0; i < rects.length; i++) {
+      for (var j = i + 1; j < rects.length; j++) {
+        expect(rects[i].overlaps(rects[j]), isFalse);
+      }
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
       'names come with the zoom: halos and lines first, the names '
       'once there is room', (tester) async {
@@ -383,6 +431,7 @@ void main() {
       const Size(1280, 800)
     ),
     ('radial_201_phone', big, const Size(390, 844)),
+    ('radial_chain_phone', chain, const Size(524, 711)),
     (
       'tree_41_tablet',
       fakeMesh(nodes2: 4, nodes3: 1, leaves: 8),

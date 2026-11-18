@@ -259,8 +259,8 @@ class DeviceModelAvatar extends StatefulWidget {
 
   final TopologyNode node;
 
-  /// Draw this model instead of the one [deviceModelFor] picks for [node]
-  /// (the CENTRAL: the tablet, with the board as its node for the LED).
+  /// Draw this model instead of the one picked for [node]: its product's
+  /// ([deviceModelFor]), or the tablet for the Central (layer 0).
   final DeviceModelSpec? spec;
 
   /// Shown instead of the [DeviceAvatar] circle while the model loads or
@@ -294,8 +294,13 @@ class _DeviceModelAvatarState extends State<DeviceModelAvatar>
       createTicker((elapsed) => _clock.value = elapsed.inMicroseconds / 1e6);
 
   void _resolve() {
+    // The Central (the board, layer 0) is the tablet's model everywhere —
+    // Dispositivos and Dispositivo as on the Rede map — never a product's.
     final spec = widget.spec ??
-        deviceModelFor(widget.node.productCode, isLeaf: widget.node.isLeaf);
+        (widget.node.layer == 0
+            ? deviceCentralModel
+            : deviceModelFor(widget.node.productCode,
+                isLeaf: widget.node.isLeaf));
     if (spec?.slug == _spec?.slug && (_future != null || spec == null)) {
       return;
     }

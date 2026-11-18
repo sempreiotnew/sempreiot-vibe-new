@@ -31,6 +31,7 @@ static const char *TAG = "siot_survey";
 
 static uint8_t s_layer = 0xFF;
 static bool    s_online;
+static int8_t  s_path = (int8_t)SAFR_NA_RSSI; /* PATH of a parent offer: SAFR_NA_RSSI = not known */
 static bool    s_ready;
 
 /* One probe at a time: the rx callback fills these, the timer reports.
@@ -207,7 +208,12 @@ static void on_probe(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_
                                                 and keeps probing every wake, never binds (spec §12.3) */
     }
 
-    const uint8_t offer[3] = {purpose, (uint8_t)s_rx_rssi, layer};
+    /* PATH (v3.13, §7.15): the weakest link between the root and this unit —
+     * a battery unit binds by the path through a parent, as a mains unit
+     * does, never by the one hop alone. Not known: no path yet, or a parent
+     * that says nothing we believe. */
+    const uint8_t offer[4] = {purpose, (uint8_t)s_rx_rssi, layer,
+                              (uint8_t)(layer == 0xFF ? (int8_t)SAFR_NA_RSSI : s_path)};
     char src[SIOT_MAC_STR_LEN];
     ESP_LOGI(TAG, "probe msg_id %u (purpose %u%s) from %s at %d dBm -> offer", f->msg_id, purpose,
              dup ? ", repeat" : "", siot_mac_to_str(f->src_mac, src), s_rx_rssi);
@@ -326,3 +332,4 @@ esp_err_t siot_survey_init(uint8_t layer)
 
 void siot_survey_set_layer(uint8_t layer) { s_layer = layer; }
 void siot_survey_set_online(bool online) { s_online = online; }
+void siot_survey_set_path(int8_t path_dbm) { s_path = path_dbm; }

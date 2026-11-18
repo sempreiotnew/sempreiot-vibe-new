@@ -1,19 +1,19 @@
 import 'dart:typed_data';
 
-import 'package:drift/drift.dart' show Value, driftRuntimeOptions;
+import 'package:drift/drift.dart' show driftRuntimeOptions;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sempreiot_central_app/core/database/app_database.dart';
 import 'package:sempreiot_central_app/features/central/application/central_mirror_codec.dart';
 import 'package:sempreiot_central_app/features/central/application/safr_ingest_provider.dart';
-import 'package:sempreiot_central_app/features/central/application/supervision_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/topology_provider.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_encoder.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_frame.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
 
 /// Protocol v3.6 (2026-10-26): the downlink loss a node counts on the board's
-/// heartbeats (§7.3 DL_HEARD) and what the central does with it (§9.4).
+/// heartbeats (§7.3 DL_HEARD) — a reading the central keeps and shows; the
+/// "enlace fraco" flag and its trouble left the app on 2026-11-18.
 void main() {
   driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
 
@@ -89,139 +89,26 @@ void main() {
     });
   });
 
-  group('supervision: the degraded-link trouble (§9.4)', () {
-    late AppDatabase db;
-    SupervisionNotifier? s;
-
-    Future<void> device({int? dlHeard, int degraded = 0}) => db
-        .into(db.meshDevices)
-        .insertOnConflictUpdate(MeshDevicesCompanion.insert(
-          mac: unit,
-          role: Value(SafrNodeRole.node.wire),
-          layer: const Value(2),
-          firstSeenAt: t0.subtract(const Duration(days: 1)),
-          lastSeenAt: t0,
-          lastRssi: const Value(-90),
-          dlHeard: Value(dlHeard),
-          linkDegraded: Value(degraded),
-        ));
-
-    Future<List<String>> kinds() async => [
-          for (final r in await db.select(db.deviceEvents).get())
-            (r.detailJson.contains('link_degraded')
-                ? 'link_degraded'
-                : r.detailJson.contains('link_restored')
-                    ? 'link_restored'
-                    : 'other'),
-        ];
-
-    Future<int> flag() async =>
-        (await (db.select(db.meshDevices)..where((t) => t.mac.equals(unit)))
-                .getSingle())
-            .linkDegraded;
-
-    setUp(() {
-      db = AppDatabase.forTesting(NativeDatabase.memory());
-    });
-    tearDown(() async {
-      s?.dispose();
-      s = null;
-      await db.close();
-    });
-
-    test('nothing reported: nothing raised', () async {
-      await device();
-      s = SupervisionNotifier(db, clock: () => t0);
-      await s!.evaluate();
-      expect(await kinds(), isEmpty);
-      expect(await flag(), 0);
-    });
-
-    test('7 of 8 is jitter, 6 of 8 is the trouble, 8 of 8 restores it',
-        () async {
-      await device(dlHeard: 7);
-      s = SupervisionNotifier(db, clock: () => t0);
-      await s!.evaluate();
-      expect(await kinds(), isEmpty);
-
-      await device(dlHeard: 6);
-      await s!.evaluate();
-      expect(await kinds(), ['link_degraded']);
-      expect(await flag(), 1);
-      expect(s!.state.single.online, isTrue,
-          reason: 'online is the silence rule');
-
-      // Still degraded at 7: the trouble is not raised twice, nor restored.
-      await device(dlHeard: 7, degraded: 1);
-      await s!.evaluate();
-      expect(await kinds(), ['link_degraded']);
-
-      await device(dlHeard: 8, degraded: 1);
-      await s!.evaluate();
-      expect(await kinds(), ['link_degraded', 'link_restored']);
-      expect(await flag(), 0);
-    });
-
-    test('a window that restarted (no count) keeps the state as it is',
-        () async {
-      await device(dlHeard: null, degraded: 1);
-      s = SupervisionNotifier(db, clock: () => t0);
-      await s!.evaluate();
-      expect(await kinds(), isEmpty);
-      expect(await flag(), 1);
-    });
-  });
-
-  group('TopologyNode', () {
-    TopologyNode node({
-      SafrNodeRole role = SafrNodeRole.node,
-      int layer = 2,
-      int? rssi,
-      int? dlHeard,
-      bool degraded = false,
-    }) =>
+  test('the mirror carries the count', () {
+    final json = encodeMirrorState(
+      seq: 1,
+      at: t0,
+      link: 'connected',
+      nodes: [
         TopologyNode(
           mac: unit,
-          role: role,
-          layer: layer,
+          role: SafrNodeRole.node,
+          layer: 2,
           parentMac: parent,
-          rssi: rssi,
+          rssi: -88,
           batteryPct: null,
           online: true,
           lastSeenAt: t0,
           alarmLatched: false,
-          dlHeard: dlHeard,
-          linkDegraded: degraded,
-        );
-
-    test('weak link: a powered unit below −85 dBm, the root\'s hop too', () {
-      expect(node(rssi: -84).weakPoweredLink, isFalse);
-      expect(node(rssi: -86).weakPoweredLink, isTrue);
-      expect(node(rssi: -86, layer: 1).weakPoweredLink, isTrue);
-      expect(node(rssi: -86, role: SafrNodeRole.leaf).weakPoweredLink, isFalse,
-          reason: 'a leaf has its own walk-test flag');
-      expect(node(rssi: null).weakPoweredLink, isFalse);
-    });
-
-    test('lost = expected − heard; attention = weak or degraded', () {
-      expect(node().dlLost, isNull);
-      expect(node(dlHeard: 5).dlLost, 3);
-      expect(node(rssi: -70).linkAttention, isFalse);
-      expect(node(rssi: -70, degraded: true).linkAttention, isTrue);
-      expect(node(rssi: -90).linkAttention, isTrue);
-    });
-
-    test('the mirror carries the count and the trouble', () {
-      final json = encodeMirrorState(
-        seq: 1,
-        at: t0,
-        link: 'connected',
-        nodes: [node(rssi: -88, dlHeard: 4, degraded: true)],
-      );
-      final back = decodeMirrorState(json)!.nodes.single;
-      expect(back.dlHeard, 4);
-      expect(back.linkDegraded, isTrue);
-      expect(back.linkAttention, isTrue);
-    });
+          dlHeard: 4,
+        ),
+      ],
+    );
+    expect(decodeMirrorState(json)!.nodes.single.dlHeard, 4);
   });
 }

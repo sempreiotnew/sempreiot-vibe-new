@@ -205,7 +205,9 @@ bool siot_ota_control_decode(const uint8_t *p, size_t len, siot_ota_control_t *c
     case SIOT_OTA_FILTER_PRODUCT:
         if (off + 2 > len) return false;
         c->product = siot_get_u16(&p[off]); off += 2;
-        if (c->product == SAFR_PRODUCT_UNKNOWN || (c->product >> 8) != c->family) return false;
+        /* Any product with any image: a product may run the other family's
+         * image (reference §2.1), the board matches units by their role. */
+        if (c->product == SAFR_PRODUCT_UNKNOWN) return false;
         break;
     case SIOT_OTA_FILTER_ZONE:
         if (!get_str(p, len, &off, c->zone, SIOT_OTA_ZONE_MAX) || c->zone[0] == '\0') return false;

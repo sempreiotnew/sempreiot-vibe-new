@@ -38,13 +38,20 @@ class FakeUnit {
     this.online = true,
     this.layer = 2,
     this.parent,
+    bool? leaf,
     List<(FakePlay, SafrOtaReason)>? plays,
-  }) : plays = plays ?? [(FakePlay.update, SafrOtaReason.none)];
+  })  : leaf = leaf ?? (product >> 8) == 0x03,
+        plays = plays ?? [(FakePlay.update, SafrOtaReason.none)];
 
   final String mac;
   final String name;
   final String zone;
   final int product;
+
+  /// It lives as a battery unit (the leaf image), whatever its product: by
+  /// default what the product natively is. The board and the tablet go by
+  /// this, never by the product's family byte (protocol §13.6).
+  final bool leaf;
   String version;
   bool online;
   int layer;
@@ -226,7 +233,11 @@ class FakeRollout {
       SafrNameAnnouncePayload.build(
         name: u.name,
         zone: u.zone,
-        role: u.layer <= 1 ? SafrNodeRole.root : SafrNodeRole.node,
+        role: u.leaf
+            ? SafrNodeRole.leaf
+            : u.layer <= 1
+                ? SafrNodeRole.root
+                : SafrNodeRole.node,
         productCode: u.product,
         hwRev: 1,
         fwVersion: u.version,
@@ -245,6 +256,9 @@ class FakeRollout {
         0x01, 0xFF, 0x7F, 0xFF, 0xC4,
         ...parent, u.layer,
       ]),
+      // A battery unit asks for an ACK on every heartbeat, a mains unit
+      // never does: that is how the tablet tells them apart (§12.4).
+      ackRequired: u.leaf,
     );
   }
 
@@ -421,7 +435,7 @@ class FakeRollout {
 
   bool _passes(FakeUnit u, SafrOtaControlArgs c) {
     if (!u.online) return false;
-    if (u.product == 0 || (u.product >> 8) != c.family) return false;
+    if (u.product == 0 || (u.leaf ? 0x03 : 0x02) != c.family) return false;
     return switch (c.filter.kind) {
       SafrOtaFilterKind.all => true,
       SafrOtaFilterKind.product => u.product == c.filter.product,

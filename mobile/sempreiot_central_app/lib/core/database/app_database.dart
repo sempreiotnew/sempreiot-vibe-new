@@ -50,9 +50,6 @@ class MeshDevices extends Table {
   // v3.6 DL_HEARD (spec §7.3): board heartbeats the unit heard in the last
   // 120 s, 0..8; null = not reported (leaf, older firmware, window restarted).
   IntColumn get dlHeard => integer().nullable()();
-  // 0 = link ok, 1 = "qualidade do enlace degradada" raised (spec §9.4):
-  // persisted so the trouble is not raised again on every restart.
-  IntColumn get linkDegraded => integer().withDefault(const Constant(0))();
   DateTimeColumn get firstSeenAt => dateTime()();
   DateTimeColumn get lastSeenAt => dateTime()();
   DateTimeColumn get lastHeartbeatAt => dateTime().nullable()();
@@ -232,7 +229,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 15;
+  int get schemaVersion => 16;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -305,14 +302,12 @@ class AppDatabase extends _$AppDatabase {
             await m.createTable(systemTests);
           }
           if (from < 14) {
-            // SAFR v3.6 downlink loss (protocol §7.3 DL_HEARD, §9.4). Added
+            // SAFR v3.6 downlink count (protocol §7.3 DL_HEARD). Added
             // only when absent: a file created by this version and taken
-            // back to an older one (the migration tests) already has them.
+            // back to an older one (the migration tests) already has it.
+            // (v14 also added link_degraded; v16 drops it.)
             if (!await _hasColumn('mesh_devices', 'dl_heard')) {
               await m.addColumn(meshDevices, meshDevices.dlHeard);
-            }
-            if (!await _hasColumn('mesh_devices', 'link_degraded')) {
-              await m.addColumn(meshDevices, meshDevices.linkDegraded);
             }
           }
           if (from < 15) {
@@ -335,6 +330,15 @@ class AppDatabase extends _$AppDatabase {
             }
             if (await _hasColumn('mesh_devices', 'zone')) {
               await customStatement('ALTER TABLE mesh_devices DROP COLUMN zone');
+            }
+          }
+          if (from < 16) {
+            // The "enlace fraco" flag and its degraded-link trouble left
+            // the app (2026-11-18): the network heals itself (best path,
+            // protocol 3.12 / 3.13).
+            if (await _hasColumn('mesh_devices', 'link_degraded')) {
+              await customStatement(
+                  'ALTER TABLE mesh_devices DROP COLUMN link_degraded');
             }
           }
         },

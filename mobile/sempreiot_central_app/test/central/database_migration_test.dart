@@ -66,7 +66,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 15);
+    expect(version, 16);
   });
 
   test('schema v10 -> v11 adds the firmware update history, rows kept',
@@ -117,7 +117,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 15);
+    expect(version, 16);
   });
 
   test('schema v11 -> v12 adds where the image came from, rows kept', () async {
@@ -162,7 +162,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 15);
+    expect(version, 16);
   });
 
   test('schema v12 -> v13 adds the system tests, rows kept', () async {
@@ -210,10 +210,10 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 15);
+    expect(version, 16);
   });
 
-  test('schema v13 -> v14 adds the downlink-loss columns, rows kept',
+  test('schema v13 -> v14 adds the downlink count column, rows kept',
       () async {
     final dir = await Directory.systemTemp.createTemp('siot_migr_');
     addTearDown(() => dir.delete(recursive: true));
@@ -229,7 +229,6 @@ void main() {
 
     final upgraded = AppDatabase.forTesting(NativeDatabase(file, setup: (raw) {
       raw.execute('ALTER TABLE mesh_devices DROP COLUMN dl_heard');
-      raw.execute('ALTER TABLE mesh_devices DROP COLUMN link_degraded');
       raw.execute('PRAGMA user_version = 13');
     }));
     addTearDown(upgraded.close);
@@ -238,12 +237,11 @@ void main() {
           ..where((t) => t.mac.equals(_unitA)))
         .getSingle();
     expect(r.dlHeard, isNull);
-    expect(r.linkDegraded, 0);
     final version = await upgraded
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 15);
+    expect(version, 16);
   });
 
   test('schema v14 -> v15 adds the label ids and tables, drops the zone string',
@@ -289,6 +287,44 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 15);
+    expect(version, 16);
+  });
+
+  test('schema v15 -> v16 drops the degraded-link flag, rows kept', () async {
+    final dir = await Directory.systemTemp.createTemp('siot_migr_');
+    addTearDown(() => dir.delete(recursive: true));
+    final file = File('${dir.path}/sempreiot.sqlite');
+
+    final fresh = AppDatabase.forTesting(NativeDatabase(file));
+    await fresh.into(fresh.meshDevices).insert(MeshDevicesCompanion.insert(
+          mac: _unitA,
+          firstSeenAt: DateTime.utc(2026, 10, 1),
+          lastSeenAt: DateTime.utc(2026, 10, 2),
+          dlHeard: const Value(5),
+        ));
+    await fresh.close();
+
+    final upgraded = AppDatabase.forTesting(NativeDatabase(file, setup: (raw) {
+      raw.execute('ALTER TABLE mesh_devices '
+          'ADD COLUMN link_degraded INTEGER NOT NULL DEFAULT 0');
+      raw.execute('UPDATE mesh_devices SET link_degraded = 1');
+      raw.execute('PRAGMA user_version = 15');
+    }));
+    addTearDown(upgraded.close);
+
+    final r = await (upgraded.select(upgraded.meshDevices)
+          ..where((t) => t.mac.equals(_unitA)))
+        .getSingle();
+    expect(r.dlHeard, 5);
+    final columns = await upgraded
+        .customSelect('PRAGMA table_info(mesh_devices)')
+        .map((row) => row.read<String>('name'))
+        .get();
+    expect(columns, isNot(contains('link_degraded')));
+    final version = await upgraded
+        .customSelect('PRAGMA user_version')
+        .map((row) => row.read<int>('user_version'))
+        .getSingle();
+    expect(version, 16);
   });
 }

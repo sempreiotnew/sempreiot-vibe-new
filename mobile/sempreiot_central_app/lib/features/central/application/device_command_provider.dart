@@ -180,6 +180,13 @@ class BroadcastTally {
       ].join(' · ');
 }
 
+/// A TESTAR is still on the map: on its way, or its ticks (✓✓, the red
+/// mark) not gone yet. "Testar tudo" waits for it — a unit still holding
+/// the mark of the last test is not counted by a new one, which then
+/// started with fewer units, or none (2026-11-18).
+bool testMarksUp(Map<String, DeviceCommandStatus> commands) =>
+    commands.values.any((s) => s.kind == DeviceCommandKind.test);
+
 /// How long a status stays on the map once it reached a step.
 const _lingerAfter = {
   DeviceCommandStep.sending: Duration(seconds: 20),

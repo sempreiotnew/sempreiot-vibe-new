@@ -24,7 +24,6 @@ void main() {
         mac: mac,
         role: 1,
         layer: 1,
-        linkDegraded: 0,
         firstSeenAt: t0,
         lastSeenAt: t0,
         lastBootCtr: 0,

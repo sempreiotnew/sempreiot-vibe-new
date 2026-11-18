@@ -42,6 +42,8 @@ class RemoteSystemTest {
       'Só um Administrador desta central pode testar pela internet.';
   static const refusedRunning = 'Já há um teste em andamento.';
   static const refusedNoLink = 'A central não está ligada à placa.';
+  static const refusedSettling =
+      'Aguarde: as confirmações do último teste ainda estão no mapa.';
   static const refusedNothingRuns = 'Nenhum teste em andamento.';
   static const refusedNotYours =
       'Só a central, ou quem iniciou o teste, pode cancelá-lo.';
@@ -200,6 +202,7 @@ class RemoteSystemTest {
     final running = _ref.read(systemTestControllerProvider).running;
     if (running != null) return _runningWords(running);
     if (!_ref.read(boardLinkUpProvider)) return refusedNoLink;
+    if (testMarksUp(_ref.read(deviceCommandProvider))) return refusedSettling;
     // start() refuses when a run is current or another broadcast is on its
     // way; its result is the board's answer, which the record tells.
     await tests.start(by: by);

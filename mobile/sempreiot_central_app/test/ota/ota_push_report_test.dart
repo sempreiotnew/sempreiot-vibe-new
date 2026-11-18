@@ -165,13 +165,25 @@ void main() {
   });
 
   group('units', () {
-    test('family: the product says it; otherwise layer and role', () {
+    test('family: how the unit lives, never its product\'s native family', () {
       expect(
           unitFamily(unit('A', productCode: 0x0100)), SafrProductFamily.board);
       expect(
           unitFamily(unit('A', productCode: 0x0201)), SafrProductFamily.node);
       expect(
-          unitFamily(unit('A', productCode: 0x0301)), SafrProductFamily.leaf);
+          unitFamily(
+              unit('A', productCode: 0x0301, role: SafrNodeRole.leaf)),
+          SafrProductFamily.leaf);
+      // A battery product on the node image is a mains unit, and the other
+      // way round.
+      expect(
+          unitFamily(
+              unit('A', productCode: 0x0301, role: SafrNodeRole.node)),
+          SafrProductFamily.node);
+      expect(
+          unitFamily(
+              unit('A', productCode: 0x0202, role: SafrNodeRole.leaf)),
+          SafrProductFamily.leaf);
       expect(unitFamily(unit('A', layer: 0, role: SafrNodeRole.root)),
           SafrProductFamily.board);
       expect(unitFamily(unit('A', layer: 1, role: SafrNodeRole.root)),
@@ -200,7 +212,11 @@ void main() {
       // Another family.
       expect(
           pendingFirmwareFor(
-              unit('A', productCode: 0x0301, fw: '0.1.0-dev'), stored),
+              unit('A',
+                  productCode: 0x0301,
+                  role: SafrNodeRole.leaf,
+                  fw: '0.1.0-dev'),
+              stored),
           isNull);
       expect(
           pendingFirmwareFor(

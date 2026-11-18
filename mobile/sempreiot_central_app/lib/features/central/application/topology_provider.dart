@@ -40,7 +40,6 @@ class TopologyNode {
     this.heard = true,
     this.awaitingSignal = false,
     this.dlHeard,
-    this.linkDegraded = false,
     this.boardRssi,
     this.suggestedRoot = false,
   });
@@ -114,24 +113,7 @@ class TopologyNode {
   /// firmware, or not 120 s on this link yet).
   final int? dlHeard;
 
-  /// The §9.4 trouble "qualidade do enlace degradada" is up for this unit
-  /// (supervision_provider.dart: ≤ 6 of 8 heard; restored at 8 of 8).
-  final bool linkDegraded;
-
   static const dlHeardExpected = SafrHeartbeatPayload.dlHeardExpected;
-
-  /// Board heartbeats lost in the last 120 s; null when nothing is reported.
-  int? get dlLost => dlHeard == null ? null : dlHeardExpected - dlHeard!;
-
-  /// A powered unit whose link to its parent reads below the bind threshold
-  /// (−85 dBm, protocol §9.4 / §12.3): "enlace fraco" — put a node between
-  /// it and its parent. The root's hop to the board counts too.
-  bool get weakPoweredLink =>
-      !isLeaf && layer >= 1 && rssi != null && rssi! < leafWeakLinkDbm;
-
-  /// Something about this unit's link to tell the installer: weak, or losing
-  /// the board's heartbeats.
-  bool get linkAttention => weakPoweredLink || linkDegraded;
 
   /// Catalogue entry (or unknown-product placeholder); null = not reported.
   SafrProduct? get product => SafrProduct.fromCode(productCode);
@@ -184,10 +166,8 @@ class TopologyNode {
     return left > 0 ? left : null;
   }
 
-  /// Walk-test flags (spec §12.7): fewer than two parents in reach, or the
-  /// bound link weaker than −85 dBm.
+  /// Walk-test flag (spec §12.7): fewer than two parents in reach.
   bool get singleParent => isLeaf && parentCandidates.length < 2;
-  bool get weakLink => isLeaf && (rssi ?? 0) < leafWeakLinkDbm;
 
   /// Unheard for a long time (beyond the offline threshold). The node stays
   /// on the map, dimmed, until the operator clears the registry by hand.
@@ -203,7 +183,6 @@ const topologyStaleAfter = Duration(minutes: 10);
 /// within the last 3 s means it is still up (walk test, verdict).
 const leafHeartbeatInterval = Duration(seconds: 60);
 const leafAwakeWindow = Duration(seconds: 3);
-const leafWeakLinkDbm = -85;
 
 /// "zona #3" for an id whose name this tablet does not hold yet; null for
 /// none (0 / never reported).
@@ -298,7 +277,6 @@ final topologyProvider = Provider<List<TopologyNode>>((ref) {
         updating: linkUp && updatingUnits.updatingAt(s.device.mac, now, grace),
         heard: linkUp && s.heard,
         dlHeard: s.device.dlHeard,
-        linkDegraded: s.device.linkDegraded == 1,
         boardRssi: boardSignal[s.device.mac],
       ),
   ]..sort((a, b) {

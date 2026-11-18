@@ -826,24 +826,26 @@ class _MeshMapState extends ConsumerState<MeshMap>
                             child: Stack(
                               children: [
                                 Positioned.fill(
-                                  child: CustomPaint(
-                                    painter: _MeshGraphPainter(
-                                      nodes: nodes,
-                                      layout: layout,
-                                      dots: _dots,
-                                      repaint: _ticker,
-                                      isDark: context.isDark,
-                                      boardMac: boardMac,
-                                      roots: election.roots,
-                                      candidates: election.electing
-                                          ? election.candidates
-                                          : const {},
-                                      otaLink: activity != null,
-                                      faded: _faded(nodes),
-                                      waveStartedAt: waveStartedAt,
-                                      inAlarm: alarmLed.inAlarm,
-                                      transform: _transform,
-                                      dbmShown: labels?.dbm ?? const {},
+                                  child: RepaintBoundary(
+                                    child: CustomPaint(
+                                      painter: _MeshGraphPainter(
+                                        nodes: nodes,
+                                        layout: layout,
+                                        dots: _dots,
+                                        repaint: _ticker,
+                                        isDark: context.isDark,
+                                        boardMac: boardMac,
+                                        roots: election.roots,
+                                        candidates: election.electing
+                                            ? election.candidates
+                                            : const {},
+                                        otaLink: activity != null,
+                                        faded: _faded(nodes),
+                                        waveStartedAt: waveStartedAt,
+                                        inAlarm: alarmLed.inAlarm,
+                                        transform: _transform,
+                                        dbmShown: labels?.dbm ?? const {},
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -1255,8 +1257,7 @@ class _MeshGraphPainter extends CustomPainter {
       final ghost = (isDark ? Colors.white : Colors.black)
           .withValues(alpha: n.stale ? 0.10 : 0.22);
 
-      final path =
-          layout.radial ? _straightPath(from, to) : _linkPath(from, to);
+      final path = _lineBetween(from, to);
       // Outside the update that runs: the link fades with its unit.
       final fade = faded.contains(n.mac);
       if (fade) {
@@ -1265,7 +1266,7 @@ class _MeshGraphPainter extends CustomPainter {
       }
       if (candidate) {
         // Contending for root: attached, but not yet the bridge.
-        _drawDashedPath(
+        _drawDashed(
           canvas,
           path,
           Paint()
@@ -1276,7 +1277,7 @@ class _MeshGraphPainter extends CustomPainter {
       } else if (!n.online) {
         // Not heard: a ghost of where it hung, so the picture keeps its
         // shape — no colour to read, no dBm, nothing travels on it.
-        _drawDashedPath(
+        _drawDashed(
           canvas,
           path,
           Paint()
@@ -1287,7 +1288,7 @@ class _MeshGraphPainter extends CustomPainter {
       } else if (target.presumed) {
         // Its registry parent is dead and it is still heard: linked to the
         // nearest live unit above it until it says who its parent is now.
-        _drawDashedPath(
+        _drawDashed(
           canvas,
           path,
           Paint()
@@ -1303,7 +1304,8 @@ class _MeshGraphPainter extends CustomPainter {
           from,
           [signal.withValues(alpha: 0.85), signal.withValues(alpha: 0.28)],
         );
-        canvas.drawPath(
+        _stroke(
+          canvas,
           path,
           Paint()
             ..style = PaintingStyle.stroke
@@ -1312,7 +1314,8 @@ class _MeshGraphPainter extends CustomPainter {
             ..color = signal.withValues(alpha: 0.08)
             ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.5),
         );
-        canvas.drawPath(
+        _stroke(
+          canvas,
           path,
           Paint()
             ..style = PaintingStyle.stroke
@@ -1321,7 +1324,8 @@ class _MeshGraphPainter extends CustomPainter {
         );
       } else {
         // Glow pass
-        canvas.drawPath(
+        _stroke(
+          canvas,
           path,
           Paint()
             ..style = PaintingStyle.stroke
@@ -1329,7 +1333,8 @@ class _MeshGraphPainter extends CustomPainter {
             ..color = signal.withValues(alpha: 0.10)
             ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
         );
-        canvas.drawPath(
+        _stroke(
+          canvas,
           path,
           Paint()
             ..style = PaintingStyle.stroke
@@ -1350,14 +1355,8 @@ class _MeshGraphPainter extends CustomPainter {
           !target.presumed &&
           n.rssi != null &&
           (!layout.radial || (_labelRoom && dbmShown.contains(n.mac)))) {
-        // A weak link (protocol §9.4: below −85 dBm or losing the board's
-        // heartbeats) carries the warning icon beside its dBm pill —
-        // outside it, in the warning yellow, never the link's colour — the
-        // same rule as the ENLACE FRACO chip; the advice ("instale um nó
-        // entre …") is on the popover and Dispositivo.
         _linkLabel(canvas, path, '${n.rssi} dBm',
-            candidate ? AppColors.warning : signal,
-            icon: n.linkAttention && !candidate ? weakLinkMarkerIcon : null);
+            candidate ? AppColors.warning : signal);
       }
       if (fade) canvas.restore();
     }
@@ -1366,8 +1365,9 @@ class _MeshGraphPainter extends CustomPainter {
       final from = layout.positions[_tabletKey];
       final to = layout.positions[_centralKey];
       if (from != null && to != null) {
-        canvas.drawPath(
-          _linkPath(from, to),
+        _stroke(
+          canvas,
+          _lineBetween(from, to),
           Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1.6
@@ -1457,15 +1457,8 @@ class _MeshGraphPainter extends CustomPainter {
   }
 
   /// Paints the RSSI value on a pill at the middle of a link.
-  /// The dBm pill at the middle of a link; with [icon], the warning glyph
-  /// sits before the text in the same colour (a weak link, protocol §9.4).
-  void _linkLabel(Canvas canvas, Path path, String text, Color color,
-      {IconData? icon}) {
-    final metrics = path.computeMetrics().toList();
-    if (metrics.isEmpty) return;
-    final m = metrics.first;
-    final pos = m.getTangentForOffset(m.length * 0.5)?.position;
-    if (pos == null) return;
+  void _linkLabel(Canvas canvas, _Polyline path, String text, Color color) {
+    final pos = path.at(path.length * 0.5).position;
 
     final tp = TextPainter(
       text: TextSpan(
@@ -1499,53 +1492,59 @@ class _MeshGraphPainter extends CustomPainter {
         ..color = color.withValues(alpha: 0.35),
     );
     tp.paint(canvas, pos - Offset(tp.width / 2, tp.height / 2));
-
-    // The marker, side by side with the pill on its left, in the warning
-    // yellow (the pill keeps the link's colour): a weak link is a thing to
-    // see at a glance, not a shade of the line.
-    if (icon != null) {
-      final ip = TextPainter(
-        text: TextSpan(
-          text: String.fromCharCode(icon.codePoint),
-          style: TextStyle(
-            color: AppColors.warning,
-            fontSize: 13,
-            fontFamily: icon.fontFamily,
-            package: icon.fontPackage,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      ip.paint(canvas, Offset(rect.left - ip.width - 3, pos.dy - ip.height / 2));
-    }
   }
 
-  void _drawDashedPath(Canvas canvas, Path path, Paint paint) {
+  /// A link, drawn as a polyline. Never a `Path`: on the web (CanvasKit,
+  /// Flutter 3.41.7) every `drawPath` / `computeMetrics` leaks native
+  /// memory, and this painter repaints every frame — the page froze after a
+  /// few minutes with `Aborted()`.
+  void _stroke(Canvas canvas, _Polyline line, Paint paint) {
+    canvas.drawPoints(
+      ui.PointMode.polygon,
+      line.points,
+      paint
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+  }
+
+  void _drawDashed(Canvas canvas, _Polyline line, Paint paint) {
     const dash = 5.0, gap = 4.0;
-    for (final metric in path.computeMetrics()) {
-      var covered = 0.0;
-      while (covered < metric.length) {
-        final end = (covered + dash).clamp(0.0, metric.length);
-        canvas.drawPath(metric.extractPath(covered, end), paint);
-        covered = end + gap;
-      }
+    final ends = <Offset>[];
+    for (var covered = 0.0; covered < line.length; covered += dash + gap) {
+      ends
+        ..add(line.at(covered).position)
+        ..add(line.at(math.min(covered + dash, line.length)).position);
     }
+    canvas.drawPoints(ui.PointMode.lines, ends, paint);
   }
 
-  /// The radial picture's link: straight, hub to cluster to unit.
-  Path _straightPath(Offset from, Offset to) => Path()
-    ..moveTo(from.dx, from.dy)
-    ..lineTo(to.dx, to.dy);
-
-  Path _linkPath(Offset from, Offset to) {
-    // Gentle vertical S-curve: fans siblings out from their shared parent.
+  /// The line between two places of this picture: every link is drawn
+  /// along it and every packet travels along it — one function, so a
+  /// packet is never off its line (2026-11-18: on the radial picture the
+  /// packets still followed the tree's curve, across the empty space
+  /// beside the straight link).
+  _Polyline _lineBetween(Offset from, Offset to) {
+    // The radial picture's link: straight, hub to cluster to unit.
+    if (layout.radial) return _Polyline([from, to]);
+    // The tree's: a gentle vertical S-curve that fans siblings out from
+    // their shared parent — a cubic, sampled.
     final mid = Offset.lerp(from, to, 0.5)!;
     final bend = (to.dx - from.dx).abs() * 0.001 + 0.22;
     final c1 = Offset(from.dx, from.dy - (from.dy - mid.dy) * bend * 2);
     final c2 = Offset(to.dx, to.dy + (mid.dy - to.dy) * bend * 2);
-    return Path()
-      ..moveTo(from.dx, from.dy)
-      ..cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, to.dx, to.dy);
+    const steps = 24;
+    return _Polyline([
+      for (var i = 0; i <= steps; i++) _cubic(from, c1, c2, to, i / steps),
+    ]);
+  }
+
+  static Offset _cubic(Offset a, Offset b, Offset c, Offset d, double t) {
+    final u = 1 - t;
+    return a * (u * u * u) +
+        b * (3 * u * u * t) +
+        c * (3 * u * t * t) +
+        d * (t * t * t);
   }
 
   /// One packet: 12 × 7.5 body with a lighter header band and two data
@@ -1584,23 +1583,21 @@ class _MeshGraphPainter extends CustomPainter {
 
   /// Position and heading along the multi-hop path (same curve as the link).
   Tangent? _tangentAlong(List<String> keys, double progress) {
-    final points = [
-      for (final key in keys)
-        if (layout.positions[key] != null) layout.positions[key]!,
-    ];
+    // A hop with no place on this picture: nothing is drawn — skipping it
+    // would send the packet straight across, where no link is.
+    final points = <Offset>[];
+    for (final key in keys) {
+      final at = layout.positions[key];
+      if (at == null) return null;
+      points.add(at);
+    }
     if (points.length < 2) return null;
     final segments = points.length - 1;
     final t = (progress * segments).clamp(0.0, segments.toDouble());
     final seg = t.floor().clamp(0, segments - 1);
     final local = t - seg;
-    final metrics =
-        _linkPath(points[seg], points[seg + 1]).computeMetrics().toList();
-    if (metrics.isEmpty) return null;
-    final m = metrics.first;
-    final tan = m.getTangentForOffset(m.length * local);
-    if (tan == null) return null;
-    // Tangent.angle is measured counter-clockwise; the canvas rotates clockwise.
-    return Tangent.fromAngle(tan.position, -tan.angle);
+    final line = _lineBetween(points[seg], points[seg + 1]);
+    return line.at(line.length * local);
   }
 
   /// Rings spreading from a unit, like a drop on water: three, each a
@@ -1663,6 +1660,39 @@ class _MeshGraphPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_MeshGraphPainter old) => true;
+}
+
+/// A line as points, measured: where a distance along it falls and which
+/// way it heads there. What `Path.computeMetrics` gave, without a `Path`
+/// (see `_MeshGraphPainter._stroke`).
+class _Polyline {
+  _Polyline(this.points) {
+    var sum = 0.0;
+    for (var i = 1; i < points.length; i++) {
+      sum += (points[i] - points[i - 1]).distance;
+      _upTo.add(sum);
+    }
+  }
+
+  final List<Offset> points;
+
+  /// `_upTo[i]`: the length from the start to `points[i]`.
+  final _upTo = <double>[0];
+
+  double get length => _upTo.last;
+
+  Tangent at(double distance) {
+    final d = distance.clamp(0.0, length);
+    var i = 1;
+    while (i < points.length - 1 && _upTo[i] < d) {
+      i++;
+    }
+    final a = points[i - 1], b = points[i];
+    final span = _upTo[i] - _upTo[i - 1];
+    if (span <= 0) return Tangent(a, const Offset(1, 0));
+    return Tangent(
+        Offset.lerp(a, b, (d - _upTo[i - 1]) / span)!, (b - a) / span);
+  }
 }
 
 // ── Arena-free tap ───────────────────────────────────────────────────────────
@@ -1886,11 +1916,12 @@ class _MeshTree {
 /// little bigger than a detector.
 double radialUnitSize(TopologyNode n) => n.isLeaf ? 30 : 36;
 
-/// The glow round it, in the unit's status colour.
+/// The room a unit takes on the radial map (its tap area; names and
+/// pills keep clear of it). Nothing is drawn at this size.
 double radialHaloDiameter(TopologyNode n) => radialUnitSize(n) * 1.6;
 
-/// Under this many pixels on screen a model cannot be read: the halo
-/// keeps a bright core instead, until the zoom brings the model back.
+/// Under this many pixels on screen a model cannot be read: a dot in the
+/// status colour stands for it, until the zoom brings the model back.
 const radialModelFrom = 14.0;
 
 /// The name's distance from the halo's edge; the firmware pill's place:
@@ -2075,79 +2106,101 @@ class _MeshLayout {
     // central sits beside it. Else the central is the hub.
     final hub = hubChildren.length == 1 ? hubChildren.first.mac : _centralKey;
 
-    // Bottom-up: the ring a unit's children sit on, and the circle that
-    // holds its whole subtree. On the ring, side by side: one slot
-    // ([slot]) kept free for the link from its own parent — the central's
-    // chip, for the hub — then the children's circles.
-    final ring = <String, double>{};
+    // Bottom-up: where a unit's children go round it, and the circle
+    // that holds its whole subtree. That circle is NOT centred on the
+    // unit: a cluster faces away from the link it hangs on, so its
+    // circle sits [off] further out on that axis. (Centred on the unit,
+    // 2026-10-15, every level of a chain made the circle half as big
+    // again and the links near the hub several times longer than the
+    // ones far from it — the first cut's "huge space", 2026-11-18.)
+    // Round the unit, side by side: one slot ([slot]) kept free for the
+    // link from its own parent — the central's chip, for the hub — then
+    // the children's circles, their centres at least on the ring where
+    // they all fit; a child's own place is its circle's centre brought
+    // back by that circle's [off], never nearer than [_ballMinRing].
     final circle = <String, double>{};
-    final slots = <String, double>{};
+    final off = <String, double>{};
+    final kidsOf = <String, List<String>>{};
+    final kidAngle = <String, double>{}; // from the parent's away axis
+    final kidDist = <String, double>{}; // parent ↔ child, centre to centre
     double measure(String key, double slot) {
-      final kids = tree.children[key] ?? const <TopologyNode>[];
       final own = key == _centralKey ? _ballCentralR : _ballUnitR(byMac[key]!);
-      slots[key] = slot;
-      if (kids.isEmpty) {
-        ring[key] = 0;
-        return circle[key] = own;
-      }
-      final radii = <double>[if (slot > 0) slot];
-      var widest = 0.0;
-      for (final k in kids) {
+      circle[key] = own; // seen: a loop back to it is cut
+      off[key] = 0;
+      final kids = <String>[];
+      for (final k in tree.children[key] ?? const <TopologyNode>[]) {
         if (circle.containsKey(k.mac)) continue; // the loop, cut
-        final r = measure(k.mac, _ballUnitR(k));
-        radii.add(r);
-        widest = math.max(widest, r);
+        measure(k.mac, _ballUnitR(k));
+        kids.add(k.mac);
       }
+      kidsOf[key] = kids;
+      if (kids.isEmpty) return own;
+      final radii = [if (slot > 0) slot, for (final k in kids) circle[k]!];
       final rr = _ringFor(radii);
-      ring[key] = rr;
-      return circle[key] = rr + widest;
-    }
-
-    measure(hub, hub == _centralKey ? 0 : _ballCentralR);
-
-    // Top-down: the slot opposite the direction away from the parent
-    // (where its link comes in), the children after it round the ring,
-    // each the exact turn from the one before, the spare turn split on
-    // both sides of the slot so the cluster faces away.
-    final positions = <String, Offset>{};
-    void place(String key, Offset at, double away) {
-      positions[key] = at;
-      final kids = [
-        for (final k in tree.children[key] ?? const <TopologyNode>[])
-          if (!positions.containsKey(k.mac)) k,
-      ];
-      if (kids.isEmpty) return;
-      final rr = ring[key]!;
-      final slot = slots[key]!;
-      final radii = [
-        if (slot > 0) slot,
-        for (final k in kids) circle[k.mac]!,
-      ];
       final steps = [
         for (var i = 0; i < radii.length; i++)
           _step(radii[i], radii[(i + 1) % radii.length], rr),
       ];
-      final spare = 2 * math.pi - steps.fold(0.0, (s, x) => s + x);
+      // The slot is behind (where the link comes in); the children after
+      // it round the turn, the spare turn split on both sides of the slot
+      // so the cluster faces away. No slot (the central as hub): the
+      // children centred on the away axis.
       double a;
       if (slot > 0) {
-        a = away + math.pi + steps[0] + spare / 2;
-        for (var i = 0; i < kids.length; i++) {
-          final k = kids[i];
-          place(k.mac, at + Offset(math.cos(a), math.sin(a)) * rr, a);
-          a += steps[i + 1];
-        }
+        final spare = 2 * math.pi - steps.fold(0.0, (t, x) => t + x);
+        a = math.pi + steps[0] + spare / 2;
       } else {
-        // No slot (the central as hub): the children centred on [away].
         var span = 0.0;
         for (var i = 0; i < kids.length - 1; i++) {
           span += steps[i];
         }
-        a = away - span / 2;
+        a = -span / 2;
+      }
+      final centres = <Offset>[];
+      for (var i = 0; i < kids.length; i++) {
+        final k = kids[i];
+        final d = math.max(rr, off[k]! + _ballMinRing);
+        kidAngle[k] = a;
+        kidDist[k] = d - off[k]!;
+        centres.add(Offset(math.cos(a), math.sin(a)) * d);
+        a += steps[slot > 0 ? i + 1 : i];
+      }
+      // The smallest circle centred on the away axis that holds the unit
+      // and its children's circles (the reach is convex along the axis).
+      double reach(double c) {
+        var r = c.abs() + own;
         for (var i = 0; i < kids.length; i++) {
-          final k = kids[i];
-          place(k.mac, at + Offset(math.cos(a), math.sin(a)) * rr, a);
-          a += steps[i];
+          r = math.max(
+              r, (centres[i] - Offset(c, 0)).distance + circle[kids[i]]!);
         }
+        return r;
+      }
+
+      var lo = 0.0, hi = 0.0;
+      for (final c in centres) {
+        hi = math.max(hi, c.distance);
+      }
+      for (var n = 0; n < 40; n++) {
+        final m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+        if (reach(m1) <= reach(m2)) {
+          hi = m2;
+        } else {
+          lo = m1;
+        }
+      }
+      off[key] = (lo + hi) / 2;
+      return circle[key] = reach(off[key]!);
+    }
+
+    measure(hub, hub == _centralKey ? 0 : _ballCentralR);
+
+    // Top-down: every child at the turn and the distance measured for it.
+    final positions = <String, Offset>{};
+    void place(String key, Offset at, double away) {
+      positions[key] = at;
+      for (final k in kidsOf[key] ?? const <String>[]) {
+        final a = away + kidAngle[k]!;
+        place(k, at + Offset(math.cos(a), math.sin(a)) * kidDist[k]!, a);
       }
     }
 
@@ -2599,8 +2652,7 @@ class _NodeChip extends StatelessWidget {
                           : context.textSecondary,
                       fontSize: deviceMapLabelled(node) ? 11 : 8.5,
                       fontWeight: FontWeight.w700,
-                      fontFamily:
-                          deviceMapLabelled(node) ? null : 'monospace',
+                      fontFamily: deviceMapLabelled(node) ? null : 'monospace',
                       letterSpacing: deviceMapLabelled(node) ? 0 : -0.2,
                     ),
                   ),
@@ -2629,15 +2681,13 @@ class _NodeChip extends StatelessWidget {
   }
 }
 
-/// A unit on the radial map (2026-10-15): its 3D model on a flat disc in
-/// its status colour (`radialStatusOf`: alarm red, attention amber,
-/// sleeping grey, active green — a crisp disc, no glow: the tree draws no
-/// shadow either), the LED on the model's own LED marker as everywhere
-/// else, the ROOT / CANDIDATO / ALARME badges and the moon as the model
-/// draws them, and OFFLINE as the tree's label at the top right over the
-/// faded model (no disc then). Zoomed out, under [radialModelFrom] px on
-/// screen, the disc alone with a bright core — the same disc, so nothing
-/// jumps. The name (and the firmware, as the tree's pill at the bottom
+/// A unit on the radial map (2026-10-15): its 3D model alone — no disc
+/// round it (2026-11-18) — with the LED on the model's own LED marker as
+/// everywhere else, the ROOT / CANDIDATO / ALARME badges and the moon as
+/// the model draws them, and OFFLINE as the tree's label at the top right
+/// over the faded model. Zoomed out, under [radialModelFrom] px on screen,
+/// a dot in its status colour (`radialStatusOf`: alarm red, attention
+/// amber, sleeping grey, active green) stands for the model. The name (and the firmware, as the tree's pill at the bottom
 /// right) only once the zoom leaves room and the place is clear
 /// ([nameAbove], [pillLeft]: decided for the whole map in one pass,
 /// `_radialLabels`). A tap opens the same popover as on the tree.
@@ -2676,7 +2726,6 @@ class _RadialChip extends StatelessWidget {
     final status = radialStatusOf(node);
     final color = radialStatusColor(status, isDark: context.isDark);
     final offline = status == RadialStatus.offline;
-    final loud = status == RadialStatus.alarm;
     const label = 96.0;
     final name = deviceMapLabel(node);
     return Positioned(
@@ -2691,22 +2740,13 @@ class _RadialChip extends StatelessWidget {
             child: Stack(
               clipBehavior: Clip.none,
               children: [
-                // The disc: the status as a flat colour round the unit;
-                // nothing for a unit that is gone (the label says it).
-                Container(
+                // The unit's place and tap area; nothing is drawn round
+                // it (the status disc left on 2026-11-18: the model, its
+                // badges and its LED say the state, as on the tree).
+                SizedBox(
                   key: radialChipKey(node.mac),
                   width: halo,
                   height: halo,
-                  decoration: offline
-                      ? null
-                      : BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: color.withValues(alpha: loud ? 0.34 : 0.18),
-                          border: Border.all(
-                            color: color.withValues(alpha: loud ? 0.9 : 0.6),
-                            width: loud ? 1.6 : 1.1,
-                          ),
-                        ),
                 ),
                 Positioned(
                   left: (halo - size) / 2,

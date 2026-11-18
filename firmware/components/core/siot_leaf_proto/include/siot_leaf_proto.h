@@ -45,6 +45,18 @@ extern "C" {
 #define SIOT_LEAF_MISSES_BEFORE_PROBE  2
 #define SIOT_LEAF_REPROBE_WAKES        1440 /* once every 24 h at 60 s */
 #define SIOT_LEAF_UNBOUND_PROBE_EVERY  5    /* wakes, when nobody answered at all */
+/* A better parent (§12.3, v3.13) — the mains units' rule (§7.16), on a
+ * battery unit's clock. Only a path below GOOD is ever left, and only for one
+ * GAIN better. The unit looks after WEAK_WAKES heartbeats in a row on a weak
+ * path, then not again for IMPROVE_WAIT wakes — doubling each time up to
+ * IMPROVE_WAIT_MAX, back to the start once the path is good — so a unit with
+ * nothing better in reach spends one search every 80 min, not one per wake. */
+#define SIOT_LEAF_PATH_GOOD_DBM        (-80)
+#define SIOT_LEAF_MOVE_GAIN_DB         10
+#define SIOT_LEAF_WEAK_WAKES           3
+#define SIOT_LEAF_IMPROVE_WAIT_WAKES   10
+#define SIOT_LEAF_IMPROVE_WAIT_MAX_WAKES 80
+#define SIOT_LEAF_IMPROVE_COPIES       2    /* one copy missed the near unit too often to decide on */
 #define SIOT_LEAF_MAILBOX_DRAIN_MAX    4
 #define SIOT_LEAF_OUTBOX_CAP           16
 #define SIOT_LEAF_SETUP_WINDOW_S       120
@@ -99,6 +111,8 @@ typedef struct {
     uint8_t peer[6];  /* ESP-NOW source address of the offer (the interface to unicast to) */
     int8_t  link;     /* the weaker direction, dBm */
     uint8_t layer;    /* LAYER from the offer; 0xFF = not on a mesh, 0 = the board */
+    int8_t  path;     /* PATH from the offer (v3.13): the weakest link from the root to that unit,
+                         dBm; 0 = it is the root; SAFR_NA_RSSI (0x7F) = not said (older firmware) */
 } siot_leaf_candidate_t;
 
 /* The weaker of the two directions is the honest number. */
@@ -107,7 +121,23 @@ static inline int8_t siot_leaf_link(int8_t rssi_seen_by_them, int8_t rssi_we_rec
     return rssi_seen_by_them < rssi_we_received ? rssi_seen_by_them : rssi_we_received;
 }
 
-/* Index of the parent to bind to: best link wins, lower LAYER breaks ties;
+/* The path a leaf has through a parent: the weaker of its link to it and the
+ * parent's own path. A parent that says none (0x7F) or is the root (0) adds
+ * nothing: the link alone. */
+static inline int8_t siot_leaf_path_through(int8_t link, int8_t parent_path)
+{
+    return parent_path < link ? parent_path : link;
+}
+
+/* Leave a parent for another one? Only a path below SIOT_LEAF_PATH_GOOD_DBM,
+ * and only for one SIOT_LEAF_MOVE_GAIN_DB better. */
+static inline bool siot_leaf_should_move(int8_t path_now, int8_t path_new)
+{
+    return path_now < SIOT_LEAF_PATH_GOOD_DBM && (int)path_new >= (int)path_now + SIOT_LEAF_MOVE_GAIN_DB;
+}
+
+/* Index of the parent to bind to: best PATH wins (siot_leaf_path_through:
+ * the link itself when the parents say no path), lower LAYER breaks ties;
  * a candidate that is not on a mesh (0xFF) is never chosen over one that is.
  * -1 when n == 0. */
 int siot_leaf_pick_parent(const siot_leaf_candidate_t *c, size_t n);

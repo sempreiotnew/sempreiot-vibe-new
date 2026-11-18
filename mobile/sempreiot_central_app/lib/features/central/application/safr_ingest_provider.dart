@@ -539,8 +539,6 @@ class SafrIngestService {
             hwRev: Value(hwRev),
             fwVersion: Value(fwVersion),
             dlHeard: Value(dlHeard),
-            // Owned by the supervision provider (spec §9.4 degraded link).
-            linkDegraded: Value(existing?.linkDegraded ?? 0),
           ),
         );
   }

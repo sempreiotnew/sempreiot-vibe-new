@@ -36,14 +36,18 @@ String otaPercentText(double progress) =>
 
 // ── Units and what waits for them on the board ──────────────────────────────
 
-/// The firmware image a unit runs: from its product code when it reported
-/// one; otherwise the board is the unit that bridges to the tablet (layer
-/// 0, root), a leaf is a battery unit and everything else is mains powered.
+/// The firmware image a unit runs, by how it lives on the network: the
+/// board is the unit that bridges to the tablet (its product code, or layer
+/// 0 as root), a leaf is a battery unit and everything else is mains
+/// powered. Never the family byte of a node's or leaf's product code, which
+/// is the product's native family: a SIOT-SMOKE-01 on the node image
+/// (0x0301, 2026-11-18) was listed with the battery units and never
+/// updated. The board's rollout uses the same rule (protocol §13.6).
 SafrProductFamily unitFamily(TopologyNode node) {
   final code = node.productCode;
-  if (code != null) {
-    final family = SafrProductFamily.ofCode(code);
-    if (family != SafrProductFamily.unknown) return family;
+  if (code != null &&
+      SafrProductFamily.ofCode(code) == SafrProductFamily.board) {
+    return SafrProductFamily.board;
   }
   if (node.layer == 0 && node.role == SafrNodeRole.root) {
     return SafrProductFamily.board;

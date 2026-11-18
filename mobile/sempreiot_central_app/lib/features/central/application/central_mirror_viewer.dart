@@ -665,7 +665,6 @@ TopologyNode _copy(
       heard: heard ?? n.heard,
       awaitingSignal: n.awaitingSignal,
       dlHeard: n.dlHeard,
-      linkDegraded: n.linkDegraded,
       boardRssi: n.boardRssi,
       suggestedRoot: suggestedRoot ?? n.suggestedRoot,
     );

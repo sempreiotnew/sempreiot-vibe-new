@@ -1537,11 +1537,11 @@ void main() {
       // The phone re-makes a unit on every frame of it (heard now) and
       // every unit when the picture is not live (none alive). What it left
       // out was lost: a unit never heard ("aguardando o primeiro sinal",
-      // layer -1, not on the map) was drawn on the map, and a weak link
-      // lost its mark until the next snapshot.
+      // layer -1, not on the map) was drawn on the map, and a unit lost
+      // its downlink count until the next snapshot.
       const waitingMac = 'DD:00:00:00:00:04';
       TopologyNode unit(String mac, int layer,
-              {bool awaiting = false, int? dlHeard, bool degraded = false}) =>
+              {bool awaiting = false, int? dlHeard}) =>
           TopologyNode(
             mac: mac,
             role: layer == 1 ? SafrNodeRole.root : SafrNodeRole.node,
@@ -1554,7 +1554,6 @@ void main() {
             alarmLatched: false,
             awaitingSignal: awaiting,
             dlHeard: dlHeard,
-            linkDegraded: degraded,
           );
       final container = ProviderContainer(overrides: [
         centralMirrorProvider.overrideWith((ref) => viewer),
@@ -1567,7 +1566,7 @@ void main() {
         mirrorStateTopic(id),
         encodeMirrorState(seq: 1, at: now, link: 'connected', nodes: [
           node(boardMac, SafrNodeRole.root, 0),
-          unit(rootMac, 1, dlHeard: 5, degraded: true),
+          unit(rootMac, 1, dlHeard: 5),
           unit(waitingMac, -1, awaiting: true),
         ]),
       );
@@ -1586,13 +1585,11 @@ void main() {
       );
       await pumpEventQueue();
       expect(of(rootMac).dlHeard, 5);
-      expect(of(rootMac).linkDegraded, isTrue);
       expect(of(waitingMac).awaitingSignal, isTrue);
 
       viewer.setCentralOnline(false);
       expect(of(rootMac).online, isFalse);
       expect(of(rootMac).dlHeard, 5);
-      expect(of(rootMac).linkDegraded, isTrue);
       expect(of(waitingMac).awaitingSignal, isTrue,
           reason: 'never heard: not a unit of the map');
     });

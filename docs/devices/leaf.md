@@ -191,6 +191,7 @@ and `siot_coordinator` forward any authenticated frame regardless of link (brief
 | Post-provisioning verdict | ≤ 30 s awake |
 | Bind preference / weak-link flag | link ≥ −85 dBm / < −85 flagged, < −75 reported |
 | Re-probe | at once when the parent gives no MAC ACK · 2nd miss · after `NO_PATH` · every 24 h |
+| A better parent (v3.13, 2026-11-18) | the path (link, and the parent's own path) below −80 dBm for 3 heartbeats → 2 probe copies; moves for a path 10 dB better; then waits 10 wakes, doubling to 80 (protocol §12.3) |
 | Unbound back-off | every wake (nodes heard) · every 5 min (nobody) · every wake for the first 10 wakes while never bound |
 | Mailbox | 4 per leaf, same-`CMD` replace, ≤ 4 drained per wake, expiry 180 s |
 | Custody queue (parent) | 32 frames, ALARM never dropped |

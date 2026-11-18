@@ -68,8 +68,9 @@ int siot_leaf_pick_parent(const siot_leaf_candidate_t *c, size_t n)
         const siot_leaf_candidate_t *b = &c[best], *x = &c[i];
         const bool b_mesh = b->layer != 0xFF, x_mesh = x->layer != 0xFF;
         if (b_mesh != x_mesh) { if (x_mesh) best = (int)i; continue; }
-        if (x->link > b->link) { best = (int)i; continue; }
-        if (x->link == b->link && x->layer < b->layer) best = (int)i;
+        const int8_t bp = siot_leaf_path_through(b->link, b->path), xp = siot_leaf_path_through(x->link, x->path);
+        if (xp > bp) { best = (int)i; continue; }
+        if (xp == bp && x->layer < b->layer) best = (int)i;
     }
     return best;
 }

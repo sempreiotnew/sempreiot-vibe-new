@@ -619,11 +619,6 @@ class _Header extends StatelessWidget {
                         label: 'Nível ${node.layer}',
                         color: context.textSecondary,
                       ),
-                    // Below −85 dBm to its parent, or losing the board's
-                    // heartbeats (protocol §9.4): put a node between them.
-                    if (node.linkAttention)
-                      const _Chip(
-                          label: 'ENLACE FRACO', color: AppColors.trouble),
                   ],
                 ),
               ],
@@ -1467,6 +1462,9 @@ class _CentralPopover extends ConsumerWidget {
     final all = commands[safrBroadcastMac];
     final test = all?.kind == DeviceCommandKind.test ? all : null;
     final running = test?.broadcastRunning == true || record != null;
+    // The last test's ticks are still on the map: a new one waits for
+    // them to go (a unit holding its mark would be left out of it).
+    final settling = !running && testMarksUp(commands);
     final tally = test == null
         ? null
         : ref.read(deviceCommandProvider.notifier).broadcastTally;
@@ -1710,7 +1708,7 @@ class _CentralPopover extends ConsumerWidget {
                     else
                       FilledButton.icon(
                         key: const ValueKey('central-test-all'),
-                        onPressed: !linkUp || !canTest
+                        onPressed: !linkUp || !canTest || settling
                             ? null
                             : () => Navigator.of(context)
                                 .pop(CentralMenuAction.startTest),
@@ -1725,6 +1723,19 @@ class _CentralPopover extends ConsumerWidget {
                           style: TextStyle(fontWeight: FontWeight.w700),
                         ),
                       ),
+                    if (settling && canTest) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        'Aguarde as confirmações do último teste saírem '
+                        'do mapa.',
+                        key: const ValueKey('central-test-settling'),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: context.textSecondary,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
                     if (viewOnly && !canTest) ...[
                       const SizedBox(height: 6),
                       Text(

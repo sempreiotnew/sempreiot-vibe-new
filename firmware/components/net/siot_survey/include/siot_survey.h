@@ -2,7 +2,7 @@
  * leaf parent-discovery exchange (blueprint §9.2), both on ESP-NOW:
  *
  *   PARENT_PROBE  broadcast, 1 byte purpose (0 parent, 1 survey)
- *   PARENT_OFFER  unicast back, purpose ‖ rssi_seen ‖ layer
+ *   PARENT_OFFER  unicast back, purpose ‖ rssi_seen ‖ layer ‖ path (v3.13)
  *
  * Frames are ordinary SAFR frames (installation key, fresh MSG_CTR from
  * siot_safr_send). The owner of siot_safr's TX sink (netcore / coordinator)
@@ -34,6 +34,10 @@ extern "C" {
 esp_err_t siot_survey_init(uint8_t layer);
 void siot_survey_set_layer(uint8_t layer);
 void siot_survey_set_online(bool online);
+/* PATH of this unit's offers (protocol §7.15, v3.13): the weakest link
+ * between the root and this unit, dBm (0 = it is the root); SAFR_NA_RSSI =
+ * not known, which is what an offer says until this is called. */
+void siot_survey_set_path(int8_t path_dbm);
 
 /* TEST press on a unit without a network: broadcast a survey probe and
  * collect offers for 2 s. ESP_ERR_INVALID_STATE while a probe is running. */

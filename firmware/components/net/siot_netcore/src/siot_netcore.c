@@ -821,6 +821,7 @@ static void netcore_task(void *arg)
             uint8_t advert[SIOT_PATH_ADVERT_MAX_LEN];
             const size_t n = siot_link_mesh_path_advert(advert, sizeof(advert), s_alarm_active);
             if (n > 0) siot_safr_send(SAFR_BCAST_MAC, SAFR_MSG_PATH_ADVERT, siot_safr_next_msg_id(), 0, advert, n);
+            siot_survey_set_path(siot_link_mesh_own_path()); /* what a battery unit's probe is answered (§7.15) */
         }
 
         /* One-way link (see CONFIRM_CHECK_MS): joined under another unit, the

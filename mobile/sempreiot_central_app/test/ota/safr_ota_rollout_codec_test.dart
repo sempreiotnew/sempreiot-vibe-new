@@ -173,9 +173,13 @@ void main() {
       expect(back.filter, const SafrOtaFilter.product(0x0201));
     });
 
-    test('a product of another family, or none, is refused', () {
-      expect(SafrOtaControlArgs.parse(bytes([0x01, 0x03, 0x01, 0x02, 0x01])),
-          isNull);
+    test('a product on the other image is taken; none is refused', () {
+      // A mains product (0x0201) that runs the battery image: its type is
+      // how the unit lives, never the product's native family.
+      expect(
+          SafrOtaControlArgs.parse(bytes([0x01, 0x03, 0x01, 0x02, 0x01]))!
+              .filter,
+          const SafrOtaFilter.product(0x0201));
       expect(SafrOtaControlArgs.parse(bytes([0x01, 0x02, 0x01, 0x00, 0x00])),
           isNull);
       expect(SafrOtaControlArgs.parse(bytes([0x01, 0x02, 0x01, 0x02])), isNull);

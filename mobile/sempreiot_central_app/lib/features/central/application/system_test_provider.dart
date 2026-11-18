@@ -96,9 +96,11 @@ class SystemTestController extends StateNotifier<SystemTestsState> {
   }
 
   /// Starts a system test: TESTAR to every unit at once. False when one
-  /// already runs, or the board did not take it at all.
+  /// already runs, the marks of the last one are still on the map
+  /// ([testMarksUp]), or the board did not take it at all.
   Future<bool> start({String? by}) async {
     if (_current != null || state.running != null) return false;
+    if (testMarksUp(_tracker.state)) return false;
     final startedAt = _clock();
     // The tracker lists the units and sends before its first await: the
     // run is built from its state right after the call, the board's

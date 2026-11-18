@@ -247,6 +247,13 @@ size_t siot_link_mesh_path_advert(uint8_t *out, size_t cap, bool alarm);
 void siot_link_mesh_path_heard(const uint8_t id[6], uint16_t boot_ctr, uint32_t msg_ctr, int8_t rssi,
                                const uint8_t *payload, size_t len);
 
+/* Node: this unit's own path — the weakest link between the root and it, dBm
+ * (0 = it is the root, with its session to the board) — or
+ * SIOT_LINK_RSSI_NONE when it has none it can vouch for: out of the mesh, in
+ * a move, or under a parent whose advert is not believed. What its
+ * PARENT_OFFER tells a battery unit (protocol §7.15, v3.13). */
+int8_t siot_link_mesh_own_path(void);
+
 /* Node: whether this unit may move to a better parent now. False while it is
  * in alarm, not ONLINE, or a command passed not long ago (an operator is
  * working on the installation, or an update runs). Starts false. */
