@@ -192,6 +192,7 @@ void main() {
     Future<void> show(WidgetTester tester, TopologyNode node,
         {bool spin = false,
         bool interactive = false,
+        bool typeIcon = true,
         bool reduceMotion = false}) async {
       await tester.pumpWidget(ProviderScope(
         overrides: [
@@ -204,7 +205,11 @@ void main() {
             child: Scaffold(
               body: Center(
                 child: DeviceModelAvatar(
-                    node: node, size: 72, spin: spin, interactive: interactive),
+                    node: node,
+                    size: 72,
+                    spin: spin,
+                    interactive: interactive,
+                    typeIcon: typeIcon),
               ),
             ),
           ),
@@ -240,6 +245,42 @@ void main() {
       expect(find.byType(DeviceAvatar), findsNothing);
       expect(find.byType(DeviceLedDot), findsOneWidget);
       expect(painter(tester).alarm, isNull);
+    });
+
+    testWidgets(
+        'the type icon — an AC unit\'s plug, a sleeping leaf\'s moon — is '
+        'drawn unless Rede\'s switch is off (2026-11-19)', (tester) async {
+      await tester.runAsync(() => DeviceModelSprites.load(spec('siren')));
+      await show(tester, unit(0x0201));
+      await settleModel(tester);
+      expect(find.byType(DeviceAcBadge), findsOneWidget);
+      await show(tester, unit(0x0201), typeIcon: false);
+      await settleModel(tester);
+      expect(find.byType(DeviceAcBadge), findsNothing);
+
+      await tester
+          .runAsync(() => DeviceModelSprites.load(spec('smoke_detector')));
+      // Heard half a minute ago: asleep between two wakes.
+      final leaf = TopologyNode(
+        mac: '5A:46:52:00:00:02',
+        role: SafrNodeRole.leaf,
+        layer: 2,
+        parentMac: '00:00:00:00:00:B0',
+        rssi: -60,
+        batteryPct: 90,
+        online: true,
+        lastSeenAt:
+            DateTime.now().toUtc().subtract(const Duration(seconds: 30)),
+        alarmLatched: false,
+        productCode: null,
+      );
+      expect(leaf.sleeping, isTrue);
+      await show(tester, leaf);
+      await settleModel(tester);
+      expect(find.byType(DeviceSleepingMoon), findsOneWidget);
+      await show(tester, leaf, typeIcon: false);
+      await settleModel(tester);
+      expect(find.byType(DeviceSleepingMoon), findsNothing);
     });
 
     testWidgets('a leaf with no product reported is the detector model',

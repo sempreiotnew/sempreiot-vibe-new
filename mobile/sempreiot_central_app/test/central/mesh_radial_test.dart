@@ -15,6 +15,7 @@ import 'package:sempreiot_central_app/features/central/application/serial_provid
 import 'package:sempreiot_central_app/features/central/application/topology_provider.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
 import 'package:sempreiot_central_app/features/central/presentation/screens/topology_screen.dart';
+import 'package:sempreiot_central_app/features/central/application/rede_view_prefs.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/device_avatar.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/device_command_widgets.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/mesh_map.dart';
@@ -113,7 +114,7 @@ void main() {
       );
 
   Future<void> pumpMap(WidgetTester tester, Size size, List<TopologyNode> mesh,
-      {bool radial = true, Key? boundary}) async {
+      {bool radial = true, bool horizontal = false, Key? boundary}) async {
     await loadModels(tester);
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
@@ -127,6 +128,7 @@ void main() {
       onNodeTap: (_, __) {},
       showOta: false,
       radial: radial,
+      horizontal: horizontal,
     );
     if (boundary != null) map = RepaintBoundary(key: boundary, child: map);
     await tester.pumpWidget(
@@ -349,19 +351,37 @@ void main() {
     expect(find.byKey(MeshLegend.legendKey), findsOneWidget,
         reason: 'the numbers on the tree too');
 
-    await tester.tap(find.byKey(MeshStatusBar.layoutKey));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 600)); // the slide
+    Future<void> choose(RedeLayout l) async {
+      await tester.tap(find.byKey(MeshStatusBar.layoutKey));
+      // The map never settles (it is live): the menu's own time.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(MeshStatusBar.layoutOptionKey(l)));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400)); // the menu goes
+      await tester.pump(const Duration(milliseconds: 600)); // the slide
+    }
+
+    await choose(RedeLayout.radial);
     expect(find.byKey(radialChipKey(root)), findsOneWidget);
     expect(find.byKey(MeshLegend.legendKey), findsOneWidget);
     expect(find.text('ÚLTIMO QUADRO'), findsOneWidget,
         reason: 'the strip stays');
 
-    await tester.tap(find.byKey(MeshStatusBar.layoutKey));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 600));
+    // The tree on its side (2026-11-19): the same chips, the root to the
+    // right of the CENTRAL instead of under it.
+    await choose(RedeLayout.treeHorizontal);
     expect(find.byKey(radialChipKey(root)), findsNothing);
     expect(find.text('Sirene Hall'), findsOneWidget);
+    final central = tester.getCenter(find.text('CENTRAL'));
+    final hall = tester.getCenter(find.text('Sirene Hall'));
+    expect(hall.dx, greaterThan(central.dx + 100));
+    expect((hall.dy - central.dy).abs(), lessThan(20));
+
+    await choose(RedeLayout.tree);
+    expect(find.byKey(radialChipKey(root)), findsNothing);
+    final hallDown = tester.getCenter(find.text('Sirene Hall'));
+    expect(hallDown.dy, greaterThan(tester.getCenter(find.text('CENTRAL')).dy));
     expect(tester.takeException(), isNull);
   });
 
@@ -421,6 +441,41 @@ void main() {
     });
   }
 
+  // ── The tree on its side (2026-11-19) ────────────────────────────────
+  for (final s in {
+    'tablet landscape': const Size(1280, 800),
+    'tablet portrait': const Size(800, 1280),
+    'phone portrait': const Size(390, 844),
+    'phone landscape': const Size(844, 390),
+  }.entries) {
+    testWidgets(
+        'the tree on its side: each layer a column to the right of the one '
+        'above, nobody on top of anybody — ${s.key}', (tester) async {
+      final mesh = fakeMesh(nodes2: 4, nodes3: 1, leaves: 8);
+      await pumpMap(tester, s.value, mesh, radial: false, horizontal: true);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.takeException(), isNull);
+      final hall = tester.getCenter(find.text('Sirene Hall'));
+      expect(hall.dx, greaterThan(tester.getCenter(find.text('CENTRAL')).dx));
+      for (var i = 1; i <= 4; i++) {
+        expect(
+            tester.getCenter(find.text('Sirene $i')).dx, greaterThan(hall.dx));
+      }
+      // One avatar per unit, plus the CENTRAL's; none on another.
+      final rects = [
+        for (final e in find.byType(DeviceModelAvatar).evaluate())
+          tester.getRect(find.byWidget(e.widget)),
+      ];
+      expect(rects.length, mesh.length);
+      for (var i = 0; i < rects.length; i++) {
+        for (var j = i + 1; j < rects.length; j++) {
+          expect(rects[i].overlaps(rects[j]), isFalse,
+              reason: '${rects[i]} on ${rects[j]}');
+        }
+      }
+    });
+  }
+
   // ── A look at it ──────────────────────────────────────────────────────
   final pngDir = Platform.environment['RADIAL_PNG_DIR'];
   for (final (label, mesh, size) in [
@@ -436,6 +491,21 @@ void main() {
       'tree_41_tablet',
       fakeMesh(nodes2: 4, nodes3: 1, leaves: 8),
       const Size(1280, 800)
+    ),
+    (
+      'side_41_tablet',
+      fakeMesh(nodes2: 4, nodes3: 1, leaves: 8),
+      const Size(1280, 800)
+    ),
+    (
+      'side_14_tablet',
+      fakeMesh(nodes2: 3, nodes3: 1, leaves: 2),
+      const Size(1280, 800)
+    ),
+    (
+      'side_14_phone',
+      fakeMesh(nodes2: 3, nodes3: 1, leaves: 2),
+      const Size(390, 844)
     ),
   ]) {
     testWidgets('PNG: $label', skip: pngDir == null, (tester) async {
@@ -455,7 +525,9 @@ void main() {
       }
       const key = ValueKey('png');
       await pumpMap(tester, size, mesh,
-          radial: !label.startsWith('tree'), boundary: key);
+          radial: label.startsWith('radial'),
+          horizontal: label.startsWith('side'),
+          boundary: key);
       await tester.pump(const Duration(milliseconds: 100));
       await tester.runAsync(() async {
         final boundary =

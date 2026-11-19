@@ -42,7 +42,9 @@ class MeshMap extends ConsumerStatefulWidget {
     required this.onNodeTap,
     this.showOta = true,
     this.showVersions = true,
+    this.showTypeIcons = true,
     this.radial = false,
+    this.horizontal = false,
     this.overlay,
     this.selected = const {},
     this.boardSelected = false,
@@ -69,14 +71,24 @@ class MeshMap extends ConsumerStatefulWidget {
   final bool showOta;
 
   /// The firmware pill at the bottom right of every unit (and of the
-  /// CENTRAL). Rede's strip switches it off for a cleaner map
-  /// (`redeShowVersionsProvider`); "Atualizar dispositivos" always shows it.
+  /// CENTRAL): on "Atualizar dispositivos", never on Rede (2026-11-19).
   final bool showVersions;
+
+  /// The type icon at the top left of every unit: the moon of a sleeping
+  /// battery unit, the plug of an AC one. Rede's strip switches it off
+  /// for a cleaner map (`redeShowTypeIconsProvider`); "Atualizar
+  /// dispositivos" always shows it.
+  final bool showTypeIcons;
 
   /// The radial picture (`_MeshLayout.balloon`, 2026-10-15): the mesh as
   /// clusters of dots around the hub, for a network too big to read as
   /// rows — Rede's switch. False: the tree.
   final bool radial;
+
+  /// The tree on its side (2026-11-19): the CENTRAL on the left, each
+  /// layer a column to its right — Rede's picker. Nothing else changes:
+  /// the same chips, links and packets. Ignored when [radial].
+  final bool horizontal;
 
   /// What is drawn on the units of an update; null = the board's own
   /// rollout ("Atualizar dispositivos" passes its run, which outlives the
@@ -259,7 +271,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
     super.didUpdateWidget(old);
     // Tree ↔ radial: the units slide to the other picture, and the
     // screen fits the whole of it once more.
-    if (old.radial != widget.radial) {
+    if (old.radial != widget.radial || old.horizontal != widget.horizontal) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _fitToView();
       });
@@ -421,20 +433,27 @@ class _MeshMapState extends ConsumerState<MeshMap>
   /// Button zoom: pivots on the tree's centre line and the screen's middle.
   void _zoomBy(double factor) => _applyZoom(factor);
 
+  /// The tree on its side is the picture drawn.
+  bool get _sideways => widget.horizontal && !widget.radial;
+
   /// Scales the map by [factor], clamped to the zoom limits, about a pivot
   /// in SCREEN space: x = the tree's own centre line (so the tree never
   /// moves sideways on its own — the old code pivoted on a canvas point and
-  /// drifted), y = [pivotY] (the fingers' row for a pinch) or the middle
-  /// of the screen (buttons).
-  void _applyZoom(double factor, {double? pivotY}) {
+  /// drifted), y = the [focal] point's (the fingers' row for a pinch) or
+  /// the middle of the screen (buttons). The tree on its side is the same
+  /// turned: y = its centre line, x = the fingers' or the screen's middle.
+  void _applyZoom(double factor, {Offset? focal}) {
     final current = _scaleOf(_transform.value);
     final target =
         (current * factor).clamp(math.min(_minZoom, _fitScale), _maxZoom);
     final applied = target / current;
     if (applied == 1.0) return;
-    final treeCentreX =
-        _transform.value.getTranslation().x + _canvasSize.width / 2 * current;
-    final c = Offset(treeCentreX, pivotY ?? _viewSize.height / 2);
+    final t = _transform.value.getTranslation();
+    final c = _sideways
+        ? Offset(focal?.dx ?? _viewSize.width / 2,
+            t.y + _canvasSize.height / 2 * current)
+        : Offset(t.x + _canvasSize.width / 2 * current,
+            focal?.dy ?? _viewSize.height / 2);
     final about = Matrix4.identity()
       ..translateByDouble(c.dx, c.dy, 0, 1)
       ..scaleByDouble(applied, applied, applied, 1)
@@ -478,7 +497,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
 
   void _onScaleUpdate(ScaleUpdateDetails d) {
     if (d.scale != _gestureScale && _gestureScale != 0) {
-      _applyZoom(d.scale / _gestureScale, pivotY: d.localFocalPoint.dy);
+      _applyZoom(d.scale / _gestureScale, focal: d.localFocalPoint);
       _gestureScale = d.scale;
     }
     _applyPan(d.localFocalPoint - _gestureFocal);
@@ -506,11 +525,14 @@ class _MeshMapState extends ConsumerState<MeshMap>
   /// opens zoomed out rather than cropped). When it is still bigger than the
   /// screen at the readable floor it stays centred across (the central on
   /// the centre line, the outer siblings reached by panning) and starts at
-  /// the top.
+  /// the top. The tree on its side, the same turned: centred down the
+  /// screen, starting at the left (the CENTRAL) when it is too wide.
   void _fitToView() {
     final s = _fitScale;
-    final tx = (_viewSize.width - _canvasSize.width * s) / 2;
-    final ty = math.max(0.0, (_viewSize.height - _canvasSize.height * s) / 2);
+    final cx = (_viewSize.width - _canvasSize.width * s) / 2;
+    final cy = (_viewSize.height - _canvasSize.height * s) / 2;
+    final tx = _sideways ? math.max(0.0, cx) : cx;
+    final ty = _sideways ? cy : math.max(0.0, cy);
     _transform.value = Matrix4.identity()
       ..translateByDouble(tx, ty, 0, 1)
       ..scaleByDouble(s, s, s, 1);
@@ -767,7 +789,8 @@ class _MeshMapState extends ConsumerState<MeshMap>
       _viewSize = size;
       final target = widget.radial
           ? _MeshLayout.balloon(nodes, size, boardMac: boardMac)
-          : _MeshLayout.compute(nodes, size, boardMac: boardMac);
+          : _MeshLayout.compute(nodes, size,
+              boardMac: boardMac, horizontal: widget.horizontal);
       _retarget(target, size);
       _canvasSize = target.canvas;
       final key = (size, target.canvas);
@@ -881,6 +904,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
                                         pitch: layout.pitch,
                                         nameAbove: labels?.names[node.mac],
                                         pillLeft: labels?.versions[node.mac],
+                                        showTypeIcon: widget.showTypeIcons,
                                         onTap: (anchor) =>
                                             widget.onNodeTap(node, anchor),
                                       )
@@ -896,6 +920,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
                                         activity: rollout[node.mac],
                                         pending: pendingFirmwareFor(node, held),
                                         showVersion: widget.showVersions,
+                                        showTypeIcon: widget.showTypeIcons,
                                         selected:
                                             widget.selected.contains(node.mac),
                                         faded: widget.focus != null &&
@@ -920,8 +945,9 @@ class _MeshMapState extends ConsumerState<MeshMap>
                 ),
                 // Lane labels live in screen space: pinned to the
                 // left edge whatever the pan/zoom, following only
-                // the rows' vertical position. The radial picture
-                // has no rows.
+                // the rows' vertical position (along the top edge,
+                // following the columns, for the tree on its side).
+                // The radial picture has no rows.
                 if (!layout.radial)
                   Positioned.fill(
                     child: IgnorePointer(
@@ -937,7 +963,7 @@ class _MeshMapState extends ConsumerState<MeshMap>
                 // The numbers, at the bottom left on both pictures
                 // (past the tree's label gutter).
                 Positioned(
-                  left: layout.radial ? 12 : 40,
+                  left: layout.radial || layout.horizontal ? 12 : 40,
                   bottom: 12,
                   child: MeshLegend(nodes: widget.nodes),
                 ),
@@ -1015,10 +1041,12 @@ extension on _MeshMapState {
       // middle — as the Central's: never over the name, the version pill
       // at the bottom right, the OFFLINE tag at the top right, or a
       // neighbour (the row pitch leaves 35 px clear there).
+      // On the tree on its side the unit's line leaves from there, so
+      // the ticks go just under it — the bottom right, free on Rede.
       marks.add(Positioned(
         key: ValueKey('cmd-tag-${s.mac}'),
         left: at.dx + avatar / 2 + 3,
-        top: centre.dy - 9,
+        top: layout.horizontal ? centre.dy + 7 : centre.dy - 9,
         width: 22,
         child: Center(
           child: CommandTicks(
@@ -1046,7 +1074,7 @@ extension on _MeshMapState {
         // Beside the disc, on the right: the chip's own lines (CENTRAL,
         // MAC, dBm) stay clear.
         left: central.dx + _CentralChip._circle / 2 + 8,
-        top: central.dy - 9,
+        top: layout.horizontal ? central.dy + 8 : central.dy - 9,
         width: 40,
         child: Center(
           child: IgnorePointer(child: CommandTicks(status: taken, size: 17)),
@@ -1530,6 +1558,17 @@ class _MeshGraphPainter extends CustomPainter {
     // The tree's: a gentle vertical S-curve that fans siblings out from
     // their shared parent — a cubic, sampled.
     final mid = Offset.lerp(from, to, 0.5)!;
+    if (layout.horizontal) {
+      // The same curve turned: it leaves and arrives level, fanning the
+      // siblings out down the column.
+      final bend = (to.dy - from.dy).abs() * 0.001 + 0.22;
+      final c1 = Offset(from.dx - (from.dx - mid.dx) * bend * 2, from.dy);
+      final c2 = Offset(to.dx + (mid.dx - to.dx) * bend * 2, to.dy);
+      const steps = 24;
+      return _Polyline([
+        for (var i = 0; i <= steps; i++) _cubic(from, c1, c2, to, i / steps),
+      ]);
+    }
     final bend = (to.dx - from.dx).abs() * 0.001 + 0.22;
     final c1 = Offset(from.dx, from.dy - (from.dy - mid.dy) * bend * 2);
     final c2 = Offset(to.dx, to.dy + (mid.dy - to.dy) * bend * 2);
@@ -1764,7 +1803,8 @@ class _ArenaFreeTapState extends State<_ArenaFreeTap> {
 
 /// CENTRAL / ROOT / CAMADA n, rotated along the left edge of the viewport.
 /// Repaints with the transform so each label tracks its row's screen y while
-/// its x and size never change — the gutter is fixed, the map moves.
+/// its x and size never change — the gutter is fixed, the map moves. For
+/// the tree on its side: along the top edge, upright, each over its column.
 class _LaneLabelsPainter extends CustomPainter {
   _LaneLabelsPainter({
     required this.layout,
@@ -1781,10 +1821,16 @@ class _LaneLabelsPainter extends CustomPainter {
     final m = transform.value;
     final scale = _scaleOf(m);
     final ty = m.getTranslation().y;
+    final tx = m.getTranslation().x;
 
     void label(String text, double lane) {
       final y = ty + lane * scale;
-      if (y < 0 || y > size.height) return; // row scrolled off-screen
+      final x = tx + lane * scale;
+      if (layout.horizontal
+          ? (x < 0 || x > size.width)
+          : (y < 0 || y > size.height)) {
+        return; // row scrolled off-screen
+      }
       final tp = TextPainter(
         text: TextSpan(
           text: text,
@@ -1798,6 +1844,10 @@ class _LaneLabelsPainter extends CustomPainter {
         ),
         textDirection: TextDirection.ltr,
       )..layout();
+      if (layout.horizontal) {
+        tp.paint(canvas, Offset(x - tp.width / 2, 8));
+        return;
+      }
       canvas.save();
       canvas.translate(10, y + tp.width / 2);
       canvas.rotate(-math.pi / 2);
@@ -1973,6 +2023,7 @@ class _MeshLayout {
     required this.canvas,
     this.layerOf = const {},
     this.radial = false,
+    this.horizontal = false,
     this.pitch = 116,
   });
 
@@ -1982,10 +2033,11 @@ class _MeshLayout {
   /// row in [laneCenters].
   final Map<String, int> layerOf;
 
-  /// y of the central row (tree).
+  /// y of the central row (tree); x of its column (tree on its side).
   final double centralLane;
 
-  /// y of each mesh layer's row (tree); the layers alone (radial).
+  /// y of each mesh layer's row (tree), x of its column (tree on its
+  /// side); the layers alone (radial).
   final Map<int, double> laneCenters;
 
   /// Canvas size the chips and painter are laid out in (≥ viewport).
@@ -1993,6 +2045,9 @@ class _MeshLayout {
 
   /// The balloon picture: no lanes, straight links, dots for units.
   final bool radial;
+
+  /// The tree on its side: the layers are columns, left to right.
+  final bool horizontal;
 
   /// The least distance between two neighbouring units, in canvas pixels
   /// (names are shown when `scale × pitch` leaves room on screen).
@@ -2007,9 +2062,61 @@ class _MeshLayout {
   static const _minLane = 104.0; // row pitch
   static const _tabletAside = 112.0; // tablet ↔ central, centre to centre
 
+  // The tree on its side: a layer every [_sideLane] at least (a chip is
+  // 104 wide, and the link with its dBm pill needs the rest), a unit every
+  // [_sideAcross] down a column (a chip is ~65 tall). The top margin also
+  // hosts the lane labels.
+  static const _sideLane = 150.0;
+  static const _sideAcross = 84.0;
+  static const _sideEdge = 16.0;
+  static const _sideTop = 34.0;
+
+  /// The tree turned on its side: what [compute] draws top to bottom, left
+  /// to right — the same spans, so the same guarantees.
+  static _MeshLayout _computeSideways(_MeshTree tree, Size viewport) {
+    final total = tree.total;
+    final laneCount = tree.layerKeys.length + 1; // + central column
+    final width =
+        math.max(viewport.width, 2 * _sideEdge + laneCount * _sideLane);
+    final height =
+        math.max(viewport.height, _sideTop + _sideEdge + total * _sideAcross);
+    final colW = (width - 2 * _sideEdge) / laneCount;
+    final pitch = (height - _sideTop - _sideEdge) / total;
+    double laneX(int i) => _sideEdge + colW * (i + 0.5);
+
+    final positions = <String, Offset>{};
+    void place(String key, double from, int col) {
+      final w = tree.width[key]!;
+      positions[key] = Offset(laneX(col), _sideTop + pitch * (from + w / 2));
+      var cursor = from;
+      for (final k in tree.children[key] ?? const <TopologyNode>[]) {
+        if (positions.containsKey(k.mac)) continue; // the loop, cut
+        place(k.mac, cursor, tree.rowOf[tree.layerOf[k.mac]]!);
+        cursor += tree.width[k.mac]!;
+      }
+    }
+
+    place(_centralKey, 0, 0);
+    // Over the central, in its column; drawn only while a push runs
+    // (never on Rede, the one place that draws this picture).
+    positions[_tabletKey] =
+        positions[_centralKey]! - const Offset(0, _tabletAside);
+
+    return _MeshLayout(
+      positions: positions,
+      centralLane: laneX(0),
+      laneCenters: {for (final l in tree.layerKeys) l: laneX(tree.rowOf[l]!)},
+      canvas: Size(width, height),
+      layerOf: tree.layerOf,
+      horizontal: true,
+      pitch: pitch,
+    );
+  }
+
   static _MeshLayout compute(List<TopologyNode> nodes, Size viewport,
-      {String? boardMac}) {
+      {String? boardMac, bool horizontal = false}) {
     final tree = _MeshTree.build(nodes, boardMac);
+    if (horizontal) return _computeSideways(tree, viewport);
     final total = tree.total;
     final laneCount = tree.layerKeys.length + 1; // + central row
 
@@ -2304,6 +2411,7 @@ class _MeshLayout {
       canvas: b.canvas,
       layerOf: b.layerOf,
       radial: b.radial,
+      horizontal: b.horizontal,
       pitch: b.pitch,
     );
   }
@@ -2542,6 +2650,7 @@ class _NodeChip extends StatelessWidget {
     this.pending,
     this.activity,
     this.showVersion = true,
+    this.showTypeIcon = true,
     this.selected = false,
     this.faded = false,
     this.selectionTarget,
@@ -2555,8 +2664,11 @@ class _NodeChip extends StatelessWidget {
   final bool selected;
   final String? selectionTarget;
 
-  /// The firmware pill at the bottom right (off: Rede's switch).
+  /// The firmware pill at the bottom right (off: Rede).
   final bool showVersion;
+
+  /// The moon / plug at the top left (off: Rede's switch).
+  final bool showTypeIcon;
 
   /// Outside the update that runs: drawn faded.
   final bool faded;
@@ -2607,6 +2719,7 @@ class _NodeChip extends StatelessWidget {
                         isRoot: isRoot,
                         isCandidate: isCandidate,
                         size: 46,
+                        typeIcon: showTypeIcon,
                       ),
                       if (!node.online)
                         const Positioned(
@@ -2702,6 +2815,7 @@ class _RadialChip extends StatelessWidget {
     required this.nameAbove,
     required this.onTap,
     this.pillLeft,
+    this.showTypeIcon = true,
   });
 
   final TopologyNode node;
@@ -2717,6 +2831,9 @@ class _RadialChip extends StatelessWidget {
   /// The firmware pill at the bottom right (false), mirrored to the
   /// bottom left (true) or nowhere (null: the switch off, or no place).
   final bool? pillLeft;
+
+  /// The moon / plug at the top left (off: Rede's switch).
+  final bool showTypeIcon;
   final ValueChanged<Rect> onTap;
 
   @override
@@ -2778,6 +2895,7 @@ class _RadialChip extends StatelessWidget {
                         isRoot: isRoot,
                         isCandidate: isCandidate,
                         size: size,
+                        typeIcon: showTypeIcon,
                       );
                     },
                   ),

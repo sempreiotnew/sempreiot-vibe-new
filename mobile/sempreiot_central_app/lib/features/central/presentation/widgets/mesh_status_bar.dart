@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../../../core/utils/relative_time.dart';
+import '../../application/rede_view_prefs.dart';
 import '../../application/root_election_provider.dart';
 import '../../application/topology_provider.dart';
 import 'device_avatar.dart';
@@ -18,10 +19,10 @@ class MeshStatusBar extends StatelessWidget {
     this.syncing = false,
     this.leading = const [],
     this.electionPill = true,
-    this.versionsShown,
-    this.onToggleVersions,
-    this.radial,
-    this.onToggleRadial,
+    this.typeIconsShown,
+    this.onToggleTypeIcons,
+    this.layout,
+    this.onLayout,
   });
   final List<TopologyNode> nodes;
   final RootElectionState election;
@@ -41,22 +42,45 @@ class MeshStatusBar extends StatelessWidget {
   /// banner under the strip instead (root_election_banner.dart).
   final bool electionPill;
 
-  /// The firmware pills on the map are shown (the chip icon lit) or not;
+  /// The type icons on the map's units — the moon of a sleeping battery
+  /// unit, the plug of an AC one — are shown (the label icon lit) or not;
   /// null = no switch in the strip ("Atualizar dispositivos" always shows
-  /// them). A tap calls [onToggleVersions].
-  final bool? versionsShown;
-  final VoidCallback? onToggleVersions;
+  /// them). A tap calls [onToggleTypeIcons].
+  final bool? typeIconsShown;
+  final VoidCallback? onToggleTypeIcons;
 
-  /// The key of the versions switch (tests).
-  static const versionsKey = ValueKey('rede-versions');
+  /// The key of the type-icons switch (tests).
+  static const typeIconsKey = ValueKey('rede-type-icons');
 
-  /// The map is the radial picture (true) or the tree (false); null = no
-  /// switch in the strip ("Atualizar dispositivos" is always the tree).
-  final bool? radial;
-  final VoidCallback? onToggleRadial;
+  /// The picture the map is drawn as; null = no picker in the strip
+  /// ("Atualizar dispositivos" is always the tree). The button shows the
+  /// current one and opens the three to choose from ([onLayout]).
+  final RedeLayout? layout;
+  final ValueChanged<RedeLayout>? onLayout;
 
-  /// The key of the tree / radial switch (tests).
+  /// The key of the picture picker (tests) and of each of its options.
   static const layoutKey = ValueKey('rede-layout');
+  static ValueKey<String> layoutOptionKey(RedeLayout l) =>
+      ValueKey('rede-layout-${l.name}');
+
+  static String layoutLabel(RedeLayout l) => switch (l) {
+        RedeLayout.tree => 'Árvore vertical',
+        RedeLayout.treeHorizontal => 'Árvore horizontal',
+        RedeLayout.radial => 'Rede',
+      };
+
+  /// The tree icon has its root on the left: as it is for the tree on its
+  /// side, turned a quarter (root on top) for the tree.
+  static Widget layoutIcon(RedeLayout l, {double size = 20, Color? color}) =>
+      switch (l) {
+        RedeLayout.tree => RotatedBox(
+            quarterTurns: 1,
+            child: Icon(Icons.account_tree_rounded, size: size, color: color),
+          ),
+        RedeLayout.treeHorizontal =>
+          Icon(Icons.account_tree_rounded, size: size, color: color),
+        RedeLayout.radial => Icon(Icons.hub_rounded, size: size, color: color),
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -146,49 +170,86 @@ class MeshStatusBar extends StatelessWidget {
                 ),
               ],
             ),
-          if (radial != null) ...[
+          if (layout != null) ...[
             const SizedBox(width: 10),
-            IconButton(
+            PopupMenuButton<RedeLayout>(
               key: layoutKey,
-              tooltip: radial! ? 'Ver em árvore' : 'Ver em rede',
-              isSelected: radial,
+              tooltip: 'Visualização: ${layoutLabel(layout!)}',
+              initialValue: layout,
+              onSelected: onLayout,
+              position: PopupMenuPosition.under,
+              padding: EdgeInsets.zero,
+              color: context.surfaceColor,
               style: IconButton.styleFrom(
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 fixedSize: const Size(30, 30),
                 minimumSize: const Size(30, 30),
                 padding: EdgeInsets.zero,
-                foregroundColor:
-                    radial! ? AppColors.secondary : context.textSecondary,
               ),
-              icon: Icon(
-                radial! ? Icons.hub_rounded : Icons.account_tree_rounded,
-                size: 20,
-              ),
-              onPressed: onToggleRadial,
+              icon: layoutIcon(layout!, color: AppColors.secondary),
+              itemBuilder: (context) => [
+                for (final l in RedeLayout.values)
+                  PopupMenuItem<RedeLayout>(
+                    key: layoutOptionKey(l),
+                    value: l,
+                    height: 44,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        layoutIcon(
+                          l,
+                          size: 18,
+                          color: l == layout
+                              ? AppColors.secondary
+                              : context.textSecondary,
+                        ),
+                        const SizedBox(width: 12),
+                        Flexible(
+                          child: Text(
+                            layoutLabel(l),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: l == layout
+                                  ? AppColors.secondary
+                                  : context.textPrimary,
+                              fontSize: 13,
+                              fontWeight: l == layout
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
             ),
           ],
-          if (versionsShown != null) ...[
+          if (typeIconsShown != null) ...[
             const SizedBox(width: 10),
             IconButton(
-              key: versionsKey,
-              tooltip: versionsShown!
-                  ? 'Ocultar versões de firmware'
-                  : 'Mostrar versões de firmware',
-              isSelected: versionsShown,
+              key: typeIconsKey,
+              tooltip: typeIconsShown!
+                  ? 'Ocultar ícones de bateria e AC'
+                  : 'Mostrar ícones de bateria e AC',
+              isSelected: typeIconsShown,
               style: IconButton.styleFrom(
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 fixedSize: const Size(30, 30),
                 minimumSize: const Size(30, 30),
                 padding: EdgeInsets.zero,
-                foregroundColor: versionsShown!
+                foregroundColor: typeIconsShown!
                     ? AppColors.secondary
                     : context.textSecondary,
               ),
               icon: Icon(
-                versionsShown! ? Icons.memory_rounded : Icons.memory_outlined,
+                typeIconsShown!
+                    ? Icons.label_rounded
+                    : Icons.label_off_outlined,
                 size: 20,
               ),
-              onPressed: onToggleVersions,
+              onPressed: onToggleTypeIcons,
             ),
           ],
           if (onSync != null) ...[

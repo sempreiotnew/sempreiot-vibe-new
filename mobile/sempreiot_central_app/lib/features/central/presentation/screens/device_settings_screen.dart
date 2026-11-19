@@ -200,6 +200,18 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
               valueColor: signalColor(node.rssi),
             ),
           ],
+          // How it hears the central's board (BOARD_RSSI, protocol §7.3):
+          // what its link would be as the root. Mains units below the root
+          // that say it; the root's own link is the row above.
+          if (!node.isLeaf && node.layer >= 2 && node.boardRssi != null) ...[
+            const InfoRowDivider(),
+            _Fact(
+              icon: Icons.router_outlined,
+              label: 'Sinal até a central',
+              value: '${node.boardRssi} dBm',
+              valueColor: signalColor(node.boardRssi),
+            ),
+          ],
           // v3.6 DL_HEARD (protocol §7.3): the unit's own count of the
           // board's heartbeats in the last 2 min. A reading, never a flag.
           if (!node.isLeaf) ...[

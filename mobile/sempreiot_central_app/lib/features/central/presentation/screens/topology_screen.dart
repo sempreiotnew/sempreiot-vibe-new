@@ -51,10 +51,10 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
     // A user's phone viewing a central: the map and nothing that commands.
     final viewOnly = ref.watch(mirrorViewOnlyProvider);
     final sync = ref.watch(boardSyncProvider);
-    // The firmware pills, and the tree or the radial picture: on or off
-    // from the strip (kept on this device).
-    final showVersions = ref.watch(redeShowVersionsProvider);
-    final radial = ref.watch(redeRadialProvider);
+    // The type icons (moon / plug) and which picture the map is (tree,
+    // tree on its side, radial): chosen on the strip, kept on this device.
+    final showTypeIcons = ref.watch(redeShowTypeIconsProvider);
+    final mapLayout = ref.watch(redeLayoutProvider);
     TopologyNode? board;
     final nodes = <TopologyNode>[];
     for (final n in allNodes) {
@@ -76,11 +76,11 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
               : () => ref.read(boardSyncProvider.notifier).start(),
           syncing: sync.phase == BoardSyncPhase.syncing,
           electionPill: false,
-          versionsShown: showVersions,
-          onToggleVersions: () =>
-              ref.read(redeShowVersionsProvider.notifier).toggle(),
-          radial: radial,
-          onToggleRadial: () => ref.read(redeRadialProvider.notifier).toggle(),
+          typeIconsShown: showTypeIcons,
+          onToggleTypeIcons: () =>
+              ref.read(redeShowTypeIconsProvider.notifier).toggle(),
+          layout: mapLayout,
+          onLayout: (l) => ref.read(redeLayoutProvider.notifier).set(l),
         ),
         // The board's link is down: said here, in words, before anything
         // on the map is read as live.
@@ -109,8 +109,11 @@ class _TopologyScreenState extends ConsumerState<TopologyScreen> {
             // Rede is the alarm view: the update is drawn on "Atualizar
             // dispositivos" only.
             showOta: false,
-            showVersions: showVersions,
-            radial: radial,
+            // Nor the firmware: the version is read there too.
+            showVersions: false,
+            showTypeIcons: showTypeIcons,
+            radial: mapLayout.isRadial,
+            horizontal: mapLayout.isHorizontal,
           ),
         ),
       ],

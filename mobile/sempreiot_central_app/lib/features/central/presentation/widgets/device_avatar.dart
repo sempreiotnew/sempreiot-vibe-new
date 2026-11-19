@@ -253,6 +253,7 @@ class DeviceModelAvatar extends StatefulWidget {
     this.size = 46,
     this.spin = false,
     this.interactive = false,
+    this.typeIcon = true,
     this.spec,
     this.placeholder,
   });
@@ -271,6 +272,10 @@ class DeviceModelAvatar extends StatefulWidget {
   final double size;
   final bool spin;
   final bool interactive;
+
+  /// The type icon at the top left — the moon of a sleeping battery unit,
+  /// the plug of an AC one. Off only on Rede, from its strip's switch.
+  final bool typeIcon;
 
   /// The resting view: turned 30° to show the unit's right side, seen from
   /// the spin tilt (15° above) — how it reads on a wall.
@@ -462,7 +467,9 @@ class _DeviceModelAvatarState extends State<DeviceModelAvatar>
               child: DeviceLedDot(node: node, size: 10 * k),
             ),
           ),
-          if (node.sleeping)
+          if (!widget.typeIcon)
+            const SizedBox.shrink()
+          else if (node.sleeping)
             Positioned(
               left: -2,
               top: -2,

@@ -303,7 +303,8 @@ for that orientation — not merely "does not crash".
 - Never assume `height > width`. Read the shape from `LayoutBuilder` / `MediaQuery.orientationOf`
   and adapt — but **keep the same picture in both orientations**: scale, fit, scroll or re-space it;
   do not invent a different layout for landscape (the Rede tree stays vertical in landscape and
-  opens zoomed out to fit — it is NOT turned sideways). Re-flowing a screen into a different shape
+  opens zoomed out to fit — it is NOT turned sideways; "Árvore horizontal" on Rede's view picker is the
+  operator's own choice, in either orientation, never something rotation switches). Re-flowing a screen into a different shape
   is a product decision: ask first.
 - Floating controls over a canvas (zoom, clear, FABs) must be placed so they can never overlap each
   other on the shortest landscape viewport; prefer putting secondary actions in a toolbar/strip.

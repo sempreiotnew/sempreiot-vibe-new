@@ -693,7 +693,6 @@ class _Facts extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final wake = node.nextWakeInSeconds;
-    final product = node.product;
     final tiles = <Widget>[
       // Where it is and which group it fires with (protocol §14.1): the
       // names behind the board's ids, set on the Dispositivo screen.
@@ -710,16 +709,6 @@ class _Facts extends StatelessWidget {
         valueColor: node.zone == null ? context.textSecondary : null,
       ),
       _SignalTile(rssi: node.rssi, sleeping: node.sleeping),
-      // How it hears the central's board (BOARD_RSSI): what its link would
-      // be as the root. Mains units that say it; the root's own link is
-      // the tile above.
-      if (!node.isLeaf && node.layer >= 2 && node.boardRssi != null)
-        _FactTile(
-          icon: Icons.router_outlined,
-          label: 'SINAL ATÉ A CENTRAL',
-          value: '${node.boardRssi} dBm',
-          valueColor: signalColor(node.boardRssi),
-        ),
       _FactTile(
         icon: Icons.schedule_rounded,
         label: 'ÚLTIMO SINAL',
@@ -733,28 +722,14 @@ class _Facts extends StatelessWidget {
                 : 'acordado agora',
       ),
       // What it is (2026-10-29): its type — how it lives, never read from
-      // the product code — and its product. The parent and the firmware
-      // left the popover for the Dispositivo screen.
+      // the product code. Its product is in the header, under the name.
+      // The parent, the firmware and (2026-11-19) the signal up to the
+      // central and the parents in reach are on the Dispositivo screen.
       _FactTile(
         icon: deviceFamilyIcon(node.family),
         label: 'TIPO',
         value: node.family.title,
       ),
-      _FactTile(
-        icon: Icons.inventory_2_outlined,
-        label: 'PRODUTO',
-        value: product?.label ?? 'não informado',
-        valueColor: product == null ? context.textSecondary : null,
-        sub: product?.model,
-      ),
-      if (node.isLeaf)
-        _FactTile(
-          icon: Icons.device_hub_rounded,
-          label: 'PAIS AO ALCANCE',
-          value: '${node.parentCandidates.length}',
-          valueColor: node.singleParent ? AppColors.warning : null,
-          sub: node.singleParent ? 'recomendado: 2 ou mais' : null,
-        ),
       if (node.batteryPct != null)
         _FactTile(
           icon: Icons.battery_std_rounded,

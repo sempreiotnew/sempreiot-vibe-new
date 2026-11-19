@@ -146,27 +146,29 @@ void main() {
             find.textContaining('Sirene · SIOT\u2011SIREN\u201101',
                 skipOffstage: false),
             findsOneWidget);
-        // The tiles (2026-10-29): TIPO and PRODUTO; PAI and FIRMWARE left
-        // for the Dispositivo screen.
+        // The tiles: TIPO; the product is in the header alone
+        // (2026-11-19); PAI and FIRMWARE, the signal up to the central and
+        // the parents in reach are on the Dispositivo screen.
         expect(find.text('TIPO', skipOffstage: false), findsOneWidget);
         expect(
             find.text('Dispositivo AC', skipOffstage: false), findsOneWidget);
-        expect(find.text('PRODUTO', skipOffstage: false), findsOneWidget);
-        expect(find.text('SIOT-SIREN-01', skipOffstage: false), findsOneWidget);
+        expect(find.text('PRODUTO', skipOffstage: false), findsNothing);
+        expect(find.text('SINAL ATÉ A CENTRAL', skipOffstage: false),
+            findsNothing);
+        expect(find.text('PAIS AO ALCANCE', skipOffstage: false), findsNothing);
         expect(find.text('FIRMWARE', skipOffstage: false), findsNothing);
         expect(find.text('PAI', skipOffstage: false), findsNothing);
         expect(tester.takeException(), isNull);
       });
     }
 
-    testWidgets('firmware older than v3.5: product "não informado"',
+    testWidgets('firmware older than v3.5: no product line in the header',
         (tester) async {
       await pump(tester, const Size(1280, 800), const TopologyScreen());
       await tester.tap(find.text(old));
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.textContaining('SIOT\u2011'), findsNothing);
-      expect(find.text('PRODUTO'), findsOneWidget);
-      expect(find.text('não informado'), findsOneWidget);
+      expect(find.text('PRODUTO'), findsNothing);
       // Two unset facts read "—": ENDEREÇAMENTO and ZONA (protocol §14.1,
       // none assigned).
       expect(find.text('ENDEREÇAMENTO'), findsOneWidget);

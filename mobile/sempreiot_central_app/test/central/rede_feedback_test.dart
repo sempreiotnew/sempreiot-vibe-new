@@ -11,6 +11,7 @@ import 'package:sempreiot_central_app/features/central/application/device_comman
 import 'package:sempreiot_central_app/features/central/application/device_led_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_report.dart';
 import 'package:sempreiot_central_app/features/central/application/ota_push_state.dart';
+import 'package:sempreiot_central_app/features/central/application/rede_view_prefs.dart';
 import 'package:sempreiot_central_app/features/central/application/root_election_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/safr_traffic_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/serial_provider.dart';
@@ -119,17 +120,18 @@ void main() {
   }
 
   testWidgets(
-      'the strip\'s chip switch hides and shows the firmware pills '
-      '(2026-10-15)', (tester) async {
-    await pump(tester, const Size(1280, 800));
-    // The root, the node and the CENTRAL (the board says 0.3.8).
-    expect(find.byType(FirmwareTag), findsNWidgets(3));
-    await tester.tap(find.byKey(MeshStatusBar.versionsKey));
-    await tester.pump();
+      'Rede shows no firmware pill; the strip\'s label switch turns the '
+      'type icons off and on (2026-11-19)', (tester) async {
+    final container = await pump(tester, const Size(1280, 800));
     expect(find.byType(FirmwareTag), findsNothing);
-    await tester.tap(find.byKey(MeshStatusBar.versionsKey));
+    expect(container.read(redeShowTypeIconsProvider), isTrue);
+    await tester.tap(find.byKey(MeshStatusBar.typeIconsKey));
     await tester.pump();
-    expect(find.byType(FirmwareTag), findsNWidgets(3));
+    expect(container.read(redeShowTypeIconsProvider), isFalse);
+    expect(find.byType(FirmwareTag), findsNothing);
+    await tester.tap(find.byKey(MeshStatusBar.typeIconsKey));
+    await tester.pump();
+    expect(container.read(redeShowTypeIconsProvider), isTrue);
     expect(tester.takeException(), isNull);
   });
 
