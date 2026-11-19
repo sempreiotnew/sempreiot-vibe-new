@@ -40,12 +40,11 @@ class RedeShowTypeIcons extends RedeSwitch {
   RedeShowTypeIcons() : super('rede_show_type_icons', fallback: true);
 }
 
-/// The remembered picture. Kept by name under `rede_layout`; a device
-/// that only has the older tree / radial switch (`rede_radial`) keeps what
-/// it had chosen there.
+/// The remembered picture, kept by name under `rede_layout`. Nothing
+/// chosen yet: the vertical tree — the older tree / radial switch
+/// (`rede_radial`) is no longer read.
 class RedeLayoutChoice extends Notifier<RedeLayout> {
   static const prefsKey = 'rede_layout';
-  static const _legacyRadialKey = 'rede_radial';
 
   @override
   RedeLayout build() {
@@ -54,9 +53,7 @@ class RedeLayoutChoice extends Notifier<RedeLayout> {
     for (final l in RedeLayout.values) {
       if (l.name == saved) return l;
     }
-    return prefs?.getBool(_legacyRadialKey) == true
-        ? RedeLayout.radial
-        : RedeLayout.tree;
+    return RedeLayout.tree;
   }
 
   void set(RedeLayout layout) {

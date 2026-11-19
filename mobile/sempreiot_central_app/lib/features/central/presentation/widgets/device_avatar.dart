@@ -58,7 +58,7 @@ String _deviceStateLabel(TopologyNode node) => node.online
         : 'Sem comunicação';
 
 /// A device drawn as a circle: double ring in its status colour, role icon
-/// (or the animated moon of a sleeping leaf), the LED, and the ALARME /
+/// (or the moon of a sleeping leaf), the LED, and the ALARME /
 /// ROOT / CANDIDATO badges.
 /// One widget for the Rede map and the Dispositivos screen, so a device
 /// looks the same everywhere. A unit whose product has a 3D model is drawn
@@ -716,10 +716,11 @@ class DeviceAcBadge extends StatelessWidget {
   }
 }
 
-/// The moon of a sleeping leaf with two small "z" drifting up and fading,
-/// clipped to the avatar circle so the layout never changes. One controller
-/// per sleeping leaf; the frame cost is two tiny texts.
-class DeviceSleepingMoon extends StatefulWidget {
+/// The moon of a sleeping leaf with two small "z" beside it. A still
+/// picture (2026-11-19): it used to drift and fade, one animation running
+/// for ever per sleeping detector — the cause of the web's memory leak and
+/// too much trouble for what it said. Nothing here moves.
+class DeviceSleepingMoon extends StatelessWidget {
   const DeviceSleepingMoon({
     super.key,
     required this.color,
@@ -729,78 +730,37 @@ class DeviceSleepingMoon extends StatefulWidget {
   final Color color;
   final Color zColor;
 
-  @override
-  State<DeviceSleepingMoon> createState() => _DeviceSleepingMoonState();
-}
-
-class _DeviceSleepingMoonState extends State<DeviceSleepingMoon>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 2600),
-  )..repeat();
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  /// One "z": rises 7 px and fades over its own third of the cycle, staggered
-  /// by `delay` (0..1) so the two never move together.
-  Widget _z(double t, double delay, double size, double right, double bottom) {
-    final u = ((t - delay) % 1.0 + 1.0) % 1.0; // 0..1 within this z's cycle
-    final visible = u < 0.55;
-    final k = visible ? u / 0.55 : 0.0;
-    final opacity =
-        visible ? (k < 0.25 ? k / 0.25 : 1.0 - (k - 0.25) / 0.75) : 0.0;
-    return Positioned(
-      right: right - k * 1.5,
-      bottom: bottom + k * 7,
-      child: Opacity(
-        opacity: opacity.clamp(0.0, 1.0),
+  Widget _z(double size, double right, double bottom) => Positioned(
+        right: right,
+        bottom: bottom,
         child: Text(
           'z',
           style: TextStyle(
-            color: widget.zColor,
+            color: zColor,
             fontSize: size,
             fontWeight: FontWeight.w800,
             height: 1,
           ),
         ),
-      ),
-    );
-  }
+      );
 
   @override
   Widget build(BuildContext context) {
-    // Round, but never ClipOval: a path clip leaks native memory on the web
-    // (CanvasKit, Flutter 3.41.7) every frame something under it animates —
-    // one of these per sleeping detector froze the page. A rounded-rectangle
-    // clip does not. Its own RepaintBoundary: the z's repaint only the badge.
-    return RepaintBoundary(
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(999),
-        child: AnimatedBuilder(
-          animation: _c,
-          builder: (context, _) {
-            final t = _c.value;
-            return Stack(
-              clipBehavior: Clip.hardEdge,
-              alignment: Alignment.center,
-              children: [
-                // The moon breathes very slightly with the first z.
-                Transform.translate(
-                  offset: Offset(-1.5, 1.5 - 1.0 * (0.5 - (t - 0.5).abs())),
-                  child: Icon(Icons.dark_mode_rounded,
-                      size: 18, color: widget.color),
-                ),
-                _z(t, 0.0, 7.5, 7, 22),
-                _z(t, 0.45, 6, 3, 20),
-              ],
-            );
-          },
-        ),
+    // Kept inside its disc (the small badge has room for the moon alone).
+    // A rounded-rectangle clip, never ClipOval: a path clip is what leaks
+    // on the web.
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Transform.translate(
+            offset: const Offset(-1.5, 1.5),
+            child: Icon(Icons.dark_mode_rounded, size: 18, color: color),
+          ),
+          _z(7.5, 7, 24),
+          _z(6, 3.5, 30),
+        ],
       ),
     );
   }

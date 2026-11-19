@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../application/ota_push_state.dart';
+import '../../../../shared/widgets/app_notice.dart';
 
 // The push's steps, counters and log, for "Registro" on "Atualizar
 // dispositivos". They draw an [OtaPushState]; nothing here decides anything
@@ -363,11 +364,7 @@ class OtaLogCard extends StatelessWidget {
     await Clipboard.setData(
         ClipboardData(text: _lines.map((l) => l.toString()).join('\n')));
     messenger.showSnackBar(
-      const SnackBar(
-        content: Text('Registro copiado.'),
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: 2),
-      ),
+      appNotice('Registro copiado.', kind: AppNoticeKind.copied),
     );
   }
 }

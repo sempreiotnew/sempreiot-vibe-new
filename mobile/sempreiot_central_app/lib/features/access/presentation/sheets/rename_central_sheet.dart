@@ -6,6 +6,7 @@ import '../../../../core/theme/theme_ext.dart';
 import '../../application/user_access_provider.dart';
 import '../../data/services/lookup_api_service.dart';
 import '../../domain/entities/saved_central.dart';
+import '../../../../shared/widgets/app_notice.dart';
 
 /// Bottom sheet that edits this user's local nickname for a central.
 /// Purely local — other users are not affected; the subId shown below the
@@ -62,11 +63,7 @@ class _RenameCentralSheetState extends ConsumerState<RenameCentralSheet> {
         .updateName(widget.central.identityId, name);
     Navigator.of(context).pop();
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Nome atualizado.'),
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: 2),
-      ),
+      appNotice('Nome atualizado.', kind: AppNoticeKind.success),
     );
   }
 

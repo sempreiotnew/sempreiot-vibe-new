@@ -8,6 +8,7 @@ import '../../application/user_access_provider.dart';
 import '../../domain/entities/lookup_result.dart';
 import '../../../../shared/widgets/presence_indicator.dart';
 import 'package:sempreiot_central_app/features/access/presentation/screens/qr_scanner_screen.dart';
+import '../../../../shared/widgets/app_notice.dart';
 
 /// Strips the `Exception: ` prefix so the guard messages thrown by
 /// RequestAccessNotifier.request() (already user-facing Portuguese text)
@@ -103,9 +104,9 @@ class _AddCentralSheetState extends ConsumerState<AddCentralSheet> {
       if (mounted) {
         Navigator.of(context).pop(true);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Solicitação enviada! Aguardando aprovação.'),
-            behavior: SnackBarBehavior.floating,
+          appNotice(
+            'Solicitação enviada! Aguardando aprovação.',
+            kind: AppNoticeKind.success,
           ),
         );
       }

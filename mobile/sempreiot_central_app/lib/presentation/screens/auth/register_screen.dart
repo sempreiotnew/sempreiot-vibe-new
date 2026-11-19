@@ -8,6 +8,7 @@ import '../../../features/auth/application/register_provider.dart';
 import '../../widgets/auth_form_widgets.dart';
 import '../../widgets/iot_network_animation.dart';
 import 'otp_verification_screen.dart';
+import '../../../shared/widgets/app_notice.dart';
 
 class RegisterScreen extends ConsumerStatefulWidget {
   const RegisterScreen({super.key});
@@ -66,11 +67,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       setState(() => _passwordServerError = raw.substring(15));
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(raw),
-          backgroundColor: Colors.red.shade700,
-          duration: const Duration(seconds: 6),
-        ),
+        appNotice(raw, kind: AppNoticeKind.error),
       );
     }
   }

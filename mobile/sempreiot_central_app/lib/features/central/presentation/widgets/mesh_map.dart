@@ -3,6 +3,7 @@ import 'dart:ui' show Tangent;
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -1522,18 +1523,27 @@ class _MeshGraphPainter extends CustomPainter {
     tp.paint(canvas, pos - Offset(tp.width / 2, tp.height / 2));
   }
 
-  /// A link, drawn as a polyline. Never a `Path`: on the web (CanvasKit,
+  /// A link. On the web, a polyline and never a `Path`: there (CanvasKit,
   /// Flutter 3.41.7) every `drawPath` / `computeMetrics` leaks native
   /// memory, and this painter repaints every frame — the page froze after a
-  /// few minutes with `Aborted()`.
+  /// few minutes with `Aborted()`. Everywhere else, one `Path`: drawn as
+  /// points, the tablet strokes every one of the 24 pieces of a link on its
+  /// own — and blurs each one for the glow — every frame, which made Rede
+  /// too slow to touch (2026-11-19; the leak is the web's alone).
   void _stroke(Canvas canvas, _Polyline line, Paint paint) {
-    canvas.drawPoints(
-      ui.PointMode.polygon,
-      line.points,
-      paint
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round,
-    );
+    paint
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    if (kIsWeb) {
+      canvas.drawPoints(ui.PointMode.polygon, line.points, paint);
+      return;
+    }
+    final points = line.points;
+    final path = Path()..moveTo(points.first.dx, points.first.dy);
+    for (var i = 1; i < points.length; i++) {
+      path.lineTo(points[i].dx, points[i].dy);
+    }
+    canvas.drawPath(path, paint);
   }
 
   void _drawDashed(Canvas canvas, _Polyline line, Paint paint) {

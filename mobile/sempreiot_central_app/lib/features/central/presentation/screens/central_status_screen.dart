@@ -9,6 +9,7 @@ import '../../../access/application/user_access_provider.dart';
 import '../../../access/domain/entities/access_level.dart';
 import '../../../access/domain/entities/saved_central.dart';
 import '../widgets/device_detail_widgets.dart';
+import '../../../../shared/widgets/app_notice.dart';
 
 /// Strips the `Exception: ` prefix so the guard messages thrown by
 /// RequestAccessNotifier.request() show as-is instead of a raw dump.
@@ -205,18 +206,19 @@ class _RequestAgainButtonState extends ConsumerState<_RequestAgainButton> {
           );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Solicitação enviada! Aguardando aprovação.'),
-            behavior: SnackBarBehavior.floating,
+          appNotice(
+            'Solicitação enviada! Aguardando aprovação.',
+            kind: AppNoticeKind.success,
           ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(_friendlyRequestError(e)),
-              behavior: SnackBarBehavior.floating),
+          appNotice(
+            _friendlyRequestError(e),
+            kind: AppNoticeKind.error,
+          ),
         );
       }
     } finally {

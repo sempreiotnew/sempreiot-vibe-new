@@ -7,6 +7,7 @@ import '../../../core/theme/app_text_styles.dart';
 import '../../../features/auth/application/login_provider.dart';
 import '../../widgets/auth_form_widgets.dart';
 import '../splash/splash_screen.dart';
+import '../../../shared/widgets/app_notice.dart';
 
 class SempreIoTLoginModal extends ConsumerStatefulWidget {
   const SempreIoTLoginModal({
@@ -63,11 +64,7 @@ class _SempreIoTLoginModalState extends ConsumerState<SempreIoTLoginModal> {
       setState(() => _passwordServerError = raw.substring(15));
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(raw),
-          backgroundColor: Colors.red.shade700,
-          duration: const Duration(seconds: 6),
-        ),
+        appNotice(raw, kind: AppNoticeKind.error),
       );
     }
   }

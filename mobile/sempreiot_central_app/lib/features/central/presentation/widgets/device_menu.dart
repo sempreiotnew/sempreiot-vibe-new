@@ -22,6 +22,7 @@ import '../../application/system_test_provider.dart';
 import 'device_command_widgets.dart';
 import 'system_test_sheets.dart';
 import 'ota_rede_widgets.dart' show firmwareTagText;
+import '../../../../shared/widgets/app_notice.dart';
 
 /// Screen rect of the widget that owns [context] — the anchor the device
 /// popover points at. Accounts for any pan/zoom transform above it.
@@ -1363,10 +1364,8 @@ Future<void> showCentralMenu({
 }
 
 void _say(BuildContext context, String words) {
-  ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
-    content: Text(words),
-    behavior: SnackBarBehavior.floating,
-  ));
+  ScaffoldMessenger.maybeOf(context)
+      ?.showSnackBar(appNotice(words, kind: AppNoticeKind.warning));
 }
 
 class _CentralPopoverRoute extends StatefulWidget {

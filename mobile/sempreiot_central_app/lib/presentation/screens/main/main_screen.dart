@@ -35,6 +35,7 @@ import 'widgets/main_bottom_nav.dart';
 import 'widgets/main_drawer.dart';
 import '../../../features/central/application/safr_ingest_provider.dart';
 import '../../../features/central/application/central_installation_provider.dart';
+import '../../../shared/widgets/app_notice.dart';
 
 class MainScreen extends ConsumerStatefulWidget {
   const MainScreen({super.key, this.centralId});
@@ -151,10 +152,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         if (entry != null && entry.status == 'ACCEPTED') return;
         _kickedOut = true;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Seu acesso a esta central foi revogado.'),
-            backgroundColor: AppColors.error,
-            behavior: SnackBarBehavior.floating,
+          appNotice(
+            'Seu acesso a esta central foi revogado.',
+            kind: AppNoticeKind.error,
           ),
         );
         // Pops the central dashboard and anything pushed above it.

@@ -33,6 +33,7 @@ import 'device_avatar.dart' show deviceDisplayName;
 import 'editor_gate.dart' show requestEditorRole;
 import 'firmware_update_widgets.dart'
     show OtaCounters, OtaLogCard, OtaStepList, otaMergedLog;
+import '../../../../shared/widgets/app_notice.dart';
 
 // The pieces of "Atualizar dispositivos" around the map: the pill on the
 // status strip, the bar under the map, the firmware sheet and a unit's
@@ -309,7 +310,7 @@ class _ViewOnlyBar extends ConsumerWidget {
         await ref.read(centralMirrorProvider.notifier).sendOtaCancel();
     if (refused != null && context.mounted) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(refused)));
+          .showSnackBar(appNotice(refused, kind: AppNoticeKind.warning));
     }
   }
 }
@@ -708,7 +709,7 @@ class _RunBar extends ConsumerWidget {
       final why = await f;
       if (why != null && context.mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(why)));
+            .showSnackBar(appNotice(why, kind: AppNoticeKind.warning));
       }
     }
 
@@ -1188,7 +1189,7 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
     final said =
         await ref.read(firmwareLibraryProvider.notifier).importFromTablet();
     if (said != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(said)));
+      ScaffoldMessenger.of(context).showSnackBar(appNotice(said));
     }
   }
 
@@ -1282,7 +1283,7 @@ class _DeviceUpdateSheetState extends ConsumerState<DeviceUpdateSheet> {
     setState(() => _starting = false);
     if (refused != null) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(refused)));
+          .showSnackBar(appNotice(refused, kind: AppNoticeKind.warning));
       return;
     }
     ref.read(deviceUpdateSelectionProvider.notifier).clear();
@@ -1670,7 +1671,7 @@ class _LibrarySheet extends ConsumerWidget {
                           .importFromTablet();
                       if (said != null && context.mounted) {
                         ScaffoldMessenger.of(context)
-                            .showSnackBar(SnackBar(content: Text(said)));
+                            .showSnackBar(appNotice(said));
                       }
                     },
               icon: const Icon(Icons.folder_open_rounded, size: 18),
@@ -2075,8 +2076,10 @@ class _HistorySection extends ConsumerWidget {
                   await Clipboard.setData(
                       ClipboardData(text: deviceUpdateHistoryCsv(runs)));
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text('Histórico copiado (CSV).')));
+                    ScaffoldMessenger.of(context).showSnackBar(appNotice(
+                      'Histórico copiado (CSV).',
+                      kind: AppNoticeKind.copied,
+                    ));
                   }
                 },
                 icon: const Icon(Icons.copy_rounded, size: 16),

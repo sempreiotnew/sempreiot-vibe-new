@@ -12,6 +12,7 @@ import '../../application/credentials_admin_provider.dart';
 import '../widgets/device_detail_widgets.dart';
 import '../widgets/editor_gate.dart';
 import 'access_pins_screen.dart';
+import '../../../../shared/widgets/app_notice.dart';
 
 /// Access management for this central. The whole screen is gated: entering
 /// requires the Master or Nível 4 PIN, and the proven role is attached to
@@ -405,11 +406,7 @@ class _GrantedUserCard extends ConsumerWidget {
             onPressed: () {
               Clipboard.setData(ClipboardData(text: relation.userSubId));
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Sub ID copiado.'),
-                  behavior: SnackBarBehavior.floating,
-                  duration: Duration(seconds: 2),
-                ),
+                appNotice('Sub ID copiado.', kind: AppNoticeKind.copied),
               );
             },
           ),
@@ -473,8 +470,7 @@ class _BlockedUserCardState extends ConsumerState<_BlockedUserCard> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('Erro: $e'), behavior: SnackBarBehavior.floating),
+          appNotice('Erro: $e', kind: AppNoticeKind.error),
         );
       }
     } finally {
@@ -579,8 +575,7 @@ Future<void> _confirmBlock(
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text('Erro: $e'), behavior: SnackBarBehavior.floating),
+        appNotice('Erro: $e', kind: AppNoticeKind.error),
       );
     }
   }
@@ -1058,10 +1053,7 @@ class _PendingRequestCardState extends ConsumerState<_PendingRequestCard> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Erro: $e'),
-            behavior: SnackBarBehavior.floating,
-          ),
+          appNotice('Erro: $e', kind: AppNoticeKind.error),
         );
       }
     } finally {
@@ -1081,10 +1073,7 @@ class _PendingRequestCardState extends ConsumerState<_PendingRequestCard> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Erro: $e'),
-            behavior: SnackBarBehavior.floating,
-          ),
+          appNotice('Erro: $e', kind: AppNoticeKind.error),
         );
       }
     } finally {

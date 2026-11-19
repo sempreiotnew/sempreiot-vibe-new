@@ -7,6 +7,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../application/device_info_provider.dart';
 import '../widgets/device_detail_widgets.dart';
+import '../../../../shared/widgets/app_notice.dart';
 
 class DeviceInfoScreen extends ConsumerWidget {
   const DeviceInfoScreen({super.key});
@@ -100,11 +101,7 @@ class _SubIdRow extends StatelessWidget {
   void _copySubId(BuildContext context) {
     Clipboard.setData(ClipboardData(text: subId));
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Sub ID copiado.'),
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: 2),
-      ),
+      appNotice('Sub ID copiado.', kind: AppNoticeKind.copied),
     );
   }
 

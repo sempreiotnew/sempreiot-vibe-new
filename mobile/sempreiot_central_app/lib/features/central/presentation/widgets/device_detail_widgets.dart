@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
+import '../../../../shared/widgets/app_notice.dart';
 
 // ── Section header ────────────────────────────────────────────────────────────
 
@@ -142,11 +143,7 @@ class InfoReadRow extends StatelessWidget {
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: value));
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('$label copiado.'),
-                    behavior: SnackBarBehavior.floating,
-                    duration: const Duration(seconds: 2),
-                  ),
+                  appNotice('$label copiado.', kind: AppNoticeKind.copied),
                 );
               },
             )

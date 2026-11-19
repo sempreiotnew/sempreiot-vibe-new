@@ -11,6 +11,7 @@ import '../../domain/safr_frame.dart';
 import '../../application/central_installation_provider.dart';
 import '../../application/ota_rollout_words.dart';
 import '../widgets/safr_frame_text.dart';
+import '../../../../shared/widgets/app_notice.dart';
 
 class SafrDetailScreen extends StatefulWidget {
   const SafrDetailScreen({super.key, required this.packet});
@@ -134,11 +135,7 @@ class _SafrDetailScreenState extends State<SafrDetailScreen> {
     }
     Clipboard.setData(ClipboardData(text: buf.toString()));
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Copiado'),
-        duration: Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-      ),
+      appNotice('Copiado', kind: AppNoticeKind.copied),
     );
   }
 }

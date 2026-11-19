@@ -7,6 +7,7 @@ import '../../../access/domain/entities/access_level.dart';
 import '../../application/credentials_admin_provider.dart';
 import '../../application/device_metadata_providers.dart';
 import '../../../../shared/widgets/pin_pad.dart';
+import '../../../../shared/widgets/app_notice.dart';
 
 enum _PinStep { current, newPin, confirm }
 
@@ -183,10 +184,9 @@ class _PinChangeScreenState extends ConsumerState<PinChangeScreen> {
 
     ref.invalidate(deviceCredentialsProvider);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('PIN alterado com sucesso.'),
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: 2),
+      appNotice(
+        'PIN alterado com sucesso.',
+        kind: AppNoticeKind.success,
       ),
     );
     Navigator.of(context).pop(true);

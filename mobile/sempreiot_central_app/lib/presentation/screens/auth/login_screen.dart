@@ -12,6 +12,7 @@ import '../splash/splash_screen.dart';
 import 'forgot_password_screen.dart';
 import 'login_modal.dart';
 import 'register_screen.dart';
+import '../../../shared/widgets/app_notice.dart';
 
 void _showSempreIoTLoginModal(BuildContext context) {
   showModalBottomSheet(
@@ -48,11 +49,7 @@ class LoginScreen extends ConsumerWidget {
     ref.listen(authNotifierProvider, (prev, next) {
       if (next.hasError) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(next.error.toString()),
-            backgroundColor: Colors.red.shade700,
-            duration: const Duration(seconds: 6),
-          ),
+          appNotice(next.error.toString(), kind: AppNoticeKind.error),
         );
       }
       // When auth just succeeded (OAuth / WebUI flow): push SplashScreen so

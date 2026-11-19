@@ -10,6 +10,7 @@ import '../../../features/auth/application/forgot_password_provider.dart';
 import '../../widgets/auth_form_widgets.dart';
 import '../../widgets/iot_network_animation.dart';
 import '../../widgets/otp_input_row.dart';
+import '../../../shared/widgets/app_notice.dart';
 
 class ForgotPasswordScreen extends ConsumerStatefulWidget {
   const ForgotPasswordScreen({super.key});
@@ -97,7 +98,8 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
     if (!_step2FormKey.currentState!.validate()) return;
     if (_otpCtrl.text.length < 6) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Informe o código de 6 dígitos.')),
+        appNotice('Informe o código de 6 dígitos.',
+            kind: AppNoticeKind.warning),
       );
       return;
     }
@@ -130,11 +132,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
       }
       if (next is ForgotPasswordError) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(next.message),
-            backgroundColor: Colors.red.shade700,
-            duration: const Duration(seconds: 6),
-          ),
+          appNotice(next.message, kind: AppNoticeKind.error),
         );
         ref
             .read(forgotPasswordNotifierProvider.notifier)

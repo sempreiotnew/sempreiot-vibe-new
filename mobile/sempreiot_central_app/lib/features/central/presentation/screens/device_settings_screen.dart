@@ -17,6 +17,7 @@ import '../../domain/safr/safr_v2_payloads.dart';
 import '../widgets/device_avatar.dart';
 import '../widgets/device_detail_widgets.dart';
 import '../widgets/editor_gate.dart';
+import '../../../../shared/widgets/app_notice.dart';
 
 /// Dispositivo — everything the tablet knows about one device (identity,
 /// place in the mesh, state on the board) and its management: rename,
@@ -401,10 +402,9 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text(message),
-        backgroundColor: ok ? AppColors.success : AppColors.trouble,
-        behavior: SnackBarBehavior.floating,
+      ..showSnackBar(appNotice(
+        message,
+        kind: ok ? AppNoticeKind.success : AppNoticeKind.warning,
       ));
   }
 
@@ -756,9 +756,9 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text('${deviceDisplayName(node)} removido da instalação.'),
-        behavior: SnackBarBehavior.floating,
+      ..showSnackBar(appNotice(
+        '${deviceDisplayName(node)} removido da instalação.',
+        kind: AppNoticeKind.success,
       ));
     Navigator.pop(context);
   }
@@ -988,11 +988,8 @@ class _CopyButton extends StatelessWidget {
         tooltip: 'Copiar',
         onPressed: () {
           Clipboard.setData(ClipboardData(text: value));
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('$label copiado.'),
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
-          ));
+          ScaffoldMessenger.of(context).showSnackBar(
+              appNotice('$label copiado.', kind: AppNoticeKind.copied));
         },
         icon: Icon(Icons.copy_rounded,
             size: 16, color: context.textSecondary.withValues(alpha: 0.7)),

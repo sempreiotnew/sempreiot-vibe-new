@@ -9,6 +9,7 @@ import '../../application/installation_provider.dart';
 import '../../domain/services/installation_backup_codec.dart';
 import 'installation_detail_screen.dart';
 import 'join_from_board_screen.dart';
+import '../../../../shared/widgets/app_notice.dart';
 
 /// "Entrar em instalação existente" (lifecycle §5 D): a second installer
 /// scans the encrypted QR another phone or the tablet shows, types the
@@ -73,17 +74,17 @@ class _JoinInstallationScreenState extends ConsumerState<JoinInstallationScreen>
     final messenger = ScaffoldMessenger.of(context);
     final format = InstallationBackupCodec.detectFormat(raw);
     if (format == BackupFormat.unknown) {
-      messenger.showSnackBar(const SnackBar(
-        content: Text('Isto não é um código de instalação compartilhado.'),
-        backgroundColor: AppColors.error,
+      messenger.showSnackBar(appNotice(
+        'Isto não é um código de instalação compartilhado.',
+        kind: AppNoticeKind.error,
       ));
       return;
     }
     if (format == BackupFormat.legacyPlaintext) {
-      messenger.showSnackBar(const SnackBar(
-        content: Text('Este é um backup antigo sem senha. Peça ao outro '
-            'instalador para usar "Compartilhar" na versão atual do app.'),
-        backgroundColor: AppColors.error,
+      messenger.showSnackBar(appNotice(
+        'Este é um backup antigo sem senha. Peça ao outro '
+        'instalador para usar "Compartilhar" na versão atual do app.',
+        kind: AppNoticeKind.error,
       ));
       return;
     }
@@ -102,11 +103,12 @@ class _JoinInstallationScreenState extends ConsumerState<JoinInstallationScreen>
           .read(installationListProvider.notifier)
           .importShared(shared);
       if (!mounted) return;
-      messenger.showSnackBar(SnackBar(
-        content: Text(outcome == ImportSharedOutcome.added
+      messenger.showSnackBar(appNotice(
+        outcome == ImportSharedOutcome.added
             ? 'Você entrou na instalação "${installation.displayName}".'
             : 'A instalação "${installation.displayName}" já estava neste '
-                'telefone; nome e zonas atualizados.'),
+                'telefone; nome e zonas atualizados.',
+        kind: AppNoticeKind.success,
       ));
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
@@ -115,10 +117,7 @@ class _JoinInstallationScreenState extends ConsumerState<JoinInstallationScreen>
         ),
       );
     } on BackupDecodeException catch (e) {
-      messenger.showSnackBar(SnackBar(
-        content: Text(e.message),
-        backgroundColor: AppColors.error,
-      ));
+      messenger.showSnackBar(appNotice(e.message, kind: AppNoticeKind.error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

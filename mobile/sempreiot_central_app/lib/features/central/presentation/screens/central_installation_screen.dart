@@ -20,6 +20,7 @@ import '../../application/topology_provider.dart';
 import '../widgets/device_detail_widgets.dart';
 import '../widgets/editor_gate.dart';
 import 'devices_screen.dart';
+import '../../../../shared/widgets/app_notice.dart';
 
 /// CENTRAL mode: which installation this tablet belongs to. The code reaches
 /// the tablet from an installer's encrypted share (QR or pasted text,
@@ -55,13 +56,15 @@ class _CentralInstallationScreenState
         'name': parsed.installation.displayName,
         'legacy_plaintext': parsed.legacyPlaintext,
       });
-      messenger.showSnackBar(SnackBar(
-        content: Text(parsed.legacyPlaintext
+      messenger.showSnackBar(appNotice(
+        parsed.legacyPlaintext
             ? 'Instalação "${parsed.installation.displayName}" vinculada a '
                 'partir de um backup antigo SEM senha. Peça ao instalador '
                 'para usar "Compartilhar" na versão atual do app.'
-            : 'Instalação "${parsed.installation.displayName}" vinculada.'),
-        backgroundColor: parsed.legacyPlaintext ? AppColors.warning : null,
+            : 'Instalação "${parsed.installation.displayName}" vinculada.',
+        kind: parsed.legacyPlaintext
+            ? AppNoticeKind.warning
+            : AppNoticeKind.success,
         duration: Duration(seconds: parsed.legacyPlaintext ? 8 : 4),
       ));
     } on PassphraseRequired {
@@ -75,10 +78,7 @@ class _CentralInstallationScreenState
       if (!mounted || passphrase == null) return;
       await _import(raw, passphrase: passphrase);
     } on FormatException catch (e) {
-      messenger.showSnackBar(SnackBar(
-        content: Text(e.message),
-        backgroundColor: AppColors.error,
-      ));
+      messenger.showSnackBar(appNotice(e.message, kind: AppNoticeKind.error));
     }
   }
 
@@ -182,9 +182,9 @@ class _CentralInstallationScreenState
       if (raw == null) return null;
       final parsed = DeviceQrPayload.tryParse(raw);
       if (parsed == null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Isto não é uma etiqueta de dispositivo.'),
-          backgroundColor: AppColors.error,
+        ScaffoldMessenger.of(context).showSnackBar(appNotice(
+          'Isto não é uma etiqueta de dispositivo.',
+          kind: AppNoticeKind.error,
         ));
       }
       return parsed;
@@ -239,17 +239,15 @@ class _CentralInstallationScreenState
     final messenger = ScaffoldMessenger.of(context);
     final key =
         ProvisioningCrypto.deriveSetupKey(id: sticker.id, pop: sticker.pop);
-    messenger.showSnackBar(
-        const SnackBar(content: Text('Pedindo o código à placa…')));
+    messenger.showSnackBar(appNotice('Pedindo o código à placa…'));
     final code = await ref.read(safrDownlinkProvider).sendGetCode(key);
     if (!mounted) return;
     if (code == null) {
-      messenger.showSnackBar(const SnackBar(
-        content: Text(
-            'A placa não respondeu. Confira o cabo da placa, o pop da etiqueta '
-            'e se a placa já foi configurada (LED magenta).'),
-        backgroundColor: AppColors.error,
-        duration: Duration(seconds: 8),
+      messenger.showSnackBar(appNotice(
+        'A placa não respondeu. Confira o cabo da placa, o pop da etiqueta '
+        'e se a placa já foi configurada (LED magenta).',
+        kind: AppNoticeKind.error,
+        duration: const Duration(seconds: 8),
       ));
       return;
     }
@@ -270,9 +268,9 @@ class _CentralInstallationScreenState
     await ref.read(centralInstallationProvider.notifier).adopt(installation);
     await _audit('installation_from_board',
         {'system_id': code.systemId, 'name': code.name});
-    messenger.showSnackBar(SnackBar(
-      content: Text(
-          'Código lido da placa: "${installation.displayName}" vinculada.'),
+    messenger.showSnackBar(appNotice(
+      'Código lido da placa: "${installation.displayName}" vinculada.',
+      kind: AppNoticeKind.success,
     ));
   }
 
@@ -328,9 +326,10 @@ class _CentralInstallationScreenState
       'name': installation.displayName,
     });
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('"${installation.displayName}" criada. Defina uma senha '
-          'para o QR e escaneie-o no app do instalador.'),
+    ScaffoldMessenger.of(context).showSnackBar(appNotice(
+      '"${installation.displayName}" criada. Defina uma senha '
+      'para o QR e escaneie-o no app do instalador.',
+      kind: AppNoticeKind.success,
       duration: const Duration(seconds: 6),
     ));
     await _share(installation);
@@ -381,8 +380,9 @@ class _CentralInstallationScreenState
     }
     await _audit('installation_resend_names', {'sent': sent, 'ok': ok});
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('Reenviado: $ok de $sent confirmados pela placa.'),
+    ScaffoldMessenger.of(context).showSnackBar(appNotice(
+      'Reenviado: $ok de $sent confirmados pela placa.',
+      kind: AppNoticeKind.success,
     ));
     downlink.sendGetDeviceTable();
   }

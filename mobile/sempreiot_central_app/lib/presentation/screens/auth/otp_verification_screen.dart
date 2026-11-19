@@ -9,6 +9,7 @@ import '../../../features/auth/application/otp_provider.dart';
 import '../../widgets/iot_network_animation.dart';
 import '../../widgets/otp_input_row.dart';
 import '../splash/splash_screen.dart';
+import '../../../shared/widgets/app_notice.dart';
 
 class OtpVerificationScreen extends ConsumerStatefulWidget {
   const OtpVerificationScreen({
@@ -130,19 +131,15 @@ class _OtpVerificationScreenState
         _otpController.clear();
         _otpFocusNode.requestFocus();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(next.message),
-            backgroundColor: Colors.red.shade700,
-            duration: const Duration(seconds: 6),
-          ),
+          appNotice(next.message, kind: AppNoticeKind.error),
         );
         ref.read(otpNotifierProvider.notifier).reset();
       }
       if (next is OtpResendSuccess) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Código reenviado com sucesso.'),
-            duration: Duration(seconds: 3),
+          appNotice(
+            'Código reenviado com sucesso.',
+            kind: AppNoticeKind.success,
           ),
         );
         ref.read(otpNotifierProvider.notifier).reset();

@@ -211,6 +211,9 @@ lib/shared/
 # 🎨 UI Rules
 
 - UI must be dumb (no business logic)
+- A short message that answers an action (saved, copied, refused) is the app's notice card:
+  `appNotice(...)` / `showAppNotice(...)` in `lib/shared/widgets/app_notice.dart`, with its kind
+  (success, info, copied, warning, error). Never build a `SnackBar` by hand.
 - Break large widgets into smaller components
 - Prefer composition over inheritance
 - No direct Amplify or API usage in widgets

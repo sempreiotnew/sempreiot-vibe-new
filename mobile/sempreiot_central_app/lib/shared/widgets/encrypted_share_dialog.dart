@@ -4,6 +4,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/theme_ext.dart';
+import 'app_notice.dart';
 
 /// Shows the passphrase-encrypted installation share (lifecycle §2) as a QR
 /// plus a copy-as-text button.
@@ -105,7 +106,10 @@ class EncryptedShareDialog extends StatelessWidget {
                     await Clipboard.setData(ClipboardData(text: envelope));
                     if (!context.mounted) return;
                     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-                      const SnackBar(content: Text('Código cifrado copiado.')),
+                      appNotice(
+                        'Código cifrado copiado.',
+                        kind: AppNoticeKind.copied,
+                      ),
                     );
                   },
                   icon: const Icon(Icons.copy_rounded, size: 18),

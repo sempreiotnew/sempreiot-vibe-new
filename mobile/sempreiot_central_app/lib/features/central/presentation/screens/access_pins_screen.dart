@@ -10,6 +10,7 @@ import '../widgets/device_detail_widgets.dart';
 import '../widgets/editor_gate.dart';
 import 'audit_log_screen.dart';
 import 'pin_change_screen.dart';
+import '../../../../shared/widgets/app_notice.dart';
 
 /// Management area for every credential on this central. Entry is gated by
 /// [EditorGate] (Master or Nível 4 PIN) unless the caller already proved a
@@ -238,11 +239,9 @@ class _UnlockPinRow extends ConsumerWidget {
       onTap: canOpen
           ? () => _open(context, ref, reset: !configured)
           : () => ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                      'Apenas o Master pode definir um PIN não configurado.'),
-                  behavior: SnackBarBehavior.floating,
-                ),
+                appNotice(
+                    'Apenas o Master pode definir um PIN não configurado.',
+                    kind: AppNoticeKind.warning),
               ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -344,11 +343,9 @@ class _LevelPinRow extends ConsumerWidget {
       onTap: canOpen
           ? () => _open(context, ref, reset: !configured)
           : () => ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                      'Apenas o Master pode definir um PIN não configurado.'),
-                  behavior: SnackBarBehavior.floating,
-                ),
+                appNotice(
+                    'Apenas o Master pode definir um PIN não configurado.',
+                    kind: AppNoticeKind.warning),
               ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -564,10 +561,9 @@ class _RootEditSheetState extends ConsumerState<_RootEditSheet> {
     ref.invalidate(deviceCredentialsProvider);
     Navigator.of(context).pop();
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(widget.isSenha ? 'Senha alterada.' : 'Root alterado.'),
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
+      appNotice(
+        widget.isSenha ? 'Senha alterada.' : 'Root alterado.',
+        kind: AppNoticeKind.success,
       ),
     );
   }

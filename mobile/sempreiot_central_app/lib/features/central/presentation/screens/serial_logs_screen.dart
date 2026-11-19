@@ -16,6 +16,7 @@ import '../../domain/safr_frame.dart';
 import '../widgets/device_avatar.dart' show deviceDisplayName;
 import '../widgets/safr_frame_text.dart';
 import 'safr_detail_screen.dart';
+import '../../../../shared/widgets/app_notice.dart';
 
 /// Logs seriais — the protocol console: every SAFR v3 frame the board sent
 /// the tablet, with per-frame validation (CRC + authentication + site
@@ -104,11 +105,7 @@ class _SerialLogsScreenState extends ConsumerState<SerialLogsScreen> {
     }).join('\n');
     Clipboard.setData(ClipboardData(text: text));
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Logs copiados'),
-        duration: Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-      ),
+      appNotice('Logs copiados', kind: AppNoticeKind.copied),
     );
   }
 

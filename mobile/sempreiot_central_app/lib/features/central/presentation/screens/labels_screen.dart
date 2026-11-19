@@ -13,6 +13,7 @@ import '../../domain/safr/safr_v2_payloads.dart';
 import '../widgets/device_avatar.dart';
 import '../widgets/editor_gate.dart';
 import 'device_settings_screen.dart';
+import '../../../../shared/widgets/app_notice.dart';
 
 /// Zonas / Endereçamentos — the board's label table of one kind (protocol
 /// §14.1 / §14.2): the names the user sees behind the ids every unit
@@ -166,10 +167,9 @@ class _LabelsScreenState extends ConsumerState<LabelsScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text(message),
-        backgroundColor: ok ? AppColors.success : AppColors.trouble,
-        behavior: SnackBarBehavior.floating,
+      ..showSnackBar(appNotice(
+        message,
+        kind: ok ? AppNoticeKind.success : AppNoticeKind.warning,
       ));
   }
 
