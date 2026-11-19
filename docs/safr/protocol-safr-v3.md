@@ -1099,7 +1099,10 @@ corruption (≥ 5 failures within 60 s) must raise a TROUBLE ("qualidade do
 enlace degradada") even if some frames still get through — degraded is not
 "working". ⛑ UL 864 monitoring for integrity; EN 54-25 interference immunity.
 
-**Weak link and downlink loss (v3.6, 2026-10-26).** Two rules the central applies to every
+**Weak link and downlink loss (v3.6, 2026-10-26) — withdrawn 2026-11-18.** The central no longer
+applies the two rules below: units choose and change their parent by path signal on their own (§7.16,
+§12.3), and the flag misread strong links. `DL_HEARD` / `DL_MAP` stay on the wire as readings. As it
+was: two rules the central applied to every
 powered node, both from its HEARTBEAT (§7.3), neither touching "online" (§9.2 stays the silence rule):
 
 - **Weak link:** `RSSI_TO_PARENT` < **−85 dBm** — the leaf bind threshold of §12.3, applied to nodes.

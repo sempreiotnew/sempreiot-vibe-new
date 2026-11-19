@@ -767,26 +767,33 @@ class _DeviceSleepingMoonState extends State<DeviceSleepingMoon>
 
   @override
   Widget build(BuildContext context) {
-    return ClipOval(
-      child: AnimatedBuilder(
-        animation: _c,
-        builder: (context, _) {
-          final t = _c.value;
-          return Stack(
-            clipBehavior: Clip.hardEdge,
-            alignment: Alignment.center,
-            children: [
-              // The moon breathes very slightly with the first z.
-              Transform.translate(
-                offset: Offset(-1.5, 1.5 - 1.0 * (0.5 - (t - 0.5).abs())),
-                child: Icon(Icons.dark_mode_rounded,
-                    size: 18, color: widget.color),
-              ),
-              _z(t, 0.0, 7.5, 7, 22),
-              _z(t, 0.45, 6, 3, 20),
-            ],
-          );
-        },
+    // Round, but never ClipOval: a path clip leaks native memory on the web
+    // (CanvasKit, Flutter 3.41.7) every frame something under it animates —
+    // one of these per sleeping detector froze the page. A rounded-rectangle
+    // clip does not. Its own RepaintBoundary: the z's repaint only the badge.
+    return RepaintBoundary(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(999),
+        child: AnimatedBuilder(
+          animation: _c,
+          builder: (context, _) {
+            final t = _c.value;
+            return Stack(
+              clipBehavior: Clip.hardEdge,
+              alignment: Alignment.center,
+              children: [
+                // The moon breathes very slightly with the first z.
+                Transform.translate(
+                  offset: Offset(-1.5, 1.5 - 1.0 * (0.5 - (t - 0.5).abs())),
+                  child: Icon(Icons.dark_mode_rounded,
+                      size: 18, color: widget.color),
+                ),
+                _z(t, 0.0, 7.5, 7, 22),
+                _z(t, 0.45, 6, 3, 20),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
