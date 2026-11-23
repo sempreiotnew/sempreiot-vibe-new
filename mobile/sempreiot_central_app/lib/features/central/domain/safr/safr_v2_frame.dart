@@ -74,6 +74,10 @@ enum SafrMsgType {
   /// v3.8 (spec §14.2): the board's zone / endereçamento tables, one kind
   /// per page set, serial only.
   labelTable(0x16),
+
+  /// v3.14 (spec §7.17): a mains unit that had no path to the central
+  /// says, once it is back, how long, how it began and what it took.
+  outageReport(0x19),
   unknown(0x00);
 
   const SafrMsgType(this.wire);
@@ -299,6 +303,7 @@ SafrWireFrame parseSafrWireFrame(
     SafrMsgType.otaResult => SafrOtaResultPayload.parse(plaintext),
     SafrMsgType.otaRollout => SafrOtaRolloutPayload.parse(plaintext),
     SafrMsgType.labelTable => SafrLabelTablePayload.parse(plaintext),
+    SafrMsgType.outageReport => SafrOutageReportPayload.parse(plaintext),
     SafrMsgType.unknown => SafrUnknownPayload(plaintext),
   };
 

@@ -1075,6 +1075,9 @@ class _WireDetailScaffold extends ConsumerWidget {
         v2.SafrMsgType.nameAnnounce =>
           'O dispositivo anuncia nome, zona, papel, produto e versão do '
               'firmware.',
+        v2.SafrMsgType.outageReport =>
+          'O dispositivo ficou sem caminho até a central e conta, ao '
+              'voltar, quanto tempo, por que e o que precisou fazer (§7.17).',
         v2.SafrMsgType.deviceTable =>
           'Tabela de dispositivos da placa, uma página por quadro (§7.12).',
         v2.SafrMsgType.code =>

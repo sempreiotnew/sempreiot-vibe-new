@@ -262,6 +262,16 @@ class SafrIngestService {
       }
     }
 
+    // A unit that was without a path says what happened (spec §7.17): one
+    // line in its history. Its retries carry the same MSG_ID; one that
+    // comes a minute later is recognised by what it says.
+    final outage = frame.payload;
+    if (trusted.fresh &&
+        frame.msgType == SafrMsgType.outageReport &&
+        outage is SafrOutageReportPayload) {
+      await _insertOutage(frame, outage, packetId, now);
+    }
+
     final heartbeat = frame.payload;
     if (heartbeat is SafrHeartbeatPayload && heartbeat.layer == 0) {
       onOtaBoardEvent?.call(BoardHeartbeatEvent(
@@ -774,6 +784,57 @@ class SafrIngestService {
             if (retx) 'retx': true,
             if (historic) 'historic': true,
             if (jrnSeq != null) 'jrn_seq': jrnSeq,
+          }),
+        ));
+  }
+
+  /// How long a repeated OUTAGE_REPORT is still the same report: the unit
+  /// sends it for at most 3 × 2 s + 5 × 60 s (spec §7.17).
+  static const outageRepeatWindow = Duration(minutes: 10);
+
+  Future<void> _insertOutage(
+    SafrWireFrame frame,
+    SafrOutageReportPayload p,
+    int packetId,
+    DateTime now,
+  ) async {
+    final raw = p
+        .build()
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+    final recent = await (db.select(db.deviceEvents)
+          ..where((t) =>
+              t.deviceMac.equals(frame.srcMac) &
+              t.msgType.equals(SafrMsgType.outageReport.wire) &
+              t.receivedAt.isBiggerThanValue(now.subtract(outageRepeatWindow))))
+        .get();
+    for (final row in recent) {
+      try {
+        final detail = jsonDecode(row.detailJson);
+        if (detail is Map && detail['raw'] == raw) return;
+      } catch (_) {
+        // An unreadable row is not this report.
+      }
+    }
+    await db.into(db.deviceEvents).insert(DeviceEventsCompanion.insert(
+          receivedAt: now,
+          deviceMac: frame.srcMac,
+          msgType: SafrMsgType.outageReport.wire,
+          severity: 1, // trouble: the unit was unreachable for that long
+          packetId: Value(packetId),
+          detailJson: jsonEncode({
+            'kind': 'outage',
+            'description': p.describe(),
+            'raw': raw,
+            'msg_id': frame.msgId,
+            'duration_s': p.duration.inSeconds,
+            'cause': p.cause.wire,
+            'flags': p.flags,
+            'rescues': p.rescues,
+            'rescues_missed': p.rescuesMissed,
+            'any_rounds': p.anyRounds,
+            'restarts': p.restarts,
+            'end': p.end.wire,
           }),
         ));
   }

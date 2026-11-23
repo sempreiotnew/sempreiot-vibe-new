@@ -1558,6 +1558,156 @@ class SafrParentOfferPayload extends SafrV2Payload {
       Uint8List.fromList([purpose & 0xFF, rssiSeen & 0xFF, layer ?? 0xFF]);
 }
 
+/// How an outage began (OUTAGE_REPORT `CAUSE`, spec §7.17).
+enum SafrOutageCause {
+  unknown(0),
+  sinceStart(1),
+  parentLost(2),
+  parentSilent(3),
+  boardLost(4),
+  yielded(5);
+
+  const SafrOutageCause(this.wire);
+  final int wire;
+
+  static SafrOutageCause fromWire(int v) =>
+      values.firstWhere((e) => e.wire == v, orElse: () => unknown);
+}
+
+/// How the unit came back (OUTAGE_REPORT `END`, spec §7.17).
+enum SafrOutageEnd {
+  rescued(1),
+  asRoot(2),
+  other(3);
+
+  const SafrOutageEnd(this.wire);
+  final int wire;
+
+  static SafrOutageEnd fromWire(int v) =>
+      values.firstWhere((e) => e.wire == v, orElse: () => other);
+}
+
+/// OUTAGE_REPORT — `MSG_TYPE 0x19`, mains unit → central, `F_ACK_REQ`
+/// (spec §7.17, v3.14): the unit had no path to the central and says, once
+/// it is back, how long, how it began, what it tried and how many times it
+/// restarted itself. 12 bytes:
+/// `VER ‖ DURATION_S u32 ‖ CAUSE ‖ FLAGS ‖ RESCUES ‖ RESCUES_MISSED ‖
+/// ANY_ROUNDS ‖ RESTARTS ‖ END`. Mirrors `siot_netcore.c` (OUTAGE_REPORT_LEN).
+class SafrOutageReportPayload extends SafrV2Payload {
+  const SafrOutageReportPayload({
+    required this.duration,
+    required this.cause,
+    this.flags = 0,
+    this.rescues = 0,
+    this.rescuesMissed = 0,
+    this.anyRounds = 0,
+    this.restarts = 0,
+    this.end = SafrOutageEnd.other,
+  });
+
+  final Duration duration;
+  final SafrOutageCause cause;
+  final int flags;
+  final int rescues;
+  final int rescuesMissed;
+  final int anyRounds;
+  final int restarts;
+  final SafrOutageEnd end;
+
+  static const version = 1;
+  static const wireLength = 12;
+
+  /// FLAGS bit 0: it held the root's role with no central in reach.
+  bool get heldRootRole => flags & 0x01 != 0;
+
+  /// FLAGS bit 1: it was under a unit that had no path itself.
+  bool get underPathlessParent => flags & 0x02 != 0;
+
+  /// FLAGS bit 2: it was attached to nothing, as a child.
+  bool get attachedToNothing => flags & 0x04 != 0;
+
+  Uint8List build() {
+    final s = duration.inSeconds;
+    return Uint8List.fromList([
+      version,
+      (s >> 24) & 0xFF,
+      (s >> 16) & 0xFF,
+      (s >> 8) & 0xFF,
+      s & 0xFF,
+      cause.wire,
+      flags & 0xFF,
+      rescues & 0xFF,
+      rescuesMissed & 0xFF,
+      anyRounds & 0xFF,
+      restarts & 0xFF,
+      end.wire,
+    ]);
+  }
+
+  /// A later version may add bytes at the end: the first twelve are read.
+  static SafrOutageReportPayload? parse(Uint8List p) {
+    if (p.length < wireLength || p[0] < version) return null;
+    return SafrOutageReportPayload(
+      duration:
+          Duration(seconds: (p[1] << 24) | (p[2] << 16) | (p[3] << 8) | p[4]),
+      cause: SafrOutageCause.fromWire(p[5]),
+      flags: p[6],
+      rescues: p[7],
+      rescuesMissed: p[8],
+      anyRounds: p[9],
+      restarts: p[10],
+      end: SafrOutageEnd.fromWire(p[11]),
+    );
+  }
+
+  static String _span(Duration d) {
+    final h = d.inHours, m = d.inMinutes % 60, s = d.inSeconds % 60;
+    if (h > 0) return m > 0 ? '$h h $m min' : '$h h';
+    if (m > 0) return s > 0 ? '$m min $s s' : '$m min';
+    return '$s s';
+  }
+
+  /// The line of the event history, in the operator's words (after the
+  /// unit's name): how long, why, what it took, how it came back.
+  String describe() {
+    final why = switch (cause) {
+      SafrOutageCause.sinceStart => 'não encontrou a rede ao ligar',
+      SafrOutageCause.parentLost =>
+        'o dispositivo ao qual estava ligado saiu do ar',
+      SafrOutageCause.parentSilent =>
+        'o dispositivo ao qual estava ligado ficou sem caminho',
+      SafrOutageCause.boardLost => 'perdeu a ligação com a central (era a raiz)',
+      SafrOutageCause.yielded => 'deixou de ser a raiz',
+      SafrOutageCause.unknown => null,
+    };
+    final took = <String>[
+      if (rescues > 0)
+        rescuesMissed > 0
+            ? '$rescues ${rescues == 1 ? 'tentativa' : 'tentativas'} de '
+                'religar por outro dispositivo, $rescuesMissed sem sucesso'
+            : '$rescues ${rescues == 1 ? 'tentativa' : 'tentativas'} de '
+                'religar por outro dispositivo',
+      if (anyRounds > 0)
+        '$anyRounds ${anyRounds == 1 ? 'procura' : 'procuras'} por qualquer '
+            'dispositivo',
+      if (restarts > 0)
+        'reiniciou sozinho $restarts ${restarts == 1 ? 'vez' : 'vezes'}',
+    ];
+    final back = switch (end) {
+      SafrOutageEnd.rescued => 'voltou por outro dispositivo',
+      SafrOutageEnd.asRoot => 'voltou como raiz',
+      SafrOutageEnd.other => 'voltou',
+    };
+    final parts = [
+      'ficou ${_span(duration)} sem caminho até a central',
+      if (why != null) why,
+      ...took,
+      back,
+    ];
+    return parts.join(' · ');
+  }
+}
+
 /// Raw payload kept when the MSG_TYPE is unknown or the layout mismatches.
 class SafrUnknownPayload extends SafrV2Payload {
   const SafrUnknownPayload(this.bytes);

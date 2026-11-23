@@ -69,7 +69,8 @@ SafrLogGroup safrLogGroup(SafrMsgType t) => switch (t) {
       SafrMsgType.nameAnnounce ||
       SafrMsgType.timeSync ||
       SafrMsgType.parentProbe ||
-      SafrMsgType.parentOffer =>
+      SafrMsgType.parentOffer ||
+      SafrMsgType.outageReport =>
         SafrLogGroup.network,
       SafrMsgType.ack || SafrMsgType.command => SafrLogGroup.commands,
       SafrMsgType.installation ||
@@ -133,6 +134,8 @@ SafrFrameLook safrFrameLook(SafrWireFrame f) {
         ? (color: AppColors.ledCyan, chip: 'OTA OK', name: name)
         : (color: AppColors.error, chip: 'OTA ERR', name: name),
     SafrOtaRolloutPayload _ => (color: _update, chip: 'ROLL', name: name),
+    SafrOutageReportPayload _ =>
+      (color: AppColors.warning, chip: 'REDE', name: name),
     SafrUnknownPayload _ || null => (color: AppColors.warning, chip: '?', name: name),
   };
 }
@@ -225,6 +228,8 @@ String safrFrameSummary(SafrWireFrame f) {
     case SafrLabelTablePayload p:
       return '${p.kind.plural.toLowerCase()} ${p.page}/${p.pageCount} · '
           '${p.total} · rev ${p.rev}';
+    case SafrOutageReportPayload p:
+      return p.describe();
     case SafrUnknownPayload p:
       return '${p.bytes.length} B não decodificados';
     case null:
