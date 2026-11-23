@@ -755,12 +755,27 @@ MirrorTests? decodeMirrorTests(String payload) {
 /// One alarm held on the panel (SAFR v3 §7.1.4): latched until the operator
 /// resets it at the tablet.
 class MirrorAlarm {
-  const MirrorAlarm({required this.mac, this.name, this.zone, this.since});
+  const MirrorAlarm({
+    required this.mac,
+    this.name,
+    this.zone,
+    this.since,
+    this.address,
+    this.productCode,
+    this.leaf = false,
+  });
 
   final String mac;
   final String? name;
   final String? zone;
   final DateTime? since;
+
+  /// What a phone needs to draw the unit itself (2026-11-23): its
+  /// endereçamento, its product (the model it is drawn as), whether it
+  /// runs on a battery. Absent from a central on an older app.
+  final String? address;
+  final int? productCode;
+  final bool leaf;
 }
 
 class MirrorAlarms {
@@ -775,27 +790,222 @@ class MirrorAlarms {
   final MirrorPanel? panel;
 }
 
+/// What kind of line an event is — the word and the colour it is listed
+/// with (2026-11-23). It is not the wire's severity alone: a manual test
+/// arrives as an "alert" and is no warning of anything, and "the root
+/// changed" is news, not "OK".
+enum PanelEventKind {
+  /// Something came back to normal.
+  ok(0),
+
+  /// News that asks for nothing: a test, a command, a change in the mesh.
+  info(4),
+
+  /// A unit or a link needs attention.
+  trouble(1),
+
+  /// A pre-alarm.
+  alert(2),
+
+  alarm(3);
+
+  const PanelEventKind(this.wire);
+
+  /// 0–3 are the severities, as they always travelled; 4 is [info].
+  final int wire;
+
+  static PanelEventKind fromSeverity(int severity) => switch (severity) {
+        3 => alarm,
+        2 => alert,
+        1 => trouble,
+        _ => ok,
+      };
+
+  static PanelEventKind? fromWire(Object? v) {
+    if (v is! num) return null;
+    for (final k in values) {
+      if (k.wire == v.toInt()) return k;
+    }
+    return null;
+  }
+}
+
 /// One line of the central's event list, already in words.
 class MirrorPanelEvent {
-  const MirrorPanelEvent(
-      {required this.at, required this.severity, required this.text});
+  const MirrorPanelEvent({
+    required this.at,
+    required this.severity,
+    required this.text,
+    PanelEventKind? kind,
+    this.mac,
+    this.outage,
+    this.comm,
+    this.zone,
+    this.address,
+  }) : _kind = kind;
 
   final DateTime at;
 
   /// 0 ok · 1 trouble · 2 alert · 3 alarm (DeviceEvents.severity).
   final int severity;
   final String text;
+
+  final PanelEventKind? _kind;
+
+  /// How the line is listed; the severity's own kind when nothing said
+  /// otherwise (a central on an older app).
+  PanelEventKind get kind => _kind ?? PanelEventKind.fromSeverity(severity);
+
+  /// The unit the line is about; null for the central's own lines.
+  final String? mac;
+
+  /// The line is a unit's own account of a time with no path to the
+  /// central (OUTAGE_REPORT): its numbers, so a screen can put the lines of
+  /// one incident together (2026-11-24). Null for every other line.
+  final PanelOutage? outage;
+
+  /// The line is the central's supervision: the unit went silent, or was
+  /// heard again. Null for every other line.
+  final PanelCommChange? comm;
+
+  /// The unit's zona and endereçamento **as the central has them now**
+  /// (2026-11-24) — the event table does not keep where a unit was when
+  /// the line was written. Null for a line that is not about a unit, and
+  /// for a unit that is no longer in the installation.
+  final String? zone;
+  final String? address;
+
+  /// The same line, with where its unit is.
+  MirrorPanelEvent placed({String? zone, String? address}) => MirrorPanelEvent(
+        at: at,
+        severity: severity,
+        text: text,
+        kind: _kind,
+        mac: mac,
+        outage: outage,
+        comm: comm,
+        zone: zone,
+        address: address,
+      );
+
+  /// The same line, listed as [kind].
+  MirrorPanelEvent withKind(PanelEventKind kind) => MirrorPanelEvent(
+        at: at,
+        severity: severity,
+        text: text,
+        kind: kind,
+        mac: mac,
+        outage: outage,
+        comm: comm,
+        zone: zone,
+        address: address,
+      );
+
+  /// Who the line is about, as the line names it (what stands before the
+  /// dash); null for a line with no dash.
+  String? get who {
+    final i = text.indexOf(' — ');
+    return i <= 0 ? null : text.substring(0, i);
+  }
 }
 
-/// One unit that needs attention: its name and why ([offline] | [battery]).
+/// The central's supervision said so of a unit.
+enum PanelCommChange {
+  missing(1),
+  restored(2);
+
+  const PanelCommChange(this.wire);
+  final int wire;
+
+  static PanelCommChange? fromWire(Object? v) =>
+      values.where((e) => e.wire == v).firstOrNull;
+}
+
+/// The numbers of an OUTAGE_REPORT (protocol §7.17), as the central stored
+/// them — on the cloud a list of eight numbers, in this order.
+class PanelOutage {
+  const PanelOutage({
+    required this.duration,
+    this.cause = 0,
+    this.flags = 0,
+    this.rescues = 0,
+    this.rescuesMissed = 0,
+    this.anyRounds = 0,
+    this.restarts = 0,
+    this.end = 3,
+  });
+
+  final Duration duration;
+
+  /// CAUSE, FLAGS, the counters and END as they came on the wire.
+  final int cause;
+  final int flags;
+  final int rescues;
+  final int rescuesMissed;
+  final int anyRounds;
+  final int restarts;
+  final int end;
+
+  List<int> toWire() => [
+        duration.inSeconds,
+        cause,
+        flags,
+        rescues,
+        rescuesMissed,
+        anyRounds,
+        restarts,
+        end,
+      ];
+
+  static PanelOutage? fromWire(Object? v) {
+    if (v is! List || v.length < 8 || v.any((e) => e is! num)) return null;
+    final n = [for (final e in v) (e as num).toInt()];
+    return PanelOutage(
+      duration: Duration(seconds: n[0] < 0 ? 0 : n[0]),
+      cause: n[1],
+      flags: n[2],
+      rescues: n[3],
+      rescuesMissed: n[4],
+      anyRounds: n[5],
+      restarts: n[6],
+      end: n[7],
+    );
+  }
+}
+
+/// One unit that needs attention: its name and why ([offline] | [battery]),
+/// and what a screen needs to draw the unit itself (2026-11-23) — which
+/// product it is, where it is, whether it runs on a battery.
 class MirrorTrouble {
-  const MirrorTrouble({required this.name, required this.why});
+  const MirrorTrouble({
+    required this.name,
+    required this.why,
+    this.mac,
+    this.address,
+    this.productCode,
+    this.leaf = false,
+    this.batteryPct,
+  });
 
   static const offline = 'offline';
   static const battery = 'battery';
 
+  /// The unit's name; its endereçamento or its MAC when it has none.
   final String name;
   final String why;
+
+  /// The unit; null from a central on an older app.
+  final String? mac;
+
+  /// Its endereçamento, when it has one.
+  final String? address;
+
+  /// Its product (system reference §2.1): the model it is drawn as.
+  final int? productCode;
+
+  /// A battery unit.
+  final bool leaf;
+  final int? batteryPct;
 }
 
 /// The numbers and the last events of the central's Principal, carried on
@@ -831,6 +1041,9 @@ List<Map<String, dynamic>> _alarmsToJson(List<MirrorAlarm> alarms) => [
           if (a.name?.isNotEmpty == true) 'name': a.name,
           if (a.zone?.isNotEmpty == true) 'zone': a.zone,
           if (a.since != null) 'since': a.since!.toUtc().toIso8601String(),
+          if (a.address?.isNotEmpty == true) 'addr': a.address,
+          if (a.productCode != null) 'prod': a.productCode,
+          if (a.leaf) 'leaf': 1,
         },
     ];
 
@@ -839,7 +1052,15 @@ Map<String, dynamic> _panelToJson(MirrorPanel p) => {
       'nt': p.troubles,
       'tr': [
         for (final t in p.troubleList.take(MirrorPanel.maxTroubles))
-          {'n': t.name, 'w': t.why},
+          {
+            'n': t.name,
+            'w': t.why,
+            if (t.mac != null) 'm': t.mac,
+            if (t.address?.isNotEmpty == true) 'a': t.address,
+            if (t.productCode != null) 'p': t.productCode,
+            if (t.leaf) 'l': 1,
+            if (t.batteryPct != null) 'b': t.batteryPct,
+          },
       ],
       'ev': [
         for (final e in p.events.take(MirrorPanel.maxEvents))
@@ -847,6 +1068,15 @@ Map<String, dynamic> _panelToJson(MirrorPanel p) => {
             't': e.at.toUtc().toIso8601String(),
             's': e.severity,
             'x': e.text,
+            // Said only when it is not the severity's own (older phones
+            // read `s` alone).
+            if (e.kind != PanelEventKind.fromSeverity(e.severity))
+              'k': e.kind.wire,
+            if (e.mac != null) 'm': e.mac,
+            if (e.outage != null) 'o': e.outage!.toWire(),
+            if (e.comm != null) 'c': e.comm!.wire,
+            if (e.zone?.isNotEmpty == true) 'z': e.zone,
+            if (e.address?.isNotEmpty == true) 'a': e.address,
           },
       ],
     };
@@ -889,7 +1119,12 @@ MirrorPanel? _panelFromJson(Object? raw) {
           if (t is Map && t['n'] is String)
             MirrorTrouble(
                 name: t['n'] as String,
-                why: t['w'] as String? ?? MirrorTrouble.offline),
+                why: t['w'] as String? ?? MirrorTrouble.offline,
+                mac: t['m'] is String ? t['m'] as String : null,
+                address: t['a'] is String ? t['a'] as String : null,
+                productCode: (t['p'] as num?)?.toInt(),
+                leaf: t['l'] == 1,
+                batteryPct: (t['b'] as num?)?.toInt()),
     ],
     events: [
       if (ev is List)
@@ -900,6 +1135,12 @@ MirrorPanel? _panelFromJson(Object? raw) {
                 at: at,
                 severity: (e['s'] as num?)?.toInt() ?? 0,
                 text: e['x'] as String,
+                kind: PanelEventKind.fromWire(e['k']),
+                mac: e['m'] is String ? e['m'] as String : null,
+                outage: PanelOutage.fromWire(e['o']),
+                comm: PanelCommChange.fromWire(e['c']),
+                zone: e['z'] is String ? e['z'] as String : null,
+                address: e['a'] is String ? e['a'] as String : null,
               ),
     ],
   );
@@ -922,6 +1163,9 @@ MirrorAlarms? decodeMirrorAlarms(String payload) {
               name: a['name'] as String?,
               zone: a['zone'] as String?,
               since: DateTime.tryParse(a['since'] as String? ?? ''),
+              address: a['addr'] is String ? a['addr'] as String : null,
+              productCode: (a['prod'] as num?)?.toInt(),
+              leaf: a['leaf'] == 1,
             ),
       ],
       panel: _panelFromJson(map['panel']),

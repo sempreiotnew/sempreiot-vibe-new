@@ -115,6 +115,9 @@ MirrorPanelEvent? panelEventOf(
     text = '$who — sem comunicação';
   } else if (detail['kind'] == 'device_restored') {
     text = '$who — voltou a comunicar';
+  } else if (detail['kind'] == 'outage' && detail['move_to'] is String) {
+    // A move to a better path names two other units: by their names now.
+    text = '$who — ${_reportOf(detail).describe(nameOf)}';
   } else if (description is String && description.isNotEmpty) {
     text = central ? _capitalized(description) : '$who — $description';
   } else if (row.eventCode != null) {
@@ -138,7 +141,78 @@ MirrorPanelEvent? panelEventOf(
       words = '$text (registro antigo, hora desconhecida)';
     }
   }
-  return MirrorPanelEvent(at: at, severity: row.severity, text: words);
+  return MirrorPanelEvent(
+    at: at,
+    severity: row.severity,
+    text: words,
+    kind: _kindOf(row, detail),
+    mac: central || row.deviceMac == '?' ? null : row.deviceMac,
+    outage: detail['kind'] == 'outage' ? _outageOf(detail) : null,
+    comm: switch (detail['kind']) {
+      'device_missing' => PanelCommChange.missing,
+      'device_restored' => PanelCommChange.restored,
+      _ => null,
+    },
+  );
+}
+
+/// The numbers of a stored OUTAGE_REPORT; null when the row has no
+/// duration (it cannot be placed in time).
+PanelOutage? _outageOf(Map<String, dynamic> detail) {
+  if (detail['duration_s'] is! num) return null;
+  final r = _reportOf(detail);
+  return PanelOutage(
+    duration: r.duration,
+    cause: r.cause.wire,
+    flags: r.flags,
+    rescues: r.rescues,
+    rescuesMissed: r.rescuesMissed,
+    anyRounds: r.anyRounds,
+    restarts: r.restarts,
+    end: r.end.wire,
+  );
+}
+
+/// A stored OUTAGE_REPORT, as the unit sent it.
+SafrOutageReportPayload _reportOf(Map<String, dynamic> detail) {
+  int n(String key) => (detail[key] as num?)?.toInt() ?? 0;
+  return SafrOutageReportPayload(
+    duration: Duration(seconds: n('duration_s')),
+    cause: SafrOutageCause.fromWire(n('cause')),
+    flags: n('flags'),
+    rescues: n('rescues'),
+    rescuesMissed: n('rescues_missed'),
+    anyRounds: n('any_rounds'),
+    restarts: n('restarts'),
+    end: SafrOutageEnd.fromWire((detail['end'] as num?)?.toInt() ?? 3),
+    moveTo: detail['move_to'] as String?,
+    moveFrom: detail['move_from'] as String?,
+    pathBefore: (detail['path_before'] as num?)?.toInt(),
+    pathAfter: (detail['path_after'] as num?)?.toInt(),
+  );
+}
+
+/// How a row is listed (see [PanelEventKind]): an alarm, a pre-alarm and a
+/// trouble by their severity; a **manual test** is news whatever the unit
+/// called it; a line of severity 0 is "OK" only when it says something came
+/// back, and news otherwise.
+PanelEventKind _kindOf(DeviceEvent row, Map<String, dynamic> detail) {
+  if (row.severity >= 3) return PanelEventKind.alarm;
+  if (row.eventCode == SafrEventCode.manualTest.wire) {
+    return PanelEventKind.info;
+  }
+  // A frame heard twice was dropped as it should be: nothing to look at.
+  if (row.errorKind == 'replay') return PanelEventKind.info;
+  if (row.severity > 0) return PanelEventKind.fromSeverity(row.severity);
+  final kind = detail['kind'];
+  // A unit that moved to a better path and got there: news.
+  if (kind == 'outage') return PanelEventKind.info;
+  if (detail['synthetic'] == true &&
+      kind is String &&
+      !kind.endsWith('_restored')) {
+    return PanelEventKind.info;
+  }
+  return PanelEventKind.ok;
 }
 
 /// A unit that never got the time counts from 1970: such a time is not the
@@ -162,14 +236,18 @@ final localPanelEventsProvider =
   // a journal handed over late puts old events among the newest rows —
   // they are sorted back to when they happened.
   final rows = ref.watch(_eventRowsProvider(limit * 5)).valueOrNull ?? const [];
-  final names = {
-    for (final n in ref.watch(topologyProvider)) n.mac: _unitName(n),
-  };
+  final units = {for (final n in ref.watch(topologyProvider)) n.mac: n};
   final out = <MirrorPanelEvent>[];
   for (final row in rows) {
-    final e = panelEventOf(row, (mac) => names[mac] ?? mac);
+    final e = panelEventOf(row, (mac) {
+      final n = units[mac];
+      return n == null ? mac : _unitName(n);
+    });
     if (e == null) continue;
-    out.add(e);
+    // Where the unit is, as the registry has it now.
+    final unit = units[e.mac];
+    out.add(
+        unit == null ? e : e.placed(zone: unit.zone, address: unit.address));
   }
   // Newest first by when it happened (equal times keep the table's order).
   final order = {for (var i = 0; i < out.length; i++) out[i]: i};
@@ -189,14 +267,22 @@ final localPanelProvider = Provider<PanelView>((ref) {
   final alarms = ref.watch(latchedAlarmsProvider).valueOrNull ?? const [];
   final inAlarm = {for (final d in alarms) d.mac};
   final troubles = <MirrorTrouble>[];
+  MirrorTrouble trouble(TopologyNode n, String why) => MirrorTrouble(
+        // The name alone: where the unit is travels beside it.
+        name: n.name?.isNotEmpty == true ? n.name! : _unitName(n),
+        why: why,
+        mac: n.mac,
+        address: n.address,
+        productCode: n.productCode,
+        leaf: n.isLeaf,
+        batteryPct: n.batteryPct,
+      );
   for (final n in units) {
     if (inAlarm.contains(n.mac)) continue;
     if (!n.online) {
-      troubles
-          .add(MirrorTrouble(name: _unitName(n), why: MirrorTrouble.offline));
+      troubles.add(trouble(n, MirrorTrouble.offline));
     } else if (n.batteryPct != null && n.batteryPct! < panelLowBatteryPct) {
-      troubles
-          .add(MirrorTrouble(name: _unitName(n), why: MirrorTrouble.battery));
+      troubles.add(trouble(n, MirrorTrouble.battery));
     }
   }
   return PanelView(
@@ -247,6 +333,6 @@ final panelViewProvider = Provider.family<PanelView, String?>((ref, centralId) {
   );
 });
 
-/// The tablet's full history for "Ver todos": its last [historyLimit]
-/// events.
-const panelHistoryLimit = 500;
+/// Eventos opens with this many of the tablet's events and takes this many
+/// more on each "Carregar mais".
+const eventsPageSize = 200;

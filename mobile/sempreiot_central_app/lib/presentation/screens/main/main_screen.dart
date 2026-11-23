@@ -21,6 +21,7 @@ import '../../../core/connectivity/network_status_provider.dart';
 import '../../widgets/iot_network_animation.dart';
 import '../auth/login_screen.dart';
 import '../../../features/central/presentation/screens/devices_screen.dart';
+import '../../../features/central/presentation/screens/events_screen.dart';
 import '../../../features/central/presentation/screens/topology_screen.dart';
 import '../../../features/central/presentation/widgets/alarm_strip.dart';
 import '../../../features/central/presentation/widgets/mirror_status_strip.dart';
@@ -345,6 +346,11 @@ class _TabBody extends StatelessWidget {
                       centralId: centralId!,
                       child: const TopologyScreen(embedded: true),
                     )),
+          // The tablet's own event table; on a user's phone the events the
+          // central keeps on the cloud (its retained message: no mirror
+          // session needed).
+          MainTab.eventos =>
+            _underAlarmStrip(EventsScreen(centralId: centralId)),
         },
       ),
     );

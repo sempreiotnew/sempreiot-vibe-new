@@ -38,15 +38,12 @@ const ledPulseQueue = 8;
 const leafWalkTestAckMs = 3000;
 
 /// `ALARM_RETX_MS` (siot_netcore.c) — a node in alarm re-announces its
-/// ALARM this often, and stops the moment it leaves alarm (RESET, reboot).
+/// ALARM this often, and stops the moment it leaves alarm (RESET). A restart does not end an
+/// alarm (protocol 3.14): the unit comes back in it and re-announces.
 /// The red blink is shown while re-announces keep coming, plus some slack for
 /// the trip through the mesh.
 const alarmRetxMs = 60000;
 const alarmRetxGraceMs = 10000;
-
-/// Margin on a HEARTBEAT's UPTIME_S when deciding the unit booted after its
-/// last ALARM frame (the uptime is whole seconds, plus the frame's trip).
-const rebootSlackMs = 2000;
 
 /// `BREATHE_PERIOD_TICKS` × 50 ms — WHITE_BREATHE: a triangle wave, dark →
 /// [ledBreatheMaxDuty] → dark, over 3 s.

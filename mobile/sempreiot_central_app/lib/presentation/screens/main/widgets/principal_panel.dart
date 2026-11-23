@@ -3,35 +3,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
-import '../../../../core/utils/relative_time.dart';
-import '../../../../features/central/application/central_mirror_codec.dart';
 import '../../../../features/central/application/panel_provider.dart';
-import '../../../../features/central/presentation/screens/event_history_screen.dart';
-import '../../../../features/central/presentation/widgets/latched_alarm_banner.dart';
-import '../../../../features/central/presentation/widgets/remote_alarm_banner.dart';
+import '../../../../features/central/presentation/widgets/state_devices.dart';
 import '../../../../features/iot/application/presence_provider.dart';
 import 'panel_objects.dart';
 
 // Principal, redesigned (2026-11-19): one block that says the system's
-// state, then the central's links, its battery and temperature, and the
-// last events. The same widgets on the tablet ([centralId] null: its own
-// data) and on a user's phone (the viewed central's, from the cloud).
-
-/// The colour of an event's severity (DeviceEvents.severity):
-/// 0 ok · 1 trouble · 2 alert · 3 alarm.
-Color panelSeverityColor(int severity) => switch (severity) {
-      3 => AppColors.error,
-      2 => AppColors.trouble,
-      1 => AppColors.warning,
-      _ => AppColors.success,
-    };
-
-String panelSeverityLabel(int severity) => switch (severity) {
-      3 => 'ALARME',
-      2 => 'ALERTA',
-      1 => 'PROBLEMA',
-      _ => 'OK',
-    };
+// state, then the central's links, its battery and temperature. The same
+// widgets on the tablet ([centralId] null: its own data) and on a user's
+// phone (the viewed central's, from the cloud). The events have their own
+// tab since 2026-11-23 (events_screen.dart).
 
 /// A card of Principal: the theme's surface, a thin border, a small
 /// caption on top.
@@ -92,8 +73,8 @@ class PanelCard extends StatelessWidget {
 
 /// Principal's layout: the state block, then Comunicação and Energia —
 /// side by side on a wide screen (the tablet, the web), one under the
-/// other on a phone — then the last events. Always scrollable: a short
-/// landscape screen shows the top and scrolls to the rest.
+/// other on a phone. Always scrollable: a short landscape screen shows the
+/// top and scrolls to the rest.
 class PrincipalBody extends StatelessWidget {
   const PrincipalBody({
     super.key,
@@ -153,8 +134,6 @@ class PrincipalBody extends StatelessWidget {
               ],
             )
           else ...[comm, gap, energy],
-          gap,
-          PanelEventsCard(centralId: centralId, rows: wide ? 4 : 3),
         ],
       );
 
@@ -184,12 +163,20 @@ enum _SystemState { unknown, offline, normal, trouble, alarm }
 /// three counts, and in alarm the devices held and their Rearmar (the
 /// alarm-hold banner, inside the block).
 class SystemStatusBlock extends ConsumerWidget {
-  const SystemStatusBlock({super.key, this.centralId});
+  const SystemStatusBlock({super.key, this.centralId, this.expanded = false});
 
   /// Null on the tablet; the viewed central on a user's phone.
   final String? centralId;
 
+  /// The block over the whole screen (its expand button): the same block —
+  /// the same headline, the same counts — with every device in view,
+  /// wrapping onto as many lines as they need instead of one row, and the
+  /// button that brings it back to its place.
+  final bool expanded;
+
   static const keyTitle = ValueKey('system-state-title');
+  static const keyExpand = ValueKey('system-state-expand');
+  static const keyCollapse = ValueKey('system-state-collapse');
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -263,105 +250,148 @@ class SystemStatusBlock extends ConsumerWidget {
     };
 
     final dark = context.isDark;
-    final headline = Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Container(
-          width: 60,
-          height: 60,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: tone, width: 2),
-          ),
-          child: Icon(icon, color: tone, size: 30),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'ESTADO DO SISTEMA',
-                style: TextStyle(
-                  color: context.textSecondary,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.2,
-                ),
+    Widget headline([Widget? trailing]) => Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: tone, width: 2),
               ),
-              const SizedBox(height: 4),
-              Text(
-                title,
-                key: keyTitle,
-                style: TextStyle(
-                  color: tone,
-                  fontSize: 26,
-                  height: 1.1,
-                  fontWeight: FontWeight.w900,
-                ),
+              child: Icon(icon, color: tone, size: 30),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'ESTADO DO SISTEMA',
+                    style: TextStyle(
+                      color: context.textSecondary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    title,
+                    key: keyTitle,
+                    style: TextStyle(
+                      color: tone,
+                      fontSize: 26,
+                      height: 1.1,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  if (sub.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      sub,
+                      style:
+                          TextStyle(color: context.textPrimary, fontSize: 13),
+                    ),
+                  ],
+                ],
               ),
-              if (sub.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(
-                  sub,
-                  style: TextStyle(color: context.textPrimary, fontSize: 13),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
+            ),
+            if (trailing != null) ...[const SizedBox(width: 8), trailing],
+          ],
+        );
+
+    // The units in alarm and the ones that need attention: one row that
+    // scrolls sideways, and this button to give them the whole screen —
+    // the block itself grows to it, and the same button brings it back.
+    final hasDevices = hasStateDevices(ref, centralId);
+    final cornerStyle = IconButton.styleFrom(
+      foregroundColor: context.textPrimary,
+      backgroundColor: context.bgColor,
+      minimumSize: const Size(44, 44),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: context.borderColor.withValues(alpha: 0.8)),
+      ),
     );
+    final expand = expanded
+        ? IconButton(
+            key: keyCollapse,
+            tooltip: 'Voltar',
+            onPressed: () => Navigator.of(context).maybePop(),
+            style: cornerStyle,
+            icon: const Icon(Icons.close_fullscreen_rounded, size: 20),
+          )
+        : !hasDevices
+            ? null
+            : IconButton(
+                key: keyExpand,
+                tooltip: 'Ver os dispositivos em tela cheia',
+                onPressed: () => openStateDevices(
+                  context,
+                  expanded: (_) =>
+                      SystemStatusBlock(centralId: centralId, expanded: true),
+                ),
+                style: cornerStyle,
+                icon: const Icon(Icons.open_in_full_rounded, size: 20),
+              );
 
     // A central whose app publishes its alarms only: no numbers to show.
     final counters = !view.known || !view.eventsKnown
         ? null
         : _Counters(alarms: view.alarms, troubles: view.troubles, ok: view.ok);
 
+    final header = LayoutBuilder(builder: (context, c) {
+      // Wide (the tablet): the counts beside the headline, the expand
+      // button in the corner. Narrow (a phone): the button beside the
+      // headline, the counts under it, across the block.
+      if (counters == null) return headline(expand);
+      if (c.maxWidth >= 720) {
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: headline()),
+            const SizedBox(width: 16),
+            SizedBox(width: 330, child: counters),
+            if (expand != null) ...[const SizedBox(width: 8), expand],
+          ],
+        );
+      }
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [headline(expand), const SizedBox(height: 14), counters],
+      );
+    });
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        header,
+        if (hasDevices) ...[
+          const SizedBox(height: 12),
+          if (expanded)
+            StateDevicesGrid(centralId: centralId)
+          else
+            StateDevicesRow(centralId: centralId),
+        ],
+      ],
+    );
+
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: Color.alphaBlend(
             tone.withValues(alpha: dark ? 0.10 : 0.06), context.surfaceColor),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: tone.withValues(alpha: 0.5)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          LayoutBuilder(builder: (context, c) {
-            // Wide (the tablet): the counts beside the headline. Narrow
-            // (a phone): under it, across the block.
-            if (counters == null) return headline;
-            if (c.maxWidth >= 720) {
-              return Row(
-                children: [
-                  Expanded(child: headline),
-                  const SizedBox(width: 16),
-                  SizedBox(width: 330, child: counters),
-                ],
-              );
-            }
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [headline, const SizedBox(height: 14), counters],
-            );
-          }),
-          if (state == _SystemState.trouble && view.troubleList.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            _TroubleChips(troubles: view.troubleList, total: view.troubles),
-          ],
-          if (state == _SystemState.alarm) ...[
-            const SizedBox(height: 14),
-            if (centralId == null)
-              const LatchedAlarmBanner(embedded: true)
-            else
-              RemoteAlarmBanner(identityId: centralId!, embedded: true),
-          ],
-        ],
-      ),
+      // Over the whole screen the block has the screen's height: whatever
+      // does not fit scrolls inside it (and nothing overflows while the
+      // block is still growing).
+      child: expanded ? SingleChildScrollView(child: content) : content,
     );
   }
 }
@@ -424,68 +454,6 @@ class _Counters extends StatelessWidget {
         tile(troubles, 'Problemas', AppColors.warning),
         const SizedBox(width: 8),
         tile(ok, 'OK', AppColors.success),
-      ],
-    );
-  }
-}
-
-/// The units that need attention, by name and why.
-class _TroubleChips extends StatelessWidget {
-  const _TroubleChips({required this.troubles, required this.total});
-
-  final List<MirrorTrouble> troubles;
-  final int total;
-
-  static const _shown = 6;
-
-  @override
-  Widget build(BuildContext context) {
-    final more = total - troubles.take(_shown).length;
-    Widget chip(String name, String? why) => Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: context.bgColor,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: context.textPrimary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              if (why != null) ...[
-                const SizedBox(width: 8),
-                Text(
-                  why,
-                  style: TextStyle(color: context.textSecondary, fontSize: 12),
-                ),
-              ],
-            ],
-          ),
-        );
-
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final t in troubles.take(_shown))
-          chip(
-            t.name,
-            t.why == MirrorTrouble.battery
-                ? 'bateria baixa'
-                : 'sem comunicação',
-          ),
-        if (more > 0) chip('+ $more', null),
       ],
     );
   }
@@ -595,159 +563,4 @@ class EnergyCard extends StatelessWidget {
       ),
     );
   }
-}
-
-/// One event: its severity as a dot (and a word where there is room),
-/// what happened, how long ago.
-class PanelEventRow extends StatelessWidget {
-  const PanelEventRow({
-    super.key,
-    required this.event,
-    this.showKind = true,
-    this.exactTime = false,
-  });
-
-  final MirrorPanelEvent event;
-
-  /// The severity's word beside the dot (wide layouts).
-  final bool showKind;
-
-  /// The day and time instead of "há 2 min" (the history screen).
-  final bool exactTime;
-
-  static String _two(int v) => v.toString().padLeft(2, '0');
-
-  static String exact(DateTime utc) {
-    final t = utc.toLocal();
-    return '${_two(t.day)}/${_two(t.month)} '
-        '${_two(t.hour)}:${_two(t.minute)}:${_two(t.second)}';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final color = panelSeverityColor(event.severity);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-          ),
-          const SizedBox(width: 10),
-          if (showKind)
-            SizedBox(
-              width: 84,
-              child: Text(
-                panelSeverityLabel(event.severity),
-                style: TextStyle(
-                  color: color,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.4,
-                ),
-              ),
-            ),
-          Expanded(
-            child: Text(
-              event.text,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: context.textPrimary, fontSize: 13.5),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            exactTime ? exact(event.at) : relativeTime(event.at),
-            style: TextStyle(
-              color: context.textSecondary,
-              fontSize: 12,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// "Últimos eventos": the newest few, and "Ver todos" for the history.
-class PanelEventsCard extends ConsumerWidget {
-  const PanelEventsCard({super.key, this.centralId, this.rows = 4});
-
-  final String? centralId;
-
-  /// How many events the card shows.
-  final int rows;
-
-  static const keySeeAll = ValueKey('events-see-all');
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final view = ref.watch(panelViewProvider(centralId));
-    final events = view.events.take(rows).toList();
-
-    return PanelCard(
-      title: 'ÚLTIMOS EVENTOS',
-      trailing: !view.eventsKnown
-          ? null
-          : TextButton(
-              key: keySeeAll,
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => EventHistoryScreen(centralId: centralId),
-                ),
-              ),
-              style: TextButton.styleFrom(
-                foregroundColor: AppColors.secondary,
-                minimumSize: const Size(44, 44),
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: const Text(
-                'Ver todos',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-              ),
-            ),
-      child: LayoutBuilder(builder: (context, c) {
-        if (!view.eventsKnown) {
-          return _EventsNote(view.known
-              ? 'A central ainda não envia os eventos: atualize o app da '
-                  'central.'
-              : 'Aguardando a informação da central.');
-        }
-        if (events.isEmpty) {
-          return const _EventsNote('Nenhum evento registrado ainda.');
-        }
-        final wide = c.maxWidth >= 560;
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final e in events) ...[
-              Divider(
-                  height: 1,
-                  thickness: 0.8,
-                  color: context.borderColor.withValues(alpha: 0.7)),
-              PanelEventRow(event: e, showKind: wide),
-            ],
-          ],
-        );
-      }),
-    );
-  }
-}
-
-class _EventsNote extends StatelessWidget {
-  const _EventsNote(this.text);
-  final String text;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        child: Text(
-          text,
-          style: TextStyle(color: context.textSecondary, fontSize: 13),
-        ),
-      );
 }

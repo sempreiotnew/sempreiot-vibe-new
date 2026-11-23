@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sempreiot_central_app/core/database/app_database.dart';
+import 'package:sempreiot_central_app/features/central/application/central_mirror_codec.dart';
 import 'package:sempreiot_central_app/features/central/application/panel_provider.dart';
 import 'package:sempreiot_central_app/features/central/application/safr_ingest_provider.dart';
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_encoder.dart';
@@ -17,6 +18,34 @@ const _unit = '5A:46:52:00:00:02';
 /// one line of the unit's history.
 void main() {
   group('payload', () {
+    test('version 2: where the unit went, after the twelve bytes', () {
+      // siot_netcore.c report_start(): … ‖ TO(6) ‖ FROM(6) ‖ PATH_BEFORE ‖
+      // PATH_AFTER, VERSION 2, 26 bytes.
+      final bytes = Uint8List.fromList([
+        2, 0, 0, 0, 6, 6, 0, 0, 0, 0, 0, 4, //
+        0x5A, 0x46, 0x52, 0, 0, 0x0B, 0x5A, 0x46, 0x52, 0, 0, 0x0A, //
+        0xAA, 0xB9,
+      ]);
+      final p = SafrOutageReportPayload.parse(bytes)!;
+      expect(p.cause, SafrOutageCause.moved);
+      expect(p.end, SafrOutageEnd.moved);
+      expect(p.moveTo, '5A:46:52:00:00:0B');
+      expect(p.moveFrom, '5A:46:52:00:00:0A');
+      expect(p.pathBefore, -86);
+      expect(p.pathAfter, -71);
+      expect(p.cleanMove, isTrue);
+      expect(p.build(), bytes);
+
+      // The unit it left not known: zeros. Cut short: the twelve bytes.
+      final unknown = Uint8List.fromList(bytes)..fillRange(18, 24, 0);
+      expect(SafrOutageReportPayload.parse(unknown)!.moveFrom, isNull);
+      final cut = SafrOutageReportPayload.parse(bytes.sublist(0, 12))!;
+      expect(cut.moveTo, isNull);
+      expect(cut.cause, SafrOutageCause.moved);
+      expect(cut.describe(),
+          'mudou para um dispositivo com sinal melhor · levou 6 s');
+    });
+
     test('the twelve bytes the firmware sends are read field by field', () {
       // siot_netcore.c: VER ‖ DURATION_S u32 ‖ CAUSE ‖ FLAGS ‖ RESCUES ‖
       // RESCUES_MISSED ‖ ANY_ROUNDS ‖ RESTARTS ‖ END.
@@ -37,7 +66,8 @@ void main() {
 
     test('a short payload is not a report; a longer, later one still is', () {
       expect(SafrOutageReportPayload.parse(Uint8List(11)), isNull);
-      final later = Uint8List.fromList([2, 0, 0, 0, 45, 3, 0, 1, 0, 0, 0, 1, 9]);
+      final later =
+          Uint8List.fromList([2, 0, 0, 0, 45, 3, 0, 1, 0, 0, 0, 1, 9]);
       expect(SafrOutageReportPayload.parse(later)!.duration,
           const Duration(seconds: 45));
     });
@@ -126,6 +156,67 @@ void main() {
           'o dispositivo ao qual estava ligado ficou sem caminho · '
           '1 tentativa de religar por outro dispositivo · '
           'voltou por outro dispositivo');
+    });
+
+    // v3.15: a unit that left its parent for a better path says so.
+    const parent = '5A:46:52:00:00:0A';
+    const better = '5A:46:52:00:00:0B';
+    String nameOf(String mac) =>
+        {_unit: 'Sirene 2º andar', parent: 'Hall', better: 'Escada'}[mac] ??
+        mac;
+
+    test('a move that worked is news, with the units named', () async {
+      await send(const SafrOutageReportPayload(
+        duration: Duration(seconds: 6),
+        cause: SafrOutageCause.moved,
+        end: SafrOutageEnd.moved,
+        moveTo: better,
+        moveFrom: parent,
+        pathBefore: -86,
+        pathAfter: -71,
+      ));
+      final r = await rows();
+      expect(r.single.severity, 0);
+      final detail = jsonDecode(r.single.detailJson) as Map<String, dynamic>;
+      expect(detail['move_to'], better);
+      expect(detail['move_from'], parent);
+      expect(detail['path_before'], -86);
+      expect(acked, hasLength(1));
+
+      final line = panelEventOf(r.single, nameOf)!;
+      expect(line.kind, PanelEventKind.info);
+      expect(
+          line.text,
+          'Sirene 2º andar — mudou de Hall para Escada, por um sinal melhor '
+          '(-86 para -71 dBm) · levou 6 s');
+      expect(line.outage!.cause, 6);
+      expect(line.outage!.end, 4);
+    });
+
+    test('a move that went wrong is a trouble that says it left by itself',
+        () async {
+      await send(const SafrOutageReportPayload(
+        duration: Duration(seconds: 134),
+        cause: SafrOutageCause.moved,
+        flags: 0x04,
+        rescues: 1,
+        restarts: 1,
+        moveTo: better,
+        moveFrom: parent,
+        pathBefore: -86,
+        pathAfter: -71,
+      ));
+      final r = await rows();
+      expect(r.single.severity, 1);
+      final line = panelEventOf(r.single, nameOf)!;
+      expect(line.kind, PanelEventKind.trouble);
+      expect(
+          line.text,
+          'Sirene 2º andar — ficou 2 min 14 s sem caminho até a central · '
+          'saiu de Hall para Escada, por um sinal melhor (-86 para -71 dBm) · '
+          '1 tentativa de religar por outro dispositivo · '
+          'reiniciou sozinho 1 vez · '
+          'não ligou nele e voltou por outro caminho');
     });
 
     test('the unit repeating it until the ACK arrives adds nothing', () async {

@@ -23,7 +23,7 @@ size_t siot_path_advert_encode(const siot_path_advert_t *a, uint8_t *out, size_t
     out[0] = SIOT_PATH_ADVERT_VER;
     const uint8_t alarm = a->alarm > SIOT_PATH_ALARM_MAX ? SIOT_PATH_ALARM_MAX : a->alarm;
     out[1] = (uint8_t)((a->complete ? SIOT_PATH_F_COMPLETE : 0) | (a->full ? SIOT_PATH_F_FULL : 0) |
-                       (alarm << SIOT_PATH_F_ALARM_SHIFT));
+                       (alarm << SIOT_PATH_F_ALARM_SHIFT) | (a->held && !a->complete ? SIOT_PATH_F_HELD : 0));
     out[2] = a->level;
     out[3] = (uint8_t)a->path;
     memcpy(&out[4], a->ap, 6);
@@ -42,6 +42,7 @@ bool siot_path_advert_decode(const uint8_t *p, size_t len, siot_path_advert_t *o
     out->complete = (p[1] & SIOT_PATH_F_COMPLETE) != 0;
     out->full = (p[1] & SIOT_PATH_F_FULL) != 0;
     out->alarm = (uint8_t)((p[1] & SIOT_PATH_F_ALARM_MASK) >> SIOT_PATH_F_ALARM_SHIFT);
+    out->held = (p[1] & SIOT_PATH_F_HELD) != 0 && !out->complete;
     out->level = p[2];
     out->path = (int8_t)p[3];
     memcpy(out->ap, &p[4], 6);
@@ -117,10 +118,15 @@ bool siot_path_heard(siot_path_table_t *t, int64_t now_ms, const uint8_t id[6], 
     e->complete = a->complete;
     e->full = a->full;
     e->alarm = a->alarm;
+    e->held = a->held;
     e->under_me = false;
     for (uint8_t i = 0; i < a->chain_n; i++) {
         if (memcmp(a->chain[i], t->self_ap, 6) == 0) { e->under_me = true; break; }
     }
+    e->chain_n = a->chain_n;
+    memcpy(e->chain, a->chain, sizeof(e->chain));
+    /* The parent this unit lost is back, with a path: nothing to pass over. */
+    if (t->lost_until_ms != 0 && a->complete && memcmp(a->ap, t->lost_ap, 6) == 0) t->lost_until_ms = 0;
 
     if (t->has_parent && memcmp(a->ap, t->parent_ap, 6) == 0) {
         t->parent_chain_n = a->chain_n;
@@ -190,8 +196,21 @@ static int8_t path_now(const siot_path_table_t *t, int64_t now_ms)
     return siot_path_fresh(p, now_ms) && p->complete ? weaker(link, p->path) : link;
 }
 
-/* The neighbour with the best path among those that can be a parent at all. */
-static bool best_parent(const siot_path_table_t *t, int64_t now_ms, siot_path_choice_t *out)
+/* It is the parent this unit lost (as it was heard before the loss), or it
+ * hangs from it: what it says of its path is older than the news. */
+static bool through_lost(const siot_path_table_t *t, int64_t now_ms, const siot_path_neighbour_t *n)
+{
+    if (t->lost_until_ms == 0 || now_ms >= t->lost_until_ms) return false;
+    if (memcmp(n->ap, t->lost_ap, 6) == 0) return n->last_ms <= t->lost_at_ms || !n->complete;
+    for (uint8_t i = 0; i < n->chain_n && i < SIOT_PATH_MAX_CHAIN; i++) {
+        if (memcmp(n->chain[i], t->lost_ap, 6) == 0) return true;
+    }
+    return false;
+}
+
+/* The neighbour with the best path among those that can be a parent at all.
+ * `rescue`: for a unit with no path (see through_lost). */
+static bool best_parent(const siot_path_table_t *t, int64_t now_ms, bool rescue, siot_path_choice_t *out)
 {
     const siot_path_neighbour_t *best = NULL;
     int8_t best_path = -128;
@@ -201,6 +220,7 @@ static bool best_parent(const siot_path_table_t *t, int64_t now_ms, siot_path_ch
         if (n->level > SIOT_PATH_MAX_PARENT_LEVEL) continue;
         if (n->bad_until_ms != 0 && now_ms < n->bad_until_ms) continue;
         if (t->has_parent && memcmp(n->ap, t->parent_ap, 6) == 0) continue;
+        if (rescue && through_lost(t, now_ms, n)) continue;
         const int8_t path = weaker(siot_path_rssi(n), n->path);
         /* The better path; then the shallower unit; then the one heard better. */
         if (best == NULL || path > best_path ||
@@ -223,14 +243,14 @@ static bool best_parent(const siot_path_table_t *t, int64_t now_ms, siot_path_ch
 bool siot_path_best(const siot_path_table_t *t, int64_t now_ms, siot_path_choice_t *out)
 {
     if (!t->has_parent || !t->link_known) return false;
-    if (!best_parent(t, now_ms, out)) return false;
+    if (!best_parent(t, now_ms, false, out)) return false;
     out->path_now = path_now(t, now_ms);
     return true;
 }
 
 bool siot_path_rescue(const siot_path_table_t *t, int64_t now_ms, siot_path_choice_t *out)
 {
-    return best_parent(t, now_ms, out);
+    return best_parent(t, now_ms, true, out);
 }
 
 uint8_t siot_path_alarm(const siot_path_table_t *t, int64_t now_ms, bool own)
@@ -265,9 +285,35 @@ bool siot_path_evaluate(siot_path_table_t *t, int64_t now_ms, uint32_t sustain_m
 
 void siot_path_evaluate_reset(siot_path_table_t *t) { t->better_since_ms = 0; }
 
-void siot_path_mark_bad(siot_path_table_t *t, int64_t now_ms, const uint8_t ap[6])
+void siot_path_mark_bad_for(siot_path_table_t *t, int64_t now_ms, const uint8_t ap[6], uint32_t ms)
 {
     for (int i = 0; i < SIOT_PATH_NEIGHBOURS; i++) {
-        if (t->n[i].used && memcmp(t->n[i].ap, ap, 6) == 0) t->n[i].bad_until_ms = now_ms + SIOT_PATH_BAD_MS;
+        if (t->n[i].used && memcmp(t->n[i].ap, ap, 6) == 0) t->n[i].bad_until_ms = now_ms + (int64_t)ms;
     }
+}
+
+void siot_path_mark_bad(siot_path_table_t *t, int64_t now_ms, const uint8_t ap[6])
+{
+    siot_path_mark_bad_for(t, now_ms, ap, SIOT_PATH_BAD_MS);
+}
+
+void siot_path_parent_lost(siot_path_table_t *t, int64_t now_ms, const uint8_t ap[6])
+{
+    memcpy(t->lost_ap, ap, 6);
+    t->lost_at_ms = now_ms;
+    t->lost_until_ms = now_ms + SIOT_PATH_LOST_MS;
+}
+
+bool siot_path_parent_complete(const siot_path_table_t *t, int64_t now_ms)
+{
+    if (!t->has_parent) return false;
+    const siot_path_neighbour_t *p = siot_path_find_ap(t, t->parent_ap);
+    return siot_path_fresh(p, now_ms) && p->complete;
+}
+
+bool siot_path_parent_held(const siot_path_table_t *t, int64_t now_ms)
+{
+    if (!t->has_parent) return false;
+    const siot_path_neighbour_t *p = siot_path_find_ap(t, t->parent_ap);
+    return siot_path_fresh(p, now_ms) && p->held && !p->complete;
 }

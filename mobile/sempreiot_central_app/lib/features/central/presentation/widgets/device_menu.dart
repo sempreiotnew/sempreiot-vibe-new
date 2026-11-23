@@ -86,6 +86,23 @@ Future<void> showDeviceMenu({
   }
 }
 
+/// Opens the menu of the unit [mac] beside the widget of [context] — a
+/// device named outside the map (Principal's "needs attention", a line of
+/// Eventos). False when this screen does not know the unit: nothing opens.
+bool showDeviceMenuFor(BuildContext context, WidgetRef ref, String mac) {
+  final node =
+      ref.read(topologyProvider).where((n) => n.mac == mac).firstOrNull;
+  final box = context.findRenderObject();
+  if (node == null || box is! RenderBox || !box.hasSize) return false;
+  showDeviceMenu(
+    context: context,
+    ref: ref,
+    node: node,
+    anchor: box.localToGlobal(Offset.zero) & box.size,
+  );
+  return true;
+}
+
 sealed class _DeviceAction {
   const _DeviceAction();
 }

@@ -93,7 +93,7 @@ void main() {
       expect(sent, [(a, DeviceCommandKind.reset)]);
       // Its clock; its own button waits, the other device's does not.
       expect(find.byKey(CommandTicks.keySending), findsOneWidget);
-      TextButton button(String mac) =>
+      FilledButton button(String mac) =>
           tester.widget(find.byKey(ValueKey('alarm-rearm-$mac')));
       expect(button(a).onPressed, isNull);
       expect(button(b).onPressed, isNotNull);

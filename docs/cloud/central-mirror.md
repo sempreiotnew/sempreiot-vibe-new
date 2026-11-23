@@ -572,11 +572,25 @@ Principal needs without watching the live map — the numbers and the last event
           "ev":[{"t":"2026-11-19T21:00:05.000Z","s":3,"x":"Hall — alarme de fumaça"}]}}
 ```
 
+- *(2026-11-23)* Each entry of `alarms` may also say `addr` (the unit's endereçamento), `prod` (its
+  product code) and `leaf` = 1 (a battery unit): what a phone needs to draw the unit itself — its 3D
+  model, in alarm, with its name and where it is — before it has the central's map. An older phone
+  ignores them; an older central does not send them and the phone draws the unit without its model.
 - `n` units installed (heard at least once) · `nt` units that need attention — not heard, or battery
   under 20 %, what the Rede legend already flags; what a "trouble" finally is waits for the product's
   definition · `tr` the first 10 of them, by name and why (`offline` | `battery`) · `ev` the last
   **20** rows of the tablet's event table (`DeviceEvents`), newest first, already in words: time,
-  severity (0 ok · 1 trouble · 2 alert · 3 alarm), text. Every kind the table holds today travels
+  severity (0 ok · 1 trouble · 2 alert · 3 alarm), text. *(2026-11-23)* An event may also say `k`,
+  the kind it is listed with when that is not the severity's own (`4` = AVISO: a manual test, news
+  from the central — an older phone reads `s` alone), and `m`, the unit it is about; a `tr` entry
+  may say `m` too, with `a` its endereçamento, `p` its product code, `l` = 1 for a battery unit and
+  `b` its battery %, so a phone draws the unit itself (its 3D model, its name and where it is) and,
+  once it follows the map, opens it. *(2026-11-24)* So that a phone groups the lines as the tablet
+  does (Eventos, "Agrupado" — app doc §8), an event that is a unit's `OUTAGE_REPORT` also says `o`,
+  its eight numbers as stored (`[duration_s, cause, flags, rescues, rescues_missed, any_rounds,
+  restarts, end]`, protocol §7.17), and a supervision line says `c` (`1` the unit went silent ·
+  `2` it was heard again), and any line about a unit says `z` and `a`, the unit's zona and
+  endereçamento as the central has them now (the columns of Eventos); an older phone ignores them. Every kind the table holds today travels
   (unit events, supervision, the central's own lines, frame diagnostics); the 60 s re-announcement
   of an alarm does not.
 - **Why here and not a topic of its own:** no cloud change. A central may publish (retained) only
@@ -587,7 +601,7 @@ Principal needs without watching the live map — the numbers and the last event
 - **Cost:** the message is written again on every new event or change of the numbers — one retained
   write per second at most, as every retained topic — about 3 KB (one billed message). A quiet site:
   a handful a day.
-- **What it is not:** the full history. "Ver todos" on a phone lists these 20 and says the rest is at
+- **What it is not:** the full history. The Eventos tab on a phone lists these 20 and says the rest is at
   the central; a deeper history from a phone needs a request/answer on a topic of its own (and the
   policy change), not built.
 
@@ -596,7 +610,7 @@ Principal needs without watching the live map — the numbers and the last event
 ## 5. The user's view of a central (phone)
 
 After the user picks a central on **Centrais**, the phone shows **the same shell as the tablet**:
-the same app bar, the same bottom bar — **Principal · Dispositivos · Rede** — and the same screens,
+the same app bar, the same bottom bar — **Principal · Dispositivos · Rede · Eventos** — and the same screens,
 fed by the mirror. The back arrow returns to Centrais.
 
 Above Dispositivos and Rede a strip says when the picture is not live: "Conectando à central…",
@@ -607,7 +621,7 @@ Menu and actions — what a user gets:
 
 | Item on the tablet | On the phone | Why |
 |---|---|---|
-| Principal, Dispositivos, Rede | shown | the mirror |
+| Principal, Dispositivos, Rede, Eventos | shown | the mirror (Eventos: the retained alarm message, §4.5) |
 | Armazenamento | shown (exists) | already published |
 | Informações | not yet | the central does not publish it yet |
 | Atualizar dispositivos | shown, **view only** — no choosing, start, pause, cancel; no "Firmwares no tablet" | updates start on site |

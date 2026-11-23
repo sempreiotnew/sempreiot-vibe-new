@@ -52,6 +52,22 @@ here. Do **not** keep divergent layout comments in code — cite this file inste
   for one 10 dB better — additive, `VER` unchanged; an older leaf ignores the byte, an older node's
   3-byte offer says no path. The rollout queue of §13.6 goes by the unit's `ROLE`, never by the family
   byte of its `PRODUCT`. *Built and host-tested 2026-11-18, not yet run on units.*
+  Revision **3.14** (2026-11-23) is about a mains unit that has **no path** to the central: it gets
+  back in within seconds (§7.16, "A unit with no path" rewritten: no 60–90 s wait, 20 s per neighbour,
+  a missed neighbour passed over for one round instead of 30 minutes), restarts itself after 2 minutes
+  whatever it can or cannot hear of the board, keeps its **alarm** across that restart, and tells the
+  central afterwards what happened — `OUTAGE_REPORT` (§7.17, `0x19`). `PATH_ADVERT` gains the `HELD`
+  flag (the central is off and the tree is whole: nobody restarts). Additive, `VER` unchanged; the
+  board relays `0x19` like every uplink frame and an older tablet ACKs it without reading it.
+  *Built and host-tested 2026-11-23, **not yet run on units**.*
+  Revision **3.15** (2026-11-24) makes a unit **say when it left its parent by itself**, for a better
+  path (§7.16): `OUTAGE_REPORT` gains `CAUSE 6`, `END 4` and — `VERSION 2`, 26 bytes — where the unit
+  went, which unit it left and the two paths (§7.17); it is sent for **every** such move, also one
+  that took seconds. Before, a move that went wrong was reported as "its parent went off the air"
+  and one that worked was not reported at all. **What a unit does is unchanged** — when it moves, how
+  it gets back in, every timer: only what it reports. Additive, `VER` unchanged; a report that is
+  not about a move is `VERSION 1`, byte for byte as in 3.14; an older tablet reads the first twelve
+  bytes of a `VERSION 2`. *Built and host-tested 2026-11-24, **not yet run on units**.*
 - Status: implemented (uplink + downlink + journal backfill); v3.2 additions: implemented, bench pending;
   v3.3: implemented; **v3.4: specified, firmware Phase 2 (`docs/phases-development/phase2-leaf-brief.md`)**
 - Supersedes: SAFR v2 (`VER = 0x02` — decode-only for stored packets) and
@@ -376,6 +392,7 @@ Sentinels for "not available": `0xFF` (uint8), `0xFFFF` (uint16), `0x7FFF` (int1
 | 0x16 | LABEL_TABLE *(v3.8)* | uplink (board → central, serial only) | paged, §14.2 |
 | 0x17 | RULE_TABLE *(v3.8)* | uplink (board → central, serial only) | paged, §14.4 |
 | 0x18 | PATH_ADVERT *(v3.12)* | mains unit → mains units in radio range (ESP-NOW broadcast only) | 11 + 6·CHAIN_COUNT bytes, §7.16 |
+| 0x19 | OUTAGE_REPORT *(v3.14; v3.15)* | uplink (mains unit → central, `F_ACK_REQ`) | 12 bytes, or 26 for a move to a better path, §7.17 |
 
 ### 7.1 EVENT — `MSG_TYPE 0x01` (uplink) — payload 17 bytes
 
@@ -602,7 +619,7 @@ Sets `F_ACK_REQ`. `DST_MAC` selects the target device (broadcast allowed).
 | 0x04 | IDENTIFY (blink RGB) | 1 byte: seconds | Physically locate a device during commissioning. |
 | 0x05 | **RESET** | — | Operator alarm reset (§7.1.4): device leaves alarm state (if the sensed condition has cleared), stops re-announcing, and the central clears its latch **after the root ACKs**. Broadcast = system reset. ⛑ UL 864 / NFPA 72: alarms clear only by manual reset. |
 | 0x06 | **SOUND** *(v3.8, §14.5)* | `MODE u8 ‖ DURATION_S u16` | Drive the unit's sounder: `MODE` `0` off (behaves as `SILENCE` addressed to this unit) · `1` evacuate (temporal-3) · `2` alert (continuous) · `3` chirp (test). `DURATION_S` `0` = until `SILENCE` / `RESET`. Sent by the **board** as the effect of a rule (§14.6) and by the tablet for the real test (§14.7). A unit without a sounder ACKs ERROR/`DETAIL 0x09`. ⛑ pattern per NFPA 72 / ISO 8201 temporal-3, EN 54-3 — verify editions. |
-| 0x07 | **RESTART** *(v3.10)* | — | A plain restart of **one** unit; **nothing is erased** (the code, the name, the journal and a battery unit's outbox stay — it is not `DECOMMISSION`). `DST_MAC` is the unit, **never broadcast**: the board refuses a broadcast with ERROR/`DETAIL 0x05`, and a unit refuses one that is not addressed to its own MAC. **To the board** (`DST_MAC` = the board's MAC): the board ACKs on the serial link and restarts ≈ 300 ms later; never relayed. **To a mains unit:** the board ACKs and relays as for every command; the unit ACKs and restarts ≈ 300 ms later. **To a battery unit:** queued in its parent's mailbox (§12.5); the unit ACKs on the wake that takes it, finishes that wake's mailbox, then restarts instead of sleeping — a cold boot, so it finds its parent and sends `NAME_ANNOUNCE` again. **The ACK is sent before the restart** and proves only that the command arrived. **That the unit is back** is read from its next frame: `BOOT_CTR` (header, §3) differs from the one of its ACK (it goes up on every boot; for a battery unit every wake is a boot, so only a frame **after** its ACK counts). A unit in alarm loses its own alarm state with the restart (RAM); the central's latch stays until `RESET`. The central does not send it while a system test or a firmware update runs. |
+| 0x07 | **RESTART** *(v3.10)* | — | A plain restart of **one** unit; **nothing is erased** (the code, the name, the journal and a battery unit's outbox stay — it is not `DECOMMISSION`). `DST_MAC` is the unit, **never broadcast**: the board refuses a broadcast with ERROR/`DETAIL 0x05`, and a unit refuses one that is not addressed to its own MAC. **To the board** (`DST_MAC` = the board's MAC): the board ACKs on the serial link and restarts ≈ 300 ms later; never relayed. **To a mains unit:** the board ACKs and relays as for every command; the unit ACKs and restarts ≈ 300 ms later. **To a battery unit:** queued in its parent's mailbox (§12.5); the unit ACKs on the wake that takes it, finishes that wake's mailbox, then restarts instead of sleeping — a cold boot, so it finds its parent and sends `NAME_ANNOUNCE` again. **The ACK is sent before the restart** and proves only that the command arrived. **That the unit is back** is read from its next frame: `BOOT_CTR` (header, §3) differs from the one of its ACK (it goes up on every boot; for a battery unit every wake is a boot, so only a frame **after** its ACK counts). A mains unit in alarm **comes back in alarm** *(v3.14: its alarm is kept across a restart, §7.16)*; the central's latch stays until `RESET`. The central does not send it while a system test or a firmware update runs. |
 | 0x08 | **ROOT_TAKE** *(v3.11)* | — | The central makes **one** mains unit the root — the unit it found to hear the board clearly better than the root (`BOARD_RSSI`, §7.3), after the operator said yes. `DST_MAC` is that unit: never broadcast, never the board (ERROR/`DETAIL 0x05`). **The board** remembers the choice for 60 s, ACKs and relays as for every command. **The unit** accepts only when it is addressed to its own MAC, it is a child in the mesh (level ≥ 2) and it is not in alarm (otherwise ACK ERROR); it ACKs, then leaves its parent and may be at level 1 only, so it attaches to the board and dials it. **When it dials**, the board gives it the root whatever the signals say and tells the old root to yield (`ROOT_YIELD`): the old root closes its access point and joins the mesh as a child, and the units re-form under the new root. The unit's restriction to level 1 ends the moment it has its session with the board, or after **45 s** if it never got there — it then looks for a parent as any unit does, and the old root, never told to yield, is still the root. For the seconds the mesh takes to re-form nothing reaches the central; an alarm raised then is retried and arrives late. The central does not send it while an alarm is held, a system test or a firmware update runs. A leaf ACKs ERROR. *Not run on units yet.* |
 | 0x10 | GET_INSTALLATION *(v3.1, POC round 1 — pocs/POC-BRIEF.md §4.2)* | — | Sent by the central to the board over the serial link only (never relayed into the mesh). The board replies with INSTALLATION (§7.10). |
 | 0x11 | SET_INSTALLATION *(v3.2, Case B)* | `system_id u16 ‖ channel u8 ‖ mesh_id u8 ‖ ssid_len u8 ‖ ssid (≤ 31) ‖ psk_len u8 ‖ psk (≤ 31) ‖ safr_psk[16] ‖ name_len u8 ‖ name (≤ 32)` | Tablet writes the code into a board that has none (blueprint §3.2 B1). **Setup channel only** (§3.1: header SYSTEM_ID `0x0000`, pop-derived key, `SRC_MAC` = central, `DST_MAC` = board). The board validates (`system_id ≠ 0`, `channel ∈ {1,6,11}`, lengths), stores the code, ACKs OK and reboots ≈ 1 s later. A provisioned board answers ERROR/`DETAIL 0x06`. Never relayed. |
@@ -884,7 +901,7 @@ neighbour offers, and moves by itself when another is clearly better.
 | Off | Size | Field |
 |----|------|-------|
 | 0 | 1 | VERSION = `1` (another value: the frame is ignored) |
-| 1 | 1 | FLAGS — bit 0 `COMPLETE`: CHAIN reaches the root and PATH counts every link down to this unit · bit 1 `FULL`: its access point takes no more units · bits 2–4 `ALARM` *(2026-11-16)*: `0` = no alarm known, `1` = the sender is in alarm, `n` = a unit in alarm is n−1 radio hops from the sender (up to 7) · bits 5–7 zero |
+| 1 | 1 | FLAGS — bit 0 `COMPLETE`: CHAIN reaches the root and PATH counts every link down to this unit · bit 1 `FULL`: its access point takes no more units · bits 2–4 `ALARM` *(2026-11-16)*: `0` = no alarm known, `1` = the sender is in alarm, `n` = a unit in alarm is n−1 radio hops from the sender (up to 7) · bit 5 `HELD` *(v3.14, 2026-11-23)*: the sender has no path because the **central** is not there — it is the root that had its session with the board and lost the board, or its parent says `HELD`; never together with `COMPLETE` · bits 6–7 zero |
 | 2 | 1 | LEVEL of the sender (1 = the root) |
 | 3 | 1 | PATH — int8 dBm: the **weakest unit-to-unit link** between the root and the sender. The root says `0` (no link above it; its own link to the board is not counted — every path shares it) |
 | 4 | 6 | AP — the address of the sender's access point: what a child attaches to (its SSID is `NET_SSID` + `-` + the last three bytes of `SRC_MAC`) |
@@ -938,7 +955,8 @@ units do not leave together):
 and attaches (a few seconds; its own units stay attached to it and are off the air meanwhile — an
 alarm raised then is retried and arrives late, as on any re-parenting). Level 1 is barred for those
 seconds, so a unit that misses its new parent in one scan never dials the board as a second root.
-Not attached in **45 s**: it takes any parent again and does not try that one for 30 minutes. The
+Not attached in **45 s**: it takes any parent again and does not try that one for 30 minutes (a
+move to a *better* path only — a unit with no path has its own, shorter numbers below). The
 pin stays until the station loses that parent; from then on it looks for a parent as any unit does.
 Nothing is stored: after a restart the unit joins as before and looks at the paths again. The
 central sees the result in the unit's next HEARTBEAT (PARENT, LAYER) and TOPOLOGY.
@@ -947,29 +965,60 @@ central sees the result in the unit's next HEARTBEAT (PARENT, LAYER) and TOPOLOG
 learns its path is −85, hears the root's advert at −65 and moves to the root by itself; the old
 parent then hears its former child — no longer under it, with a good path — and moves under it.
 
-**A unit with no path (2026-11-16, second part).** A unit that loses its parent and finds no other
-is sent to the board by Mesh-Lite and calls itself level 1 from then on — and a level-1 unit looks
-for the board only, never for a parent again. Out of the board's reach it stayed so for good, took
-other orphans as its children, and a RESTART brought it back the same (the library keeps that state
-in RTC memory); it returned only when carried to where it heard the board (building, 2026-11-16).
-Three rules:
+**A unit with no path (2026-11-16; rewritten 2026-11-23, v3.14).** A unit that loses its parent
+and finds no other is sent to the board by Mesh-Lite and calls itself level 1 from then on — and a
+level-1 unit looks for the board only, never for a parent again. Out of the board's reach — where
+most units of a building are — it stayed so (building, 2026-11-16). The first rules for it waited
+60–90 s before looking, gave one neighbour 45 s, **refused that neighbour for 30 minutes when the
+attach was missed**, and the unit's own restart never came, because "attached to nothing and the
+board is not on the air" was read as "the board is off". Units stayed offline for hours until
+restarted by hand (2026-11-23). A fire alarm unit with no path is the worst state there is; every
+way out is now short, and **none of it changes the choice of a better parent above** — that is for
+a unit whose path works.
 
 - **It says so.** A unit that is not in the mesh — attached to nothing, or holding the root's role
   with no board — sends its advert without `COMPLETE` (LEVEL as the library has it, PATH `0`, no
   CHAIN) instead of staying silent, so the units under it and around it stop believing what it
   said before at the next advert, not 45 s later.
-- **It leaves the role when the real mesh is in reach.** At level 1, attached to nothing, no
-  session with the board for **60 s** (plus up to 30 s by its address): if a neighbour's advert is
-  `COMPLETE` (and it is not `FULL`, not under this unit, at level ≤ 14), the unit goes to the one
-  with the best path, by the move above — whatever the signals, any path beats none; the waits
-  between moves do not apply. Nobody `COMPLETE` in reach — the board is off, or the unit hears no
-  one — and it **keeps the role and the mesh**, as before (§9.2); it looks again at every advert.
-- **A child whose parent gives it nothing** (§9.3, nothing from the central for 60 s) goes to a
-  `COMPLETE` neighbour when there is one, before it lets Mesh-Lite choose — which takes the
-  shallowest unit heard, another orphan calling itself level 1.
+- **Its parent went off the air** (attached to nothing, level ≥ 2): Mesh-Lite gets **6 s** for its
+  own first try at the same parent — a parent that only blinked keeps its unit and the tree keeps
+  its shape — then the unit goes to the neighbour with the best path among those that are
+  `COMPLETE`, not `FULL`, not under it, at level ≤ 14. For **60 s** it does not believe the units
+  whose CHAIN goes through the parent it lost: they say `COMPLETE` until the news reaches them, one
+  advert per level. (The parent itself, heard `COMPLETE` again, ends that wait at once.)
+- **It holds the root's role with no board** (level 1, attached to nothing, no session): the same
+  move, as soon as the Wi-Fi driver has said once that the board's access point is not on the air,
+  or after **20 s**.
+- **Its parent gives it nothing** (attached, nothing of the central down for **30 s**, the parent's
+  advert not `COMPLETE`): the same move, if a neighbour has a path. **Nobody `COMPLETE` in reach**
+  means the central is silent for everyone — it restarted, or it is off — and the unit **stays
+  where it is**; the older rule (60 s, then Mesh-Lite's own choice, doubling to 10 minutes) goes on
+  as before.
+- **The move for a unit with no path** has **20 s** (Mesh-Lite is asked to scan again every 7 s
+  meanwhile; by itself it scans once and then waits 10 s). Not attached: that neighbour is passed
+  over for **30 s** and the next one is tried at once — never the 30 minutes of a move to a better
+  path. The waits between moves do not apply.
+- **Nobody says it has a path, and the unit never had the board:** every 30 s it bars level 1 for
+  20 s with no parent pinned, so Mesh-Lite takes any unit it hears, as at start (the adverts may be
+  what is not heard).
+- **The root that had the board keeps still.** A unit that had its session with the board and lost
+  the board itself keeps the role and the mesh (§9.2), and says `HELD`. A child whose parent's
+  advert says `HELD` says it too. Such a unit goes to a `COMPLETE` neighbour when one appears, and
+  otherwise does nothing — and does not restart itself.
+- **Last resort: the restart** (siot_netcore). A path is proven by a frame of the central coming
+  down (the board's HEARTBEAT every 15 s) or, on the root, by its session with the board. A unit
+  with no proof for **2 minutes** restarts itself, and again every **4 minutes** while it stays so
+  — Mesh-Lite keeps state that only a restart clears, and every unit that ever stuck came back on
+  RESTART. Not while its tree is `HELD`. **An alarm survives it** (RTC memory): the unit comes back
+  in alarm, LED and 60 s re-announcement included (§7.2). *It replaces "out of the mesh for 5
+  minutes, never in alarm" (2026-11-06).*
+- Afterwards the unit tells the central what happened: `OUTAGE_REPORT`, §7.17.
 
-Every start now looks for a parent afresh: the library's RTC state is erased at boot.
-*Written 2026-11-16 after the console log of the stuck unit; builds, host-tested; **not run on units yet**.*
+Every start looks for a parent afresh: the library's RTC state is erased at boot.
+*The 2026-11-16 rules ran on the building. The 2026-11-23 rewrite builds and is host-tested
+(`test_path.c`: the lost parent's branch, the one-round skip, `HELD`); **not run on units yet**. The
+table cannot put a unit out of the board's reach, so there is a bench build that is deaf to the
+board (`firmware/build.sh node --deaf`, `docs/ota/before-production.md` item 12).*
 
 **Bench times.** While `SIOT_PATH_BENCH_TIMES` is 1 (`docs/ota/before-production.md` item 11) the
 three waits above — 3 minutes with the better path in sight, 10 minutes after a command, 10 minutes
@@ -980,6 +1029,61 @@ of the 5 dB margin after a join are **3**.
 the building above with the bench times: the tree re-formed by itself and was judged to work (seen
 on the map, no console captured). Not yet run with the production times. The −80 line, the 5 dB
 margin after a join and `ALARM` were written later the same day: host-tested, **not run on units**.*
+
+---
+
+### 7.17 OUTAGE_REPORT — `MSG_TYPE 0x19` (uplink, mains unit → central) — payload 12 bytes, 26 for a move *(v3.14, 2026-11-23; v3.15, 2026-11-24)*
+
+**Why.** Units are on a ceiling; nobody reads their console. A unit that was without a path to the
+central — for minutes or, before v3.14, for hours — left no trace but the gap in its heartbeats.
+With this frame the unit says, **once it is back**, how long it was out, how it began, what it
+tried and whether it had to restart itself.
+
+| Off | Size | Field |
+|----|------|-------|
+| 0 | 1 | VERSION = `1`; `2` when the fourteen bytes of a move follow *(v3.15)* |
+| 1 | 4 | DURATION_S — seconds with no proof of a path (§7.16), restarts of this outage included |
+| 5 | 1 | CAUSE — how it began: `0` not known · `1` no path since the unit started · `2` its parent went off the air · `3` attached, and nothing of the central came down · `4` the root: its session with the board dropped · `5` at the board and not its root (told to yield, or never proven) · `6` *(v3.15)* it **left its parent by itself**, for a unit with a better path (§7.16) |
+| 6 | 1 | FLAGS — bit 0: it held the root's role with no board in reach · bit 1: it was under a parent with no path · bit 2: it was attached to nothing, as a child |
+| 7 | 1 | RESCUES — moves to a neighbour that said it had a path |
+| 8 | 1 | RESCUES_MISSED — of those, the ones that did not attach in time |
+| 9 | 1 | ANY_ROUNDS — rounds of "any parent Mesh-Lite finds" |
+| 10 | 1 | RESTARTS — times the unit restarted itself for having no path |
+| 11 | 1 | END — how it came back: `1` moved to a neighbour with a path · `2` as the root, on the board · `3` otherwise (Mesh-Lite's own choice, or the path of the parent it had came back) · `4` *(v3.15)* on the unit with the better path it left its parent for |
+| 12 | 6 | TO *(VERSION 2)* — the unit it went for (its SAFR address) |
+| 18 | 6 | FROM *(VERSION 2)* — the unit it left; all zero = not known |
+| 24 | 1 | PATH_BEFORE *(VERSION 2)* — int8 dBm, the path it had; `0x7F` = not known |
+| 25 | 1 | PATH_AFTER *(VERSION 2)* — int8 dBm, the path the other unit offered |
+
+**When.** An outage begins when nothing has proven a path for 20 s and ends at the next proof. It
+is reported when the link did something about it (CAUSE, FLAGS or a counter is not zero), and a
+start that took 60 s or more to find the mesh is reported as CAUSE `1`. **Not** reported: an
+outage during which the unit's tree said `HELD` (the central was off; it knows, and every unit
+saying so at once would be a storm) — unless the unit restarted itself in it. A silence with
+nothing done about it (the central restarted) is not an outage of the unit and is not reported.
+
+**A move to a better path *(v3.15)*.** A unit that leaves its parent for a better path (§7.16)
+is off the air for some seconds, and so is everything under it. It says so: `CAUSE 6`, and
+`VERSION 2` with where it went. It is reported **every time**, once the path is proven again —
+also when the move took a few seconds and never became an outage (`DURATION_S` is then the
+seconds from leaving to that proof); `END 4` = it is on the unit it went for, any other `END` =
+it did not get there. A move that became an outage (20 s with no proof) is reported by the rule
+above, with `CAUSE 6` as how it began; if the unit restarted itself meanwhile, the fourteen bytes
+are not kept and the report is `VERSION 1` with `CAUSE 6`. The units under it report as before
+(`CAUSE 3`): that they were under a unit that was moving is read at the central, from the two
+reports standing in the same seconds. A central reads a `VERSION 2` with `END 4` and no restart
+as news, not as a trouble.
+
+**How.** `F_ACK_REQ`, `DST_MAC` broadcast: sent again with the **same `MSG_ID`** (fresh `MSG_CTR`)
+until the central's ACK comes down — 3 × 2 s, then once a minute, 8 tries in all, then dropped.
+The central lists a report once: a copy of the same unit that says the same within 10 minutes is
+ACKed and not listed again.
+What happened before a restart is carried over it in RTC memory (not over a power cut). The board
+relays it unchanged like every uplink frame; it keeps nothing of it. The tablet records it in the
+unit's history (reference §3.6.1 `DeviceEvents`, `msgType 0x19`) and ACKs it; a tablet that does
+not know the type ACKs it all the same.
+
+*Built and host-tested 2026-11-23 (v3.15: 2026-11-24); **not run on units yet**.*
 
 ---
 

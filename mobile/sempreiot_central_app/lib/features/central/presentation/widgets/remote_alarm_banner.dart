@@ -6,6 +6,7 @@ import '../../../../core/theme/theme_ext.dart';
 import '../../../../core/utils/relative_time.dart';
 import '../../application/central_mirror_codec.dart';
 import '../../application/central_mirror_viewer.dart';
+import 'device_state_tile.dart';
 
 /// The alarms a viewed central holds, on the user's phone: the tablet's
 /// alarm-hold banner (latched_alarm_banner.dart) without the reset — an
@@ -15,14 +16,9 @@ import '../../application/central_mirror_viewer.dart';
 /// opened after the alarm started, and stays while the central is offline.
 /// Renders nothing while no alarm is held.
 class RemoteAlarmBanner extends ConsumerWidget {
-  const RemoteAlarmBanner(
-      {super.key, required this.identityId, this.embedded = false});
+  const RemoteAlarmBanner({super.key, required this.identityId});
 
   final String identityId;
-
-  /// Inside Principal's status block (2026-11-19), which already says
-  /// "ALARME" and draws the red box: only the explanation and the devices.
-  final bool embedded;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -31,68 +27,49 @@ class RemoteAlarmBanner extends ConsumerWidget {
     if (alarms.isEmpty) return const SizedBox.shrink();
 
     return Container(
-      margin: embedded ? null : const EdgeInsets.only(bottom: 10),
-      padding: embedded ? null : const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      decoration: embedded
-          ? null
-          : BoxDecoration(
-              color: AppColors.error
-                  .withValues(alpha: context.isDark ? 0.16 : 0.08),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: AppColors.error.withValues(alpha: 0.55),
-                width: 0.8,
-              ),
-            ),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: AppColors.error.withValues(alpha: context.isDark ? 0.16 : 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: AppColors.error.withValues(alpha: 0.55),
+          width: 0.8,
+        ),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (!embedded) ...[
-            Row(
-              children: [
-                const Icon(Icons.local_fire_department_rounded,
-                    color: AppColors.error, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    alarms.length == 1
-                        ? 'ALARME RETIDO — 1 dispositivo'
-                        : 'ALARME RETIDO — ${alarms.length} dispositivos',
-                    style: const TextStyle(
-                      color: AppColors.error,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.8,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-          ],
           Row(
             children: [
-              if (embedded) ...[
-                Icon(Icons.lock_outline_rounded,
-                    size: 15, color: context.textSecondary),
-                const SizedBox(width: 6),
-              ],
+              const Icon(Icons.local_fire_department_rounded,
+                  color: AppColors.error, size: 20),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'O alarme fica retido até o rearme do operador, na '
-                  'central.',
-                  style: TextStyle(
-                      color: context.textSecondary,
-                      fontSize: embedded ? 12 : 11),
+                  alarms.length == 1
+                      ? 'ALARME RETIDO — 1 dispositivo'
+                      : 'ALARME RETIDO — ${alarms.length} dispositivos',
+                  style: const TextStyle(
+                    color: AppColors.error,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.8,
+                  ),
                 ),
               ),
             ],
           ),
+          const SizedBox(height: 6),
+          Text(
+            'O alarme fica retido até o rearme do operador, na central.',
+            style: TextStyle(color: context.textSecondary, fontSize: 11),
+          ),
           const SizedBox(height: 8),
           Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [for (final a in alarms) _AlarmChip(alarm: a)],
+            spacing: 8,
+            runSpacing: 8,
+            children: [for (final a in alarms) RemoteAlarmTile(alarm: a)],
           ),
         ],
       ),
@@ -100,55 +77,34 @@ class RemoteAlarmBanner extends ConsumerWidget {
   }
 }
 
-class _AlarmChip extends StatelessWidget {
-  const _AlarmChip({required this.alarm});
+/// One held alarm: the unit as Rede draws it, in alarm, and since when.
+class RemoteAlarmTile extends StatelessWidget {
+  const RemoteAlarmTile({super.key, required this.alarm});
   final MirrorAlarm alarm;
 
   @override
   Widget build(BuildContext context) {
-    final hasName = alarm.name?.isNotEmpty == true;
-    final zone = alarm.zone ?? '';
     final since = alarm.since;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: context.surfaceColor,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: AppColors.error.withValues(alpha: 0.4),
-          width: 0.7,
-        ),
+    return DeviceStateTile(
+      mac: alarm.mac,
+      described: DeviceStateTile.describe(
+        mac: alarm.mac,
+        name: alarm.name,
+        address: alarm.address,
+        productCode: alarm.productCode,
+        leaf: alarm.leaf,
+        alarm: true,
+        alarmSince: since,
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Flexible(
-            child: Text(
-              hasName ? alarm.name! : alarm.mac,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: context.textPrimary,
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
-                fontFamily: hasName ? null : 'monospace',
-              ),
-            ),
-          ),
-          if (zone.isNotEmpty) ...[
-            const SizedBox(width: 6),
-            Text(
-              zone,
-              style: TextStyle(color: context.textSecondary, fontSize: 10.5),
-            ),
-          ],
-          if (since != null) ...[
-            const SizedBox(width: 6),
-            Text(
-              relativeTime(since),
-              style: TextStyle(color: context.textSecondary, fontSize: 10.5),
-            ),
-          ],
-        ],
+      accent: AppColors.error,
+      status: Text(
+        since == null ? 'em alarme' : 'em alarme · ${relativeTime(since)}',
+        maxLines: 1,
+        style: const TextStyle(
+          color: AppColors.error,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }

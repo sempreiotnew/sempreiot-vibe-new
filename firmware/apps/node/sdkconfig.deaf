@@ -1,0 +1,4 @@
+# BENCH ONLY — firmware/build.sh node --deaf (docs/ota/before-production.md item 12).
+# A node that never reaches the central: every connect to the board ends in
+# "no such access point". Never part of sdkconfig.defaults.
+CONFIG_SIOT_BENCH_BOARD_DEAF=y

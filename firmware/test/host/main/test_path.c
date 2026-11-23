@@ -363,3 +363,115 @@ TEST_CASE("path: an alarm is told from unit to unit and dies with its source", "
     now += SIOT_PATH_FRESH_MS + 1;
     TEST_ASSERT_EQUAL(0, siot_path_alarm(&t, now, false));
 }
+
+TEST_CASE("path: a unit that lost its parent passes over the units that hang from it", "[link][path]")
+{
+    /* This unit hung from X. X goes off: Y, which hangs from X too, goes on
+     * saying COMPLETE until the news reaches it. ROOT is the real way in. */
+    start();
+    int64_t now = 0;
+    siot_path_set_parent(&t, X);
+    siot_path_link_sample(&t, -50);
+    const siot_path_advert_t x = advert(X, 2, -60, ROOT, 1);
+    const uint8_t via_x[12] = {0x52, 0, 0, 0, 0, 0x20, 0x52, 0, 0, 0, 0, 0x10};
+    const siot_path_advert_t y = advert(Y, 3, -60, via_x, 2);
+    const siot_path_advert_t root = advert(ROOT, 1, SIOT_PATH_ROOT_DBM, NULL, 0);
+    siot_path_choice_t c;
+    hear(&now, 3, &x, -50);
+    hear(&now, 3, &y, -45);
+
+    siot_path_parent_lost(&t, now, X);
+    siot_path_set_parent(&t, NULL);
+    TEST_ASSERT_FALSE(siot_path_rescue(&t, now, &c)); /* X itself, and Y through X: no way out */
+    hear(&now, 3, &root, -84);
+    TEST_ASSERT_TRUE(siot_path_rescue(&t, now, &c));
+    TEST_ASSERT_EQUAL_MEMORY(ROOT, c.ap, 6);
+
+    /* Y found another parent: what it says now is news, and it is the better path. */
+    const siot_path_advert_t y2 = advert(Y, 2, -60, ROOT, 1);
+    hear(&now, 1, &y2, -45);
+    TEST_ASSERT_TRUE(siot_path_rescue(&t, now, &c));
+    TEST_ASSERT_EQUAL_MEMORY(Y, c.ap, 6);
+
+    /* X is back with a path before the wait is over: believed at once. */
+    start();
+    now = 0;
+    siot_path_set_parent(&t, X);
+    hear(&now, 3, &x, -50);
+    siot_path_parent_lost(&t, now, X);
+    siot_path_set_parent(&t, NULL);
+    TEST_ASSERT_FALSE(siot_path_rescue(&t, now, &c));
+    hear(&now, 1, &x, -50);
+    TEST_ASSERT_TRUE(siot_path_rescue(&t, now, &c));
+    TEST_ASSERT_EQUAL_MEMORY(X, c.ap, 6);
+
+    /* And the wait ends by itself. */
+    start();
+    now = 0;
+    siot_path_set_parent(&t, X);
+    hear(&now, 3, &x, -50);
+    hear(&now, 3, &y, -45);
+    siot_path_parent_lost(&t, now, X);
+    siot_path_set_parent(&t, NULL);
+    hear(&now, SIOT_PATH_LOST_MS / SIOT_PATH_ADVERT_MS - 1, &y, -45);
+    TEST_ASSERT_FALSE(siot_path_rescue(&t, now, &c));
+    hear(&now, 1, &y, -45);
+    TEST_ASSERT_TRUE(siot_path_rescue(&t, now, &c));
+    TEST_ASSERT_EQUAL_MEMORY(Y, c.ap, 6);
+}
+
+TEST_CASE("path: a unit with no path passes over a missed parent for one round, not half an hour", "[link][path]")
+{
+    start();
+    int64_t now = 0;
+    siot_path_set_parent(&t, NULL);
+    const siot_path_advert_t y = advert(Y, 2, -60, ROOT, 1);
+    siot_path_choice_t c;
+    hear(&now, 3, &y, -70);
+    TEST_ASSERT_TRUE(siot_path_rescue(&t, now, &c));
+    siot_path_mark_bad_for(&t, now, Y, SIOT_PATH_RESCUE_SKIP_MS);
+    TEST_ASSERT_FALSE(siot_path_rescue(&t, now, &c));
+    now += SIOT_PATH_RESCUE_SKIP_MS - SIOT_PATH_ADVERT_MS;
+    hear(&now, 1, &y, -70);
+    TEST_ASSERT_TRUE(siot_path_rescue(&t, now, &c));
+    TEST_ASSERT_EQUAL_MEMORY(Y, c.ap, 6);
+}
+
+TEST_CASE("path: HELD is said by a root that lost the central and heard by the units under it", "[link][path]")
+{
+    start();
+    int64_t now = 0;
+    siot_path_advert_t root = advert(ROOT, 1, SIOT_PATH_ROOT_DBM, NULL, 0), b;
+    root.complete = false;
+    root.held = true;
+    uint8_t buf[SIOT_PATH_ADVERT_MAX_LEN];
+    size_t n = siot_path_advert_encode(&root, buf, sizeof(buf));
+    TEST_ASSERT_TRUE(siot_path_advert_decode(buf, n, &b));
+    TEST_ASSERT_TRUE(b.held);
+    TEST_ASSERT_FALSE(b.complete);
+
+    /* Never together with COMPLETE: a path is a path. */
+    root.complete = true;
+    n = siot_path_advert_encode(&root, buf, sizeof(buf));
+    TEST_ASSERT_TRUE(siot_path_advert_decode(buf, n, &b));
+    TEST_ASSERT_FALSE(b.held);
+    root.complete = false;
+
+    siot_path_set_parent(&t, ROOT);
+    TEST_ASSERT_FALSE(siot_path_parent_held(&t, now));
+    hear(&now, 3, &root, -60);
+    TEST_ASSERT_TRUE(siot_path_parent_held(&t, now));
+    TEST_ASSERT_FALSE(siot_path_parent_complete(&t, now));
+
+    /* The central is back: the root says COMPLETE, nothing is held. */
+    root.complete = true;
+    root.held = false;
+    hear(&now, 1, &root, -60);
+    TEST_ASSERT_FALSE(siot_path_parent_held(&t, now));
+    TEST_ASSERT_TRUE(siot_path_parent_complete(&t, now));
+
+    /* A parent that went silent vouches for nothing. */
+    now += SIOT_PATH_FRESH_MS + 1;
+    TEST_ASSERT_FALSE(siot_path_parent_complete(&t, now));
+    TEST_ASSERT_FALSE(siot_path_parent_held(&t, now));
+}

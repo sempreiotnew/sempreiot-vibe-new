@@ -24,6 +24,10 @@ class AppColors {
   static const Color warning = Color(0xFFF59E0B);
   static const Color error = Color(0xFFEF4444);
 
+  /// News that asks for nothing (an event listed as AVISO: a test, a
+  /// command, a change in the mesh). Never a unit's LED — see `led*` below.
+  static const Color info = Color(0xFF60A5FA);
+
   /// Fire-alarm severity scale (SAFR): TROUBLE sits between OK (success)
   /// and ALERT (warning) — a distinct orange so faults never read as alarms.
   static const Color trouble = Color(0xFFE8763A);

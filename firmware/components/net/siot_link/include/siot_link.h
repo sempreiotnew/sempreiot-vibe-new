@@ -224,10 +224,58 @@ void siot_link_mesh_rejoin(void);
 
 /* Node: for how many seconds in a row this unit has been out of the mesh —
  * attached neither to a unit (as a child) nor to the board (as the root).
- * 0 = it is in the mesh, or it is attached to nothing because the board is
- * off (its access point is not on the air): nothing is stuck then, and the
- * root keeps the mesh. siot_netcore restarts a unit that stays out. */
+ * 0 = it is in the mesh, or it is attached to nothing while its Wi-Fi driver
+ * says the board's access point is not on the air. For the unit's own log
+ * (link_mesh_node.c, OUT_LOG_MS); the restart of a unit with no path is
+ * siot_netcore's, by what comes down from the central. */
 uint32_t siot_link_mesh_out_s(void);
+
+/* Node: the tree this unit is in is whole and the CENTRAL is what is missing
+ * (protocol §7.16 HELD, v3.14) — it is the root that had its session with
+ * the board and lost the board, or its parent says so. Such a unit keeps
+ * still: it does not restart itself for having no path. */
+bool siot_link_mesh_tree_held(void);
+
+/* Node: what the link did about a lost path since the last call with `reset`
+ * — for the outage record (protocol §7.17 OUTAGE_REPORT, v3.14). */
+#define SIOT_LINK_OUT_NONE          0
+#define SIOT_LINK_OUT_BOOT          1 /* (siot_netcore) no path since the unit started */
+#define SIOT_LINK_OUT_PARENT_LOST   2 /* the parent went off the air */
+#define SIOT_LINK_OUT_PARENT_SILENT 3 /* attached, and nothing of the central came down */
+#define SIOT_LINK_OUT_BOARD_LOST    4 /* the root: its session with the board dropped */
+#define SIOT_LINK_OUT_YIELD         5 /* at the board, and not its root: told to yield, or never proven */
+#define SIOT_LINK_OUT_MOVE          6 /* it left its parent by itself, for a unit with a better path (v3.15) */
+#define SIOT_LINK_OUT_F_ORPHAN   0x01 /* it held the root's role with no board in reach */
+#define SIOT_LINK_OUT_F_PATHLESS 0x02 /* it was under a parent with no path */
+#define SIOT_LINK_OUT_F_NOWHERE  0x04 /* it was attached to nothing, as a child */
+typedef struct {
+    uint8_t cause;        /* SIOT_LINK_OUT_*: how it began (the first one counts) */
+    uint8_t flags;        /* SIOT_LINK_OUT_F_* */
+    uint8_t rescues;      /* moves to a neighbour that said it had a path */
+    uint8_t rescue_fails; /* ...that did not get there in time */
+    uint8_t any_rounds;   /* rounds of "any parent the library finds" */
+    bool    rescued;      /* one of those moves got there */
+} siot_link_recovery_t;
+void siot_link_mesh_recovery(siot_link_recovery_t *out, bool reset);
+
+/* Node: the last time this unit left its parent for a BETTER path (the best
+ * path, below — never a rescue), for the record (protocol §7.17 v3.15): the
+ * central is told of every such move, so a reorganisation is never read as a
+ * unit that dropped. `started_ms` / `ended_ms` are on esp_timer's clock. */
+#define SIOT_LINK_MOVE_NONE   0
+#define SIOT_LINK_MOVE_GOING  1 /* it left, and is not on the new parent yet */
+#define SIOT_LINK_MOVE_MOVED  2 /* it is on the parent it went for */
+#define SIOT_LINK_MOVE_MISSED 3 /* it did not reach it in time: any parent now */
+typedef struct {
+    uint8_t state;        /* SIOT_LINK_MOVE_* */
+    uint8_t to[6];        /* the unit it went for (its SAFR address) */
+    uint8_t from[6];      /* the unit it left; all zero = not known */
+    int8_t  path_before;  /* dBm: the path it had */
+    int8_t  path_after;   /* dBm: the path the other unit offered */
+    int64_t started_ms;
+    int64_t ended_ms;     /* MOVED / MISSED: when */
+} siot_link_move_t;
+void siot_link_mesh_move(siot_link_move_t *out, bool reset);
 
 /* ---- the best path (siot_link_path.h, protocol §7.16 PATH_ADVERT, v3.12) --
  * A unit does not stay under a parent with a weak path when another unit

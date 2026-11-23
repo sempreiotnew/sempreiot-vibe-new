@@ -70,6 +70,10 @@ extern "C" {
 /* v3.12, spec §7.16: a mains unit's path to the root, unit to unit on ESP-NOW
  * only (its own ESP-NOW type; never on the mesh, the board or the tablet) */
 #define SAFR_MSG_PATH_ADVERT     0x18
+/* v3.14, spec §7.17: a mains unit that had no path to the central says, once
+ * it is back, how long, how it began and what it took (unit → central,
+ * F_ACK_REQ; relayed by the board like every uplink frame) */
+#define SAFR_MSG_OUTAGE_REPORT   0x19
 
 /* FLAGS */
 #define SAFR_F_ENC      0x01

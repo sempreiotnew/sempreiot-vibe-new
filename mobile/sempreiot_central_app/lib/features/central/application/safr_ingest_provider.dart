@@ -798,10 +798,8 @@ class SafrIngestService {
     int packetId,
     DateTime now,
   ) async {
-    final raw = p
-        .build()
-        .map((b) => b.toRadixString(16).padLeft(2, '0'))
-        .join();
+    final raw =
+        p.build().map((b) => b.toRadixString(16).padLeft(2, '0')).join();
     final recent = await (db.select(db.deviceEvents)
           ..where((t) =>
               t.deviceMac.equals(frame.srcMac) &
@@ -820,7 +818,9 @@ class SafrIngestService {
           receivedAt: now,
           deviceMac: frame.srcMac,
           msgType: SafrMsgType.outageReport.wire,
-          severity: 1, // trouble: the unit was unreachable for that long
+          // Trouble: the unit was unreachable for that long. A move to a
+          // better path that worked is news (v3.15).
+          severity: p.cleanMove ? 0 : 1,
           packetId: Value(packetId),
           detailJson: jsonEncode({
             'kind': 'outage',
@@ -835,6 +835,10 @@ class SafrIngestService {
             'any_rounds': p.anyRounds,
             'restarts': p.restarts,
             'end': p.end.wire,
+            if (p.moveTo != null) 'move_to': p.moveTo,
+            if (p.moveFrom != null) 'move_from': p.moveFrom,
+            if (p.pathBefore != null) 'path_before': p.pathBefore,
+            if (p.pathAfter != null) 'path_after': p.pathAfter,
           }),
         ));
   }
@@ -905,8 +909,8 @@ final safrIngestProvider = Provider<SafrIngestService>((ref) {
     onDeviceTableSynced: (listed) =>
         ref.read(boardSyncProvider.notifier).tableArrived(listed),
     onJournalData: downlink.handleJournalData,
-    onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS,
-            bootCtr, boardRssi) =>
+    onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS, bootCtr,
+            boardRssi) =>
         traffic.emit(SafrTrafficTick(
       mac: mac,
       direction: SafrTrafficDirection.uplink,

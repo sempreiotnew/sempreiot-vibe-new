@@ -451,11 +451,17 @@ Facts that came out of the bench and are now rules:
   hears nobody, nothing is stuck, the root keeps the mesh. After **60 s** out the library's own log
   (`esp_mesh_lite_core_log_enable`) and the Wi-Fi driver's go on, and every 30 s one line
   `out of the mesh for N s: …` says the library's level, parent, addresses, bars and the board's
-  last word; all off again when it is back in. After **5 min** out the unit restarts itself
-  (`siot_netcore.c` `MESH_OUT_RESTART_S`): every unit that ever stayed out came back on RESTART.
-  Never while an alarm is active; the wait doubles when it is out again after such a restart — 5,
-  10, 20, then 30 min at most (count in RTC memory, back to zero once it is in the mesh and hears
-  the central).
+  last word; all off again when it is back in. *(The restart after 5 min out, never in alarm, was
+  replaced on 2026-11-23: it never fired for a unit out of the board's reach.)*
+- **No path: back in fast, then restart (2026-11-23, protocol §7.16 / §7.17).** A path is proven by
+  a frame of the central coming down, or on the root by its session with the board. A unit without
+  one goes to a neighbour whose advert says it has a full path (`link_mesh_node.c`, "NO PATH: BACK
+  IN, FAST": 6 s after its parent went off the air, 20 s per neighbour, a missed one passed over
+  for 30 s) and stays where it is when nobody has one. After **2 min** with no proof it restarts
+  itself, then every 4 min (`siot_netcore.c` `NO_PATH_RESTART_S`), **in alarm too**: the alarm is
+  kept in RTC memory (`s_keep`) and the unit comes back in alarm. Not while the tree is `HELD` (the
+  root that had the board lost it: the board is off). What happened is sent to the central when the
+  path is back (`OUTAGE_REPORT`). Built and host-tested; **not run on units**.
 - **One-way link (2026-11-05, `siot_netcore.c` `CONFIRM_*`).** A unit at level 2 heard the central
   (not breathing) while the board listed it MISSING and its TEST blinked blue three times with no
   cyan: its frames went nowhere, and nothing was logged on that path. Cause not established. A

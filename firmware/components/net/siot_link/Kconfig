@@ -1,0 +1,17 @@
+menu "SempreIoT link"
+
+    config SIOT_BENCH_BOARD_DEAF
+        bool "BENCH ONLY: this node never reaches the central"
+        default n
+        help
+            RELAXED FOR THE BENCH (docs/ota/before-production.md item 12).
+            The node is told a board access point address that does not
+            exist, so every connect to the board ends in "no such access
+            point": a unit out of the central's reach, on a table where
+            every unit hears every other. Such a unit can never be the
+            root. Built by `firmware/build.sh node --deaf` into its own
+            directory (apps/node/build-deaf); never set it in
+            apps/node/sdkconfig.defaults — ci/check.sh --release fails
+            while any node configuration has it.
+
+endmenu

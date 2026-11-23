@@ -288,29 +288,50 @@ void main() {
         uptimeS: uptimeS,
       );
 
-  test('the unit reboots out of alarm: red clears on its first heartbeat', () {
+  // Protocol 3.14 (2026-11-23): a unit keeps its alarm across a restart —
+  // it comes back blinking red and re-announces as soon as it has a path.
+  test('the unit restarts in alarm: its LED goes on blinking red', () {
     nodes = [
       node(boardMac, SafrNodeRole.root, 0),
       node(childMac, SafrNodeRole.node, 2, alarm: true),
     ];
     tickAt(0, alarmUp(childMac));
-    tickAt(15000, heartbeat(childMac, 600)); // still up: still in alarm
-    expect(at(childMac, 15600), LedColor.red);
+    tickAt(15000, heartbeat(childMac, 600));
+    expect(at(childMac, 16000), LedColor.red);
     tickAt(20000, heartbeat(childMac, 3)); // booted at ~17 s, after the alarm
-    expect(at(childMac, 20200), isNull);
-    expect(find(childMac).alarmLatched, isTrue); // ALARME badge stays
-    tickAt(25000, alarmUp(childMac)); // alarms again after the reboot
+    expect(engine.inAlarm(find(childMac)), isTrue);
+    expect(at(childMac, 21000), LedColor.red);
+    expect(find(childMac).alarmLatched, isTrue);
+    tickAt(25000, alarmUp(childMac)); // its re-announce, back on a path
     expect(at(childMac, 26000), LedColor.red);
+    expect(at(childMac, 85000), LedColor.red); // a period from that one
   });
 
-  test('latched at app start, then the unit reboots: no red', () {
+  test(
+      'a unit that lost its power lost its alarm: the red stops with '
+      'its re-announces', () {
+    nodes = [
+      node(boardMac, SafrNodeRole.root, 0),
+      node(childMac, SafrNodeRole.node, 2, alarm: true),
+    ];
+    tickAt(0, alarmUp(childMac));
+    tickAt(20000, heartbeat(childMac, 3));
+    expect(at(childMac, 21000), LedColor.red);
+    // No ALARM frame for a whole period (and its grace): not in alarm.
+    expect(at(childMac, 71000), isNull);
+    expect(engine.inAlarm(find(childMac)), isFalse);
+  });
+
+  test(
+      'latched at app start, then the unit restarts: still red for a '
+      'period', () {
     nodes = [
       node(boardMac, SafrNodeRole.root, 0),
       node(childMac, SafrNodeRole.node, 2, alarm: true),
     ];
     expect(at(childMac, 0), LedColor.red);
     tickAt(10000, heartbeat(childMac, 4));
-    expect(at(childMac, 10200), isNull);
+    expect(at(childMac, 11000), LedColor.red);
   });
 
   test('a leaf never shows the alarm red (its firmware has none)', () {
@@ -418,8 +439,8 @@ void main() {
       final ticks = <SafrTrafficTick>[];
       final ingest = SafrIngestService(
         db: db,
-        onTraffic:
-            (mac, severity, parentMac, msgType, eventCode, uptimeS, bootCtr, _) {
+        onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS,
+            bootCtr, _) {
           final tick = SafrTrafficTick(
             mac: mac,
             direction: SafrTrafficDirection.uplink,
@@ -584,8 +605,8 @@ void main() {
       final ingest = SafrIngestService(
         db: db,
         onAckRequired: (f) async => toAck.add(f),
-        onTraffic:
-            (mac, severity, parentMac, msgType, eventCode, uptimeS, bootCtr, _) {
+        onTraffic: (mac, severity, parentMac, msgType, eventCode, uptimeS,
+            bootCtr, _) {
           final tick = SafrTrafficTick(
             mac: mac,
             direction: SafrTrafficDirection.uplink,

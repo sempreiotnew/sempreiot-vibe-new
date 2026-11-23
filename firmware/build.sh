@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # firmware/build.sh — build one image in a named variant directory.
 #
-#   firmware/build.sh <board|node|leaf|host> [--flash 4mb|8mb | --module n8r8|n4] [--bench] [-- <extra idf.py args>]
+#   firmware/build.sh <board|node|leaf|host> [--flash 4mb|8mb | --module n8r8|n4] [--bench] [--deaf] [-- <extra idf.py args>]
 #
 #   Modules (supplier recommendation, 2026-09-25; table in tools/build_summary.py):
 #     8mb = ESP32-S3-WROOM-1-N8R8  8 MB flash + 8 MB PSRAM  -> the board (product)
@@ -14,12 +14,17 @@
 #   --bench          board only: text console on UART0 (sdkconfig.bench). Never on
 #                    a unit wired to the tablet: the tablet link is UART0 in every
 #                    other build (sdkconfig.defaults), on N4 and N8R8 alike.
+#   --deaf           node only, BENCH ONLY: a node that never reaches the central
+#                    (sdkconfig.deaf, docs/ota/before-production.md item 12) — a unit
+#                    out of the central's reach, on a table. Flash it with
+#                    BUILD_DIR=firmware/apps/node/build-deaf tools/flash.sh node <port>
 #
 # Each variant builds in its own directory, so switching is just another call:
 #   apps/board/build            8 MB, product           (idf.py's default dir)
 #   apps/board/build-4mb        4 MB
 #   apps/board/build-4mb-bench  4 MB + console (tablet link moves to native USB)
 #   apps/board/build-8mb-bench  8 MB + console (tablet link moves to native USB)
+#   apps/node/build-deaf        bench only: a node deaf to the central
 #   apps/leaf/build             4 MB, battery detector (no Mesh-Lite)
 # tools/flash.sh takes the same flags and flashes from the matching directory.
 #
@@ -28,16 +33,17 @@
 # space, the app image vs. its OTA slot, unassigned flash, and static RAM.
 set -euo pipefail
 
-usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 APP="${1:-}"; shift || true
 case "$APP" in board|node|leaf|host) ;; *) usage ;; esac
-FLASH=8mb; BENCH=0; EXTRA=()
+FLASH=8mb; BENCH=0; DEAF=0; EXTRA=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --flash) FLASH="${2:-}"; shift 2 ;;
         --module) case "${2:-}" in n8r8|N8R8) FLASH=8mb ;; n4|N4) FLASH=4mb ;; *) usage ;; esac; shift 2 ;;
         --bench) BENCH=1; shift ;;
+        --deaf) DEAF=1; shift ;;
         --) shift; EXTRA=("$@"); break ;;
         *) usage ;;
     esac
@@ -75,6 +81,14 @@ if [[ "$APP" == "host" ]]; then
 fi
 
 cd "$FW_DIR/apps/$APP"
+if [[ "$DEAF" == 1 ]]; then
+    [[ "$APP" == "node" ]] || usage
+    echo "==> apps/node → build-deaf (sdkconfig.defaults;sdkconfig.deaf) — BENCH ONLY: deaf to the central"
+    "${IDF_PY[@]}" -B build-deaf -DSDKCONFIG="build-deaf/sdkconfig" \
+        -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.deaf" build ${EXTRA[@]+"${EXTRA[@]}"}
+    python3 "$FW_DIR/tools/build_summary.py" build-deaf "apps/node → build-deaf"
+    exit 0
+fi
 DIR="$(variant_dir "$APP" "$FLASH" "$BENCH")"
 LINK=uart0; [[ "$BENCH" == 1 ]] && LINK=usb
 MODULE="$(python3 "$FW_DIR/tools/build_summary.py" --module "${FLASH%mb}MB")"

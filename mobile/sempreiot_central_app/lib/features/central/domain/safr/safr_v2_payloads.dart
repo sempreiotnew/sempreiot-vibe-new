@@ -430,9 +430,8 @@ class SafrHeartbeatPayload extends SafrV2Payload {
       layer: p[19],
       dlHeard: dlHeard,
       dlMap: dlMap,
-      boardRssi: p.length > wireLength + 2 && p[22] != 0x7F
-          ? p[22].toSigned(8)
-          : null,
+      boardRssi:
+          p.length > wireLength + 2 && p[22] != 0x7F ? p[22].toSigned(8) : null,
     );
   }
 }
@@ -1565,7 +1564,10 @@ enum SafrOutageCause {
   parentLost(2),
   parentSilent(3),
   boardLost(4),
-  yielded(5);
+  yielded(5),
+
+  /// v3.15: it left its parent by itself, for a unit with a better path.
+  moved(6);
 
   const SafrOutageCause(this.wire);
   final int wire;
@@ -1578,7 +1580,10 @@ enum SafrOutageCause {
 enum SafrOutageEnd {
   rescued(1),
   asRoot(2),
-  other(3);
+  other(3),
+
+  /// v3.15: on the unit with the better path it left its parent for.
+  moved(4);
 
   const SafrOutageEnd(this.wire);
   final int wire;
@@ -1603,7 +1608,31 @@ class SafrOutageReportPayload extends SafrV2Payload {
     this.anyRounds = 0,
     this.restarts = 0,
     this.end = SafrOutageEnd.other,
+    this.moveTo,
+    this.moveFrom,
+    this.pathBefore,
+    this.pathAfter,
   });
+
+  /// VERSION 2 (v3.15), a unit that left its parent for a better path: the
+  /// unit it went for and the one it left (their MACs; [moveFrom] null when
+  /// it did not know), the path it had and the one it was offered, dBm.
+  final String? moveTo;
+  final String? moveFrom;
+  final int? pathBefore;
+  final int? pathAfter;
+
+  static const moveVersion = 2;
+  static const moveWireLength = 26;
+
+  /// A reorganisation that worked: it left for a better path and is on
+  /// the unit it went for, with nothing else needed — news, not a trouble.
+  bool get cleanMove =>
+      cause == SafrOutageCause.moved &&
+      end == SafrOutageEnd.moved &&
+      restarts == 0 &&
+      rescues == 0 &&
+      anyRounds == 0;
 
   final Duration duration;
   final SafrOutageCause cause;
@@ -1628,8 +1657,15 @@ class SafrOutageReportPayload extends SafrV2Payload {
 
   Uint8List build() {
     final s = duration.inSeconds;
+    List<int> mac(String? m) {
+      final b = [
+        for (final x in (m ?? '').split(':')) int.tryParse(x, radix: 16) ?? -1
+      ];
+      return b.length == 6 && b.every((x) => x >= 0) ? b : List.filled(6, 0);
+    }
+
     return Uint8List.fromList([
-      version,
+      moveTo == null ? version : moveVersion,
       (s >> 24) & 0xFF,
       (s >> 16) & 0xFF,
       (s >> 8) & 0xFF,
@@ -1641,13 +1677,31 @@ class SafrOutageReportPayload extends SafrV2Payload {
       anyRounds & 0xFF,
       restarts & 0xFF,
       end.wire,
+      if (moveTo != null) ...[
+        ...mac(moveTo),
+        ...mac(moveFrom),
+        (pathBefore ?? 0x7F) & 0xFF,
+        (pathAfter ?? 0x7F) & 0xFF,
+      ],
     ]);
   }
 
-  /// A later version may add bytes at the end: the first twelve are read.
+  /// A later version may add bytes at the end: the first twelve are read,
+  /// and VERSION 2's fourteen when they are there.
   static SafrOutageReportPayload? parse(Uint8List p) {
     if (p.length < wireLength || p[0] < version) return null;
+    final move = p[0] >= moveVersion && p.length >= moveWireLength;
+    String? mac(int at) {
+      final b = p.sublist(at, at + 6);
+      return b.every((x) => x == 0) ? null : safrMacToString(b);
+    }
+
+    int? dbm(int at) => p[at] == 0x7F ? null : p[at].toSigned(8);
     return SafrOutageReportPayload(
+      moveTo: move ? mac(12) : null,
+      moveFrom: move ? mac(18) : null,
+      pathBefore: move ? dbm(24) : null,
+      pathAfter: move ? dbm(25) : null,
       duration:
           Duration(seconds: (p[1] << 24) | (p[2] << 16) | (p[3] << 8) | p[4]),
       cause: SafrOutageCause.fromWire(p[5]),
@@ -1667,45 +1721,79 @@ class SafrOutageReportPayload extends SafrV2Payload {
     return '$s s';
   }
 
-  /// The line of the event history, in the operator's words (after the
-  /// unit's name): how long, why, what it took, how it came back.
-  String describe() {
-    final why = switch (cause) {
-      SafrOutageCause.sinceStart => 'não encontrou a rede ao ligar',
-      SafrOutageCause.parentLost =>
-        'o dispositivo ao qual estava ligado saiu do ar',
-      SafrOutageCause.parentSilent =>
-        'o dispositivo ao qual estava ligado ficou sem caminho',
-      SafrOutageCause.boardLost => 'perdeu a ligação com a central (era a raiz)',
-      SafrOutageCause.yielded => 'deixou de ser a raiz',
-      SafrOutageCause.unknown => null,
-    };
-    final took = <String>[
-      if (rescues > 0)
-        rescuesMissed > 0
-            ? '$rescues ${rescues == 1 ? 'tentativa' : 'tentativas'} de '
-                'religar por outro dispositivo, $rescuesMissed sem sucesso'
-            : '$rescues ${rescues == 1 ? 'tentativa' : 'tentativas'} de '
-                'religar por outro dispositivo',
-      if (anyRounds > 0)
-        '$anyRounds ${anyRounds == 1 ? 'procura' : 'procuras'} por qualquer '
-            'dispositivo',
-      if (restarts > 0)
-        'reiniciou sozinho $restarts ${restarts == 1 ? 'vez' : 'vezes'}',
-    ];
-    final back = switch (end) {
-      SafrOutageEnd.rescued => 'voltou por outro dispositivo',
-      SafrOutageEnd.asRoot => 'voltou como raiz',
-      SafrOutageEnd.other => 'voltou',
-    };
-    final parts = [
-      'ficou ${_span(duration)} sem caminho até a central',
-      if (why != null) why,
-      ...took,
-      back,
-    ];
-    return parts.join(' · ');
+  /// `2 min 14 s`, `3 h 5 min`, `40 s`.
+  static String span(Duration d) => _span(d);
+
+  /// How it began, in the operator's words; null when the unit does not
+  /// know. [nameOf] names the units of a move (their MAC when not given).
+  String? causeWords([String Function(String mac)? nameOf]) => switch (cause) {
+        SafrOutageCause.sinceStart => 'não encontrou a rede ao ligar',
+        SafrOutageCause.parentLost =>
+          'o dispositivo ao qual estava ligado saiu do ar',
+        SafrOutageCause.parentSilent =>
+          'o dispositivo ao qual estava ligado ficou sem caminho',
+        SafrOutageCause.boardLost =>
+          'perdeu a ligação com a central (era a raiz)',
+        SafrOutageCause.yielded => 'deixou de ser a raiz',
+        SafrOutageCause.moved => 'saiu ${_moveWords(nameOf)}',
+        SafrOutageCause.unknown => null,
+      };
+
+  /// "de A para B, por um sinal melhor (-86 → -71 dBm)".
+  String _moveWords(String Function(String mac)? nameOf) {
+    String name(String mac) => nameOf?.call(mac) ?? mac;
+    final signal = pathBefore != null && pathAfter != null
+        ? ' ($pathBefore para $pathAfter dBm)'
+        : '';
+    final to = moveTo;
+    if (to == null) return 'para um dispositivo com sinal melhor';
+    return '${moveFrom != null ? 'de ${name(moveFrom!)} ' : ''}'
+        'para ${name(to)}, por um sinal melhor$signal';
   }
+
+  /// What it took to come back, one entry per thing it did.
+  List<String> get tookWords => [
+        if (rescues > 0)
+          rescuesMissed > 0
+              ? '$rescues ${rescues == 1 ? 'tentativa' : 'tentativas'} de '
+                  'religar por outro dispositivo, $rescuesMissed sem sucesso'
+              : '$rescues ${rescues == 1 ? 'tentativa' : 'tentativas'} de '
+                  'religar por outro dispositivo',
+        if (anyRounds > 0)
+          '$anyRounds ${anyRounds == 1 ? 'procura' : 'procuras'} por qualquer '
+              'dispositivo',
+        if (restarts > 0)
+          'reiniciou sozinho $restarts ${restarts == 1 ? 'vez' : 'vezes'}',
+      ];
+
+  /// How it came back.
+  String get backWords => switch (end) {
+        SafrOutageEnd.rescued => 'voltou por outro dispositivo',
+        SafrOutageEnd.asRoot => 'voltou como raiz',
+        SafrOutageEnd.moved => 'ligou nele',
+        SafrOutageEnd.other => cause == SafrOutageCause.moved
+            ? 'não ligou nele e voltou por outro caminho'
+            : 'voltou',
+      };
+
+  /// What the unit says happened, without how long: why, what it took, how
+  /// it came back.
+  List<String> detailWords([String Function(String mac)? nameOf]) => [
+        if (causeWords(nameOf) != null) causeWords(nameOf)!,
+        ...tookWords,
+        backWords,
+      ];
+
+  /// The line of the event history, in the operator's words (after the
+  /// unit's name): how long, why, what it took, how it came back. A move
+  /// that worked is said as what it is: "mudou de A para B, por um sinal
+  /// melhor (-86 para -71 dBm) · levou 6 s".
+  String describe([String Function(String mac)? nameOf]) => cleanMove
+      ? 'mudou ${_moveWords(nameOf)} · levou ${_span(duration)}'
+      : [
+          'ficou ${_span(duration)} sem caminho até a central',
+          ...detailWords(nameOf),
+        ].join(' · ');
 }
 
 /// Raw payload kept when the MSG_TYPE is unknown or the layout mismatches.

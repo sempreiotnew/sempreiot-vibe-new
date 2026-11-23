@@ -40,7 +40,14 @@ import 'topology_provider.dart';
 ///    children and leaves off. "In alarm" is the DEVICE's state, not the
 ///    app's latch (the ALARME badge): red while its ALARM re-announces keep
 ///    arriving (every 60 s, siot_netcore.c), gone when a RESET clears the
-///    latch, the unit reboots (HEARTBEAT uptime) or the re-announces stop.
+///    latch or the re-announces stop. **A restart does not end it**
+///    (protocol 3.14, 2026-11-23): the unit keeps its alarm across a
+///    restart, comes back blinking red and re-announces as soon as it has
+///    a path — so its HEARTBEAT after a boot changes nothing here (until
+///    3.14 the alarm was RAM only and that heartbeat cleared the red; the
+///    screen then went dark on a unit still blinking). A unit that lost
+///    its power lost its alarm too: its re-announces stop, and so does
+///    the red, one period later.
 ///    The same "in alarm" ([inAlarm]) spreads the red rings from the unit
 ///    on the Rede map and on its Dispositivos card — a drawing of the
 ///    tablet, not a LED: a battery unit gets the rings too, though its
@@ -98,10 +105,6 @@ class DeviceLedEngine extends ChangeNotifier {
   /// read as "reset".
   final _latchSeen = <String>{};
 
-  /// Units seen booting after this engine started: a latch they carry from
-  /// before is not an alarm they are still in.
-  final _bootedSinceStart = <String>{};
-
   /// Redraws when an alarm times out (no re-announce): whoever listens
   /// (the LED dot, the red rings) stops then, not at the next frame of
   /// traffic.
@@ -152,22 +155,6 @@ class DeviceLedEngine extends ChangeNotifier {
       } else if (tick.eventCode == SafrEventCode.restore) {
         _alarmSeenAt.remove(tick.mac);
       }
-    }
-
-    // A HEARTBEAT from a unit that booted AFTER its last ALARM frame: it
-    // rebooted, and the alarm (RAM only, siot_netcore.c) went with it. The
-    // node announces itself as soon as it rejoins, so the red clears then
-    // instead of waiting out a whole re-announce period.
-    final uptime = tick.uptimeS;
-    if (uptime != null) {
-      final bootedAt =
-          now.subtract(Duration(seconds: uptime, milliseconds: rebootSlackMs));
-      final seen = _alarmSeenAt[tick.mac];
-      if (seen != null && bootedAt.isAfter(seen)) {
-        _alarmSeenAt.remove(tick.mac);
-        _alarmExpiry.remove(tick.mac)?.cancel();
-      }
-      if (bootedAt.isAfter(_startedAt)) _bootedSinceStart.add(tick.mac);
     }
 
     if (tick.direction == SafrTrafficDirection.uplink) {
@@ -235,7 +222,6 @@ class DeviceLedEngine extends ChangeNotifier {
       // Latched before this engine was listening: its next re-announce is
       // at most one period away, so assume the unit is still red till then.
       return node.alarmLatched &&
-          !_bootedSinceStart.contains(node.mac) &&
           now.difference(_startedAt).inMilliseconds <= windowMs;
     }
     if (now.difference(seen).inMilliseconds > windowMs) {

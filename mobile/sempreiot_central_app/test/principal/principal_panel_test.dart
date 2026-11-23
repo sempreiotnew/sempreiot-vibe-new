@@ -18,8 +18,11 @@ import 'package:sempreiot_central_app/features/central/application/topology_prov
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_frame.dart'
     show safrCentralMac;
 import 'package:sempreiot_central_app/features/central/domain/safr/safr_v2_payloads.dart';
-import 'package:sempreiot_central_app/features/central/presentation/screens/event_history_screen.dart';
 import 'package:sempreiot_central_app/features/central/presentation/widgets/alarm_strip.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/device_avatar.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/device_state_tile.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/latched_alarm_banner.dart';
+import 'package:sempreiot_central_app/features/central/presentation/widgets/state_devices.dart';
 import 'package:sempreiot_central_app/features/iot/application/presence_provider.dart';
 import 'package:sempreiot_central_app/presentation/screens/main/widgets/comm_status_gadget.dart';
 import 'package:sempreiot_central_app/presentation/screens/main/widgets/panel_objects.dart';
@@ -27,8 +30,10 @@ import 'package:sempreiot_central_app/presentation/screens/main/widgets/principa
 
 /// Principal, redesigned (2026-11-19): one state block (normal / needs
 /// attention / alarm) with the three counts, the central's links and its
-/// battery and temperature as objects, the last events and their history
-/// — on the tablet and on a user's phone, every size, both orientations.
+/// battery and temperature as objects — on the tablet and on a user's
+/// phone, every size, both orientations. The events have their own tab
+/// since 2026-11-23 (test/central/events_screen_test.dart); what a row of
+/// the event table says, and how it travels to a phone, is still here.
 ///
 /// With PRINCIPAL_PNG_DIR set, the screens are also written as PNGs.
 void main() {
@@ -58,8 +63,20 @@ void main() {
     total: 12,
     troubles: 2,
     troubleList: const [
-      MirrorTrouble(name: 'Sala 2', why: MirrorTrouble.offline),
-      MirrorTrouble(name: 'Corredor', why: MirrorTrouble.battery),
+      MirrorTrouble(
+          name: 'Sala 2',
+          why: MirrorTrouble.offline,
+          mac: '5A:46:52:00:00:11',
+          address: '2º andar',
+          productCode: 0x0201),
+      MirrorTrouble(
+          name: 'Corredor',
+          why: MirrorTrouble.battery,
+          mac: '5A:46:52:00:00:12',
+          address: 'Térreo',
+          productCode: 0x0101,
+          leaf: true,
+          batteryPct: 12),
     ],
     events: events,
   );
@@ -120,6 +137,7 @@ void main() {
     PresenceStatus presence = PresenceStatus.online,
     Brightness brightness = Brightness.dark,
     Key? boundary,
+    List<TopologyNode> nodes = const [],
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
@@ -138,7 +156,7 @@ void main() {
           localPanelProvider.overrideWithValue(view),
           panelViewProvider.overrideWith((ref, id) => view),
           latchedAlarmsProvider.overrideWith((ref) => Stream.value(held)),
-          topologyProvider.overrideWithValue(const []),
+          topologyProvider.overrideWithValue(nodes),
           presenceStatusProvider.overrideWith((ref, id) => presence),
           centralAlarmsProvider.overrideWith((ref, id) => MirrorAlarms(
                 at: now,
@@ -199,8 +217,8 @@ void main() {
         expect(find.text('Alarmes'), findsOneWidget);
         expect(find.text('Problemas'), findsOneWidget);
         expect(find.text('COMUNICAÇÃO'), findsOneWidget);
-        expect(
-            find.text('ÚLTIMOS EVENTOS', skipOffstage: false), findsOneWidget);
+        // The events are a tab of their own now.
+        expect(find.text('ÚLTIMOS EVENTOS', skipOffstage: false), findsNothing);
         expect(tester.takeException(), isNull);
 
         await pump(tester, s.value, trouble, phone: phone);
@@ -212,8 +230,8 @@ void main() {
         await pump(tester, s.value, alarm, phone: phone);
         expect(find.text('ALARME — 2 dispositivos'), findsOneWidget);
         // The alarm is rearmed at the tablet, never from a phone.
-        expect(
-            find.text('Rearmar tudo'), phone ? findsNothing : findsOneWidget);
+        expect(find.byKey(LatchedAlarmBanner.keyRearmAll),
+            phone ? findsNothing : findsOneWidget);
         expect(find.text('Rearmar'), phone ? findsNothing : findsNWidgets(2));
         expect(find.text('ALARME RETIDO — 2 dispositivos'), findsNothing,
             reason: 'the block says it; no second heading');
@@ -230,6 +248,127 @@ void main() {
     expect(find.bySemanticsLabel('8 OK'), findsOneWidget);
   });
 
+  testWidgets(
+      'a unit that needs attention is drawn as Rede draws it — its model, '
+      'its state, its name and endereçamento — and a tap is the way to it',
+      (tester) async {
+    final node = TopologyNode(
+      mac: b,
+      role: SafrNodeRole.node,
+      layer: 2,
+      parentMac: a,
+      rssi: -60,
+      batteryPct: null,
+      online: false,
+      lastSeenAt: now,
+      alarmLatched: false,
+      name: 'Sirene Hall',
+      address: '2º andar',
+      productCode: 0x0201,
+    );
+    const said = [
+      MirrorTrouble(
+          name: 'Sirene Hall',
+          why: MirrorTrouble.offline,
+          mac: b,
+          address: '2º andar',
+          productCode: 0x0201),
+      // A central on an older app says no unit: a name, nothing to open.
+      MirrorTrouble(name: 'Corredor', why: MirrorTrouble.battery),
+    ];
+    const view =
+        PanelView(known: true, total: 12, troubles: 2, troubleList: said);
+    final tile = find.byKey(DeviceStateTile.keyOf(b));
+    InkWell ink() => tester.widget<InkWell>(
+        find.descendant(of: tile, matching: find.byType(InkWell)));
+
+    for (final size in sizes.values) {
+      // The screen has the map (the tablet; a phone following the mirror).
+      await pump(tester, size, view, nodes: [node]);
+      expect(
+          find.descendant(of: tile, matching: find.byType(DeviceModelAvatar)),
+          findsOneWidget);
+      expect(
+          find.descendant(of: tile, matching: find.byType(DeviceOfflineBadge)),
+          findsOneWidget);
+      expect(find.text('Sirene Hall'), findsOneWidget);
+      expect(find.text('2º andar'), findsOneWidget);
+      expect(find.text('sem comunicação'), findsOneWidget);
+      expect(ink().onTap, isNotNull);
+      expect(find.text('Corredor'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      // A phone without the map yet: the same device, from what the
+      // central said of it — nothing to open until the map is there.
+      await pump(tester, size, view, phone: true);
+      expect(
+          find.descendant(of: tile, matching: find.byType(DeviceModelAvatar)),
+          findsOneWidget);
+      expect(
+          find.descendant(of: tile, matching: find.byType(DeviceOfflineBadge)),
+          findsOneWidget);
+      expect(find.text('2º andar'), findsOneWidget);
+      expect(ink().onTap, isNull);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets(
+      'the devices are one row that scrolls sideways; the expand button '
+      'grows the same block over the whole screen, and the same corner '
+      'brings it back', (tester) async {
+    for (final size in sizes.values) {
+      for (final phone in [false, true]) {
+        await pump(tester, size, alarm, phone: phone);
+        // No explanation taking a line of the block.
+        expect(find.textContaining('O alarme fica retido'), findsNothing);
+        final row =
+            tester.widget<ListView>(find.byKey(StateDevicesRow.keyList));
+        expect(row.scrollDirection, Axis.horizontal);
+        expect(find.byKey(SystemStatusBlock.keyCollapse), findsNothing);
+
+        await tester.ensureVisible(find.byKey(SystemStatusBlock.keyExpand));
+        await tester.tap(find.byKey(SystemStatusBlock.keyExpand));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 200)); // growing
+        expect(tester.takeException(), isNull);
+        await tester.pump(const Duration(milliseconds: 400));
+
+        // The SAME block, over the whole screen: its headline, its counts,
+        // the devices with room (a grid, no sideways row), Rearmar tudo.
+        final big =
+            find.byWidgetPredicate((w) => w is SystemStatusBlock && w.expanded);
+        expect(big, findsOneWidget);
+        final box = tester.getSize(big);
+        expect(box.width, size.width - 2 * stateDevicesMargin);
+        expect(box.height, size.height - 2 * stateDevicesMargin);
+        Finder inside(Finder f) => find.descendant(of: big, matching: f);
+        expect(inside(find.text('ESTADO DO SISTEMA')), findsOneWidget);
+        expect(inside(find.text('ALARME — 2 dispositivos')), findsOneWidget);
+        expect(inside(find.text('Alarmes')), findsOneWidget);
+        expect(inside(find.byType(StateDevicesGrid)), findsOneWidget);
+        expect(inside(find.byKey(StateDevicesRow.keyList)), findsNothing);
+        expect(inside(find.byKey(LatchedAlarmBanner.keyRearmAll)),
+            phone ? findsNothing : findsOneWidget);
+        expect(inside(find.text('outside name')), findsOneWidget);
+        expect(tester.takeException(), isNull);
+
+        await tester.tap(find.byKey(SystemStatusBlock.keyCollapse));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(big, findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.pump(const Duration(seconds: 30));
+      }
+    }
+  });
+
+  testWidgets('nothing to list: no row, no expand button', (tester) async {
+    await pump(tester, const Size(1280, 800), normal);
+    expect(find.byKey(SystemStatusBlock.keyExpand), findsNothing);
+    expect(find.byKey(StateDevicesRow.keyList), findsNothing);
+  });
+
   testWidgets('Rearmar in the block sends a RESET to that device alone',
       (tester) async {
     await pump(tester, const Size(1280, 800), alarm);
@@ -242,8 +381,6 @@ void main() {
   testWidgets('no unit yet, no event yet', (tester) async {
     await pump(tester, const Size(390, 844), const PanelView(known: true));
     expect(find.text('Nenhum dispositivo instalado ainda.'), findsOneWidget);
-    expect(find.text('Nenhum evento registrado ainda.', skipOffstage: false),
-        findsOneWidget);
     expect(normal.ok, 12);
   });
 
@@ -266,25 +403,9 @@ void main() {
     expect(find.text('Alarmes'), findsNothing);
     expect(find.text('Nenhum alarme retido na central.'), findsOneWidget);
     expect(find.text('Nenhum dispositivo instalado ainda.'), findsNothing);
-    expect(find.byKey(PanelEventsCard.keySeeAll), findsNothing);
-    expect(
-        find.textContaining('atualize o app da central', skipOffstage: false),
-        findsOneWidget);
 
     await pump(tester, const Size(390, 844), PanelView.unknown, phone: true);
     expect(find.text('Verificando…'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('"Ver todos" opens the history', (tester) async {
-    await pump(tester, const Size(390, 844), withEvents, phone: true);
-    await tester.ensureVisible(find.byKey(PanelEventsCard.keySeeAll));
-    await tester.tap(find.byKey(PanelEventsCard.keySeeAll));
-    await tester.pumpAndSettle();
-    expect(find.byType(EventHistoryScreen), findsOneWidget);
-    expect(find.text('Placa voltou a responder'), findsOneWidget);
-    expect(find.textContaining('O histórico completo fica na central'),
-        findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -363,6 +484,36 @@ void main() {
           'Sala 1 — teste manual');
     });
 
+    test('the kind a line is listed with', () {
+      PanelEventKind kind(DeviceEvent r) => panelEventOf(r, name)!.kind;
+      expect(kind(row(severity: 3, code: SafrEventCode.smokeAlarm.wire)),
+          PanelEventKind.alarm);
+      expect(kind(row(severity: 2, code: SafrEventCode.smokeRising.wire)),
+          PanelEventKind.alert);
+      // A manual test arrives as an "alert": it is news, not a warning.
+      expect(kind(row(severity: 2, code: SafrEventCode.manualTest.wire)),
+          PanelEventKind.info);
+      expect(kind(row(severity: 1, code: SafrEventCode.commFault.wire)),
+          PanelEventKind.trouble);
+      expect(kind(row(code: SafrEventCode.restore.wire)), PanelEventKind.ok);
+      expect(kind(row(detail: '{"synthetic":true,"kind":"device_restored"}')),
+          PanelEventKind.ok);
+      // News from the central itself is not "OK".
+      expect(
+          kind(row(
+              mac: safrCentralMac,
+              detail:
+                  '{"synthetic":true,"kind":"root_elected","description":"x"}')),
+          PanelEventKind.info);
+      // The line says which unit it is about; the central's own says none.
+      expect(panelEventOf(row(severity: 1), name)!.mac, a);
+      expect(
+          panelEventOf(row(mac: safrCentralMac, detail: '{"description":"x"}'),
+                  name)!
+              .mac,
+          isNull);
+    });
+
     test('the central\'s own lines, supervision and diagnostics', () {
       expect(
           panelEventOf(
@@ -439,6 +590,66 @@ void main() {
       expect(back.panel!.events.first.severity, 3);
     });
 
+    test('the kind and the unit travel; an older central says neither', () {
+      final p = MirrorPanel(
+        total: 1,
+        troubles: 1,
+        troubleList: const [
+          MirrorTrouble(
+              name: 'Sala 2',
+              why: MirrorTrouble.offline,
+              mac: b,
+              address: '2º andar',
+              productCode: 0x0201,
+              leaf: true,
+              batteryPct: 12)
+        ],
+        events: [
+          MirrorPanelEvent(
+              at: now,
+              severity: 2,
+              text: 'Sala 1 — teste manual',
+              kind: PanelEventKind.info,
+              mac: a),
+          ev(1, 'Sala 2 — sem comunicação', 3),
+        ],
+      );
+      final back = decodeMirrorAlarms(
+              encodeMirrorAlarms(at: now, alarms: const [], panel: p))!
+          .panel!;
+      expect(back.troubleList.single.mac, b);
+      expect(back.troubleList.single.address, '2º andar');
+      expect(back.troubleList.single.productCode, 0x0201);
+      expect(back.troubleList.single.leaf, isTrue);
+      expect(back.troubleList.single.batteryPct, 12);
+      expect(back.events[0].kind, PanelEventKind.info);
+      expect(back.events[0].severity, 2);
+      expect(back.events[0].mac, a);
+      // Nothing said: the severity's own kind, no unit.
+      expect(back.events[1].kind, PanelEventKind.trouble);
+      expect(back.events[1].mac, isNull);
+    });
+
+    test('an alarm says what a phone needs to draw the unit', () {
+      final back = decodeMirrorAlarms(encodeMirrorAlarms(at: now, alarms: [
+        MirrorAlarm(
+            mac: a,
+            name: 'Hall',
+            since: now,
+            address: '2º andar',
+            productCode: 0x0201,
+            leaf: true),
+        // A central on an older app: the unit and its name only.
+        MirrorAlarm(mac: b, name: 'Sala 3'),
+      ]))!;
+      expect(back.alarms[0].address, '2º andar');
+      expect(back.alarms[0].productCode, 0x0201);
+      expect(back.alarms[0].leaf, isTrue);
+      expect(back.alarms[1].address, isNull);
+      expect(back.alarms[1].productCode, isNull);
+      expect(back.alarms[1].leaf, isFalse);
+    });
+
     test('a central on the older app: the alarms, no panel', () {
       final back =
           decodeMirrorAlarms(encodeMirrorAlarms(at: now, alarms: alarms))!;
@@ -480,6 +691,20 @@ void main() {
       false,
       Brightness.light
     ),
+    (
+      'tablet_alarme_expandido',
+      const Size(1280, 800),
+      alarm,
+      false,
+      Brightness.dark
+    ),
+    (
+      'phone_alarme_expandido',
+      const Size(390, 844),
+      alarm,
+      true,
+      Brightness.dark
+    ),
     ('phone_normal', const Size(390, 844), withEvents, true, Brightness.dark),
     ('phone_alarme', const Size(390, 844), alarm, true, Brightness.dark),
   ]) {
@@ -504,6 +729,11 @@ void main() {
       const key = ValueKey('png');
       await pump(tester, size, view,
           phone: phone, brightness: brightness, boundary: key);
+      if (label.endsWith('_expandido')) {
+        await tester.tap(find.byKey(SystemStatusBlock.keyExpand));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 600));
+      }
       await tester.runAsync(() async {
         final boundary =
             tester.renderObject<RenderRepaintBoundary>(find.byKey(key));

@@ -7,17 +7,20 @@ enum MainTab {
   central,
   centrais,
   devices,
-  rede;
+  rede,
+  eventos;
 
   /// Central mode has no "Central" tab: the tablet IS the central, and
   /// its settings live in the drawer.
-  static List<MainTab> get tabs =>
-      AppConfig.isCentral ? [principal, devices, rede] : [principal, centrais];
+  static List<MainTab> get tabs => AppConfig.isCentral
+      ? [principal, devices, rede, eventos]
+      : [principal, centrais];
 
   /// USER mode inside a specific central: the same tabs as the tablet —
   /// the screens are the tablet's, fed by the central's mirror
   /// (docs/cloud/central-mirror.md §5).
-  static List<MainTab> get centralDetailTabs => [principal, devices, rede];
+  static List<MainTab> get centralDetailTabs =>
+      [principal, devices, rede, eventos];
 
   String get label => switch (this) {
         MainTab.principal => 'Principal',
@@ -25,6 +28,7 @@ enum MainTab {
         MainTab.centrais => 'Centrais',
         MainTab.devices => 'Dispositivos',
         MainTab.rede => 'Rede',
+        MainTab.eventos => 'Eventos',
       };
 
   IconData get icon => switch (this) {
@@ -33,5 +37,6 @@ enum MainTab {
         MainTab.centrais => Icons.hub_rounded,
         MainTab.devices => Icons.devices_rounded,
         MainTab.rede => Icons.hub_rounded,
+        MainTab.eventos => Icons.receipt_long_rounded,
       };
 }

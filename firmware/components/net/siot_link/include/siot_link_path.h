@@ -75,8 +75,17 @@ extern "C" {
 #define SIOT_PATH_ADVERT_MS   10000
 #define SIOT_PATH_FRESH_MS    45000
 #define SIOT_PATH_MIN_HEARD       3
-/* A parent the unit could not attach to is not tried again for this long. */
+/* A parent the unit could not attach to in a move to a BETTER path is not
+ * tried again for this long. */
 #define SIOT_PATH_BAD_MS    1800000
+/* The same, for a unit with NO path (2026-11-23): it has few ways in, often
+ * one, and half an hour without it left a far unit offline for hours. The
+ * parent it missed is passed over for one round only. */
+#define SIOT_PATH_RESCUE_SKIP_MS 30000
+/* After this unit's parent was lost, or led nowhere, the units that hang from
+ * that parent are not believed for this long: they go on saying COMPLETE
+ * until the news reaches them, one advert per level. */
+#define SIOT_PATH_LOST_MS     60000
 
 /* The root's own path: there is no link between the root and itself. */
 #define SIOT_PATH_ROOT_DBM        0
@@ -100,6 +109,12 @@ extern "C" {
 #define SIOT_PATH_F_ALARM_SHIFT   2
 #define SIOT_PATH_F_ALARM_MASK 0x1C
 #define SIOT_PATH_ALARM_MAX       7
+/* Bit 5, HELD (v3.14, 2026-11-23): this unit has no path to the central
+ * because the CENTRAL is not there — it is the root that had its session with
+ * the board and lost it (the board is off), or its chain ends at that root.
+ * The tree is whole: a unit that says or hears HELD from its parent stays
+ * where it is and does not restart itself. Never together with COMPLETE. */
+#define SIOT_PATH_F_HELD       0x20
 #define SIOT_PATH_ADVERT_MIN_LEN 11
 #define SIOT_PATH_ADVERT_MAX_LEN (SIOT_PATH_ADVERT_MIN_LEN + 6 * SIOT_PATH_MAX_CHAIN)
 
@@ -108,6 +123,7 @@ typedef struct {
     bool    complete;
     bool    full;
     uint8_t alarm;      /* 0, or 1..SIOT_PATH_ALARM_MAX (SIOT_PATH_F_ALARM_MASK) */
+    bool    held;       /* SIOT_PATH_F_HELD */
     int8_t  path;       /* dBm: the weakest unit-to-unit link from the root to this unit */
     uint8_t ap[6];      /* its access point's address: what a child attaches to */
     uint8_t chain_n;    /* the access points above it, its parent first */
@@ -135,8 +151,11 @@ typedef struct {
     bool     complete;
     bool     full;
     uint8_t  alarm;        /* what it last said (SIOT_PATH_F_ALARM_MASK) */
+    bool     held;         /* what it last said (SIOT_PATH_F_HELD) */
     bool     under_me;     /* this unit is in its chain: it hangs from us */
     int64_t  bad_until_ms; /* 0 = never refused us */
+    uint8_t  chain_n;      /* the access points above it, as it last said */
+    uint8_t  chain[SIOT_PATH_MAX_CHAIN][6];
 } siot_path_neighbour_t;
 
 typedef struct {
@@ -152,6 +171,12 @@ typedef struct {
     int16_t  link_q4;
     /* Since when another path has been clearly better (0 = it is not). */
     int64_t  better_since_ms;
+    /* The parent this unit lost, or left because nothing came down from it
+     * (siot_path_parent_lost): until lost_until_ms the units that hang from
+     * it are no way out. 0 = none. */
+    uint8_t  lost_ap[6];
+    int64_t  lost_at_ms;
+    int64_t  lost_until_ms;
 } siot_path_table_t;
 
 void siot_path_init(siot_path_table_t *t, const uint8_t self_ap[6]);
@@ -198,7 +223,9 @@ bool siot_path_best(const siot_path_table_t *t, int64_t now_ms, siot_path_choice
  * board, or a parent nothing comes down from: the best neighbour that says it
  * has a real path (COMPLETE: its chain ends at a root with its session to the
  * board), whatever the signals — any path beats none. `path_now` is -128.
- * False when nobody in reach has one: there is nothing to join. */
+ * A unit that hangs from the parent this one just lost is passed over
+ * (siot_path_parent_lost). False when nobody in reach has one: there is
+ * nothing to join. */
 bool siot_path_rescue(const siot_path_table_t *t, int64_t now_ms, siot_path_choice_t *out);
 
 /* Called once per SIOT_PATH_ADVERT_MS while the unit may move. True when the
@@ -217,6 +244,19 @@ void siot_path_evaluate_reset(siot_path_table_t *t);
 
 /* The unit could not attach to that parent: not again for SIOT_PATH_BAD_MS. */
 void siot_path_mark_bad(siot_path_table_t *t, int64_t now_ms, const uint8_t ap[6]);
+/* The same, for `ms` (SIOT_PATH_RESCUE_SKIP_MS for a unit with no path). */
+void siot_path_mark_bad_for(siot_path_table_t *t, int64_t now_ms, const uint8_t ap[6], uint32_t ms);
+
+/* The parent at `ap` was lost, or nothing of the central comes down from it:
+ * for SIOT_PATH_LOST_MS siot_path_rescue passes over it and every unit whose
+ * chain goes through it — until that parent itself is heard again saying
+ * COMPLETE, which ends the wait at once. */
+void siot_path_parent_lost(siot_path_table_t *t, int64_t now_ms, const uint8_t ap[6]);
+
+/* The parent's fresh advert says COMPLETE: it vouches for a path. */
+bool siot_path_parent_complete(const siot_path_table_t *t, int64_t now_ms);
+/* The parent's fresh advert says HELD (SIOT_PATH_F_HELD). */
+bool siot_path_parent_held(const siot_path_table_t *t, int64_t now_ms);
 
 #ifdef __cplusplus
 }

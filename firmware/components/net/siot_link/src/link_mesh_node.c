@@ -352,9 +352,48 @@ static volatile bool s_rejoin_requested; /* siot_link_mesh_rejoin(): the tcp tas
  * unit that says nothing COMPLETE itself is never chosen, so orphans do not
  * gather under each other this way; and the "no path" guard uses the same
  * choice before it lets the library pick (which takes the shallowest unit
- * heard: another orphan calling itself level 1). */
-#define ORPHAN_RESCUE_MS        60000
-#define ORPHAN_RETRY_MS         60000
+ * heard: another orphan calling itself level 1).
+ *
+ * NO PATH: BACK IN, FAST (2026-11-23). The waits above were written for "the
+ * board is off"; a unit out of the board's reach — most units of a building —
+ * cannot tell that from "I lost my parent", and sat in them: 60-90 s before
+ * the first look, 45 s for one neighbour, then THAT NEIGHBOUR REFUSED FOR
+ * HALF AN HOUR, and no restart ever (attached to nothing with the board not
+ * on the air was "the board is off"). Units stayed offline for hours until
+ * someone restarted them by hand. A fire alarm unit with no path is the
+ * worst state there is, so every way out is now short, and none of it touches
+ * the choice of a BETTER parent above (a unit with a path that works):
+ *
+ *   - attached to nothing, level >= 2 (the parent was lost): the library gets
+ *     ADRIFT_GRACE_MS for its own first try at the same parent — a parent
+ *     that only blinked keeps its unit, the tree keeps its shape — then the
+ *     unit goes to the best neighbour that says it has a full path;
+ *   - holding the root's role with no board (level 1, attached to nothing):
+ *     the same, as soon as the Wi-Fi driver said once that the board is not
+ *     on the air, or after ORPHAN_RESCUE_MS;
+ *   - attached to a unit nothing comes down from for NO_PATH_FAST_MS, whose
+ *     advert does not vouch for a path, while a neighbour has one: the same.
+ *     Nobody with a path in reach = the central is silent for everyone (it
+ *     restarted, or it is off): the unit STAYS, as before;
+ *   - a rescue gets RESCUE_MOVE_MS (the library is asked to scan again every
+ *     RESCUE_SCAN_MS meanwhile); a parent that was not reached is passed over
+ *     for SIOT_PATH_RESCUE_SKIP_MS, the next one is tried at once;
+ *   - nobody says it has a path and this unit never had the board: every
+ *     ORPHAN_ANY_MS level 1 is barred for ANY_PARENT_MS, so the library takes
+ *     any unit it hears, as at start (the adverts may be what is not heard);
+ *   - and siot_netcore restarts a unit that has had no path for two minutes.
+ *
+ * The one unit that keeps still is the root that HAD its session with the
+ * board (s_had_session): the board is off, it keeps the mesh, and it says so
+ * (SIOT_PATH_F_HELD) — the units under it hear it and keep still too. */
+#define ORPHAN_RESCUE_MS        20000
+#define ORPHAN_ANY_MS           30000
+#define ANY_PARENT_MS           20000
+#define ADRIFT_GRACE_MS          6000
+#define NO_PATH_FAST_MS         30000
+#define RESCUE_MOVE_MS          20000
+#define RESCUE_RETRY_MS          5000
+#define RESCUE_SCAN_MS           7000
 #define PATH_SAY_MS             60000
 enum { PIN_NONE, PIN_MOVING, PIN_HELD };
 static siot_path_table_t s_path;
@@ -380,10 +419,42 @@ static bool     s_move_rescue;           /* the move in progress is the way out 
 static bool     s_parent_seen;           /* s_parent_last is the parent of the last look */
 static uint8_t  s_parent_last[6];
 static int64_t  s_join_until_ms;         /* SIOT_PATH_JOIN_GAIN_DB is enough until then (0 = it is not) */
+static int64_t  s_adrift_since_ms;       /* attached to nothing at level >= 2 since (0 = not so) */
+static int64_t  s_orphan_any_ms;         /* the next "any parent" round of a unit holding the root's role with no board */
+static int64_t  s_rescue_scan_ms;        /* a rescue in progress: ask the library to scan again then */
+static bool     s_move_leave;            /* the rescue in progress leaves a parent that leads nowhere: not back to it */
+static bool     s_any_round;             /* level 1 is barred for an "any parent" round, not by the board's word */
+static uint32_t s_root_bar_ms = ROOT_YIELD_BAR_MS; /* how long the bar in force was set for (the log) */
+static volatile bool s_had_session;      /* this unit had its session with the board and was not told to yield since */
+static siot_link_recovery_t s_rec;       /* what happened since siot_netcore last asked (mesh task writes) */
+static siot_link_move_t s_mv;            /* the last move to a better path, until siot_netcore told the central (mesh task writes) */
 static void pin_release(const char *why, bool unbar);
 static void board_listen_stop(void);
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
+
+/* For the outage record (siot_netcore): the first cause counts. */
+static void rec_cause(uint8_t cause)
+{
+    if (s_rec.cause == SIOT_LINK_OUT_NONE) s_rec.cause = cause;
+}
+
+static void rec_count(uint8_t *n)
+{
+    if (*n < 0xFF) (*n)++;
+}
+
+void siot_link_mesh_recovery(siot_link_recovery_t *out, bool reset)
+{
+    if (out) *out = s_rec;
+    if (reset) memset(&s_rec, 0, sizeof(s_rec));
+}
+
+void siot_link_mesh_move(siot_link_move_t *out, bool reset)
+{
+    if (out) *out = s_mv;
+    if (reset) memset(&s_mv, 0, sizeof(s_mv));
+}
 
 /* Where this unit's station is: on the board's access point (the router SSID
  * itself), on another unit's (the router SSID plus that unit's suffix), or
@@ -446,6 +517,10 @@ static void root_bar_start(void)
         esp_mesh_lite_set_allowed_level(0);
     }
     pin_release("the board says another unit is the root", false);
+    s_had_session = false; /* not the board's root: nothing to keep, nothing to say HELD about */
+    rec_cause(SIOT_LINK_OUT_YIELD);
+    s_any_round = false;
+    s_root_bar_ms = ROOT_YIELD_BAR_MS;
     s_root_barred = true;
     s_root_bar_until_ms = now_ms() + ROOT_YIELD_BAR_MS;
     ap_close();
@@ -760,16 +835,32 @@ static void path_move_start(int64_t now, const siot_path_choice_t *c, const char
     snprintf(s_pin_ssid, sizeof(s_pin_ssid), "%.22s-%02x%02x%02x", s_code.net_ssid, c->id[3], c->id[4], c->id[5]);
     s_move = *c;
     s_move_rescue = rescue;
-    s_move_until_ms = now + PATH_MOVE_MS;
+    s_move_leave = rescue && !at_level1 && parent[0] != '\0';
+    const int move_ms = rescue ? RESCUE_MOVE_MS : PATH_MOVE_MS;
+    s_move_until_ms = now + move_ms;
     uint32_t hold_s = 0;
     if (rescue) {
-        s_rescue_next_ms = now + PATH_MOVE_MS + ORPHAN_RETRY_MS;
+        s_rescue_next_ms = now + move_ms; /* reached or not, the next look is right after */
+        s_rescue_scan_ms = now + RESCUE_SCAN_MS;
+        rec_count(&s_rec.rescues);
     } else {
         if (s_last_move_ms != 0 && now - s_last_move_ms > PATH_HOLD_FORGET_MS) s_move_hold_ms = PATH_HOLD_MS;
         s_last_move_ms = now;
         s_move_hold_until_ms = now + s_move_hold_ms;
         hold_s = s_move_hold_ms / 1000;
         s_move_hold_ms = s_move_hold_ms >= PATH_HOLD_MAX_MS / 2 ? PATH_HOLD_MAX_MS : s_move_hold_ms * 2;
+        /* For the record (protocol §7.17 v3.15): this unit leaves by itself.
+         * Whatever follows — attached to nothing meanwhile, the new parent
+         * missed — began here, not with a parent that went off the air. */
+        rec_cause(SIOT_LINK_OUT_MOVE);
+        siot_link_move_t mv = {.state = SIOT_LINK_MOVE_GOING, .path_before = c->path_now,
+                               .path_after = c->path_new, .started_ms = now};
+        memcpy(mv.to, c->id, 6);
+        xSemaphoreTake(s_path_lock, portMAX_DELAY);
+        const siot_path_neighbour_t *old = s_path.has_parent ? siot_path_find_ap(&s_path, s_path.parent_ap) : NULL;
+        if (old) memcpy(mv.from, old->id, 6);
+        xSemaphoreGive(s_path_lock);
+        s_mv = mv;
     }
     s_last_rejoin_ms = now; /* the new parent gets its whole wait to prove its path */
     board_listen_stop();
@@ -781,8 +872,8 @@ static void path_move_start(int64_t now, const siot_path_choice_t *c, const char
     if (rescue) {
         ESP_LOGW(TAG, "path: NO PATH from here (%s) and %s (heard at %d dBm, level %u) has one to the central, %d dBm: "
                       "going to it — %d s to attach (level 1 barred meanwhile: %s)",
-                 at_level1 ? "holding the root's role with no board" : parent, s_pin_ssid, c->rssi, c->level,
-                 c->path_new, PATH_MOVE_MS / 1000, esp_err_to_name(bar));
+                 at_level1 ? "holding the root's role with no board" : parent[0] ? parent : "attached to nothing",
+                 s_pin_ssid, c->rssi, c->level, c->path_new, move_ms / 1000, esp_err_to_name(bar));
     } else {
         ESP_LOGW(TAG, "path: MOVING — the path through %s is %d dBm; through %s (heard at %d dBm, level %u) it would be "
                       "%d dBm. Leaving %s for it: %d s to attach (level 1 barred meanwhile: %s), no other move for %" PRIu32 " s",
@@ -846,18 +937,69 @@ static bool path_poll(int64_t now, uint8_t level, sta_where_t where, const char 
                 s_move_barred = false;
                 esp_mesh_lite_set_disallowed_level(0);
             }
+            if (s_move_rescue) {
+                s_rec.rescued = true;
+            } else if (s_mv.state == SIOT_LINK_MOVE_GOING) {
+                s_mv.ended_ms = now;
+                s_mv.state = SIOT_LINK_MOVE_MOVED;
+            }
             ESP_LOGW(TAG, "path: MOVED — attached to %s at %d dBm (it said level %u, path %d dBm): it stays this "
                           "unit's only parent until it is lost", parent, ap.rssi, s_move.level, s_move.path_new);
+        } else if (s_move_rescue && !s_move_leave && on_unit && now >= s_move_until_ms - RESCUE_MOVE_MS + 3000) {
+            /* The library's own retry got there first — the parent that was
+             * lost is back: the tree keeps its shape, and the "no path" guard
+             * watches what comes down from it. */
+            pin_release("the library attached this unit to a parent meanwhile", true);
         } else if (now >= s_move_until_ms) {
             xSemaphoreTake(s_path_lock, portMAX_DELAY);
-            siot_path_mark_bad(&s_path, now, s_pin_ap);
+            if (s_move_rescue) siot_path_mark_bad_for(&s_path, now, s_pin_ap, SIOT_PATH_RESCUE_SKIP_MS);
+            else siot_path_mark_bad(&s_path, now, s_pin_ap);
             xSemaphoreGive(s_path_lock);
-            pin_release("it was not reached: any parent now, and not that one again for 30 min", true);
+            if (s_move_rescue) {
+                rec_count(&s_rec.rescue_fails);
+                s_rescue_next_ms = now;
+                pin_release("it was not reached: the next unit with a path now, this one again after one round", true);
+            } else {
+                if (s_mv.state == SIOT_LINK_MOVE_GOING) {
+                    s_mv.ended_ms = now;
+                    s_mv.state = SIOT_LINK_MOVE_MISSED;
+                }
+                pin_release("it was not reached: any parent now, and not that one again for 30 min", true);
+            }
+        } else if (s_move_rescue && now >= s_rescue_scan_ms && (where == STA_NOWHERE || s_move_leave)) {
+            /* The library scans once, then waits ten seconds: a unit with no
+             * path does not have them. (A scan already running is left alone.)
+             * Back on the parent that leads nowhere — the library's own retry
+             * — it is left again. */
+            s_rescue_scan_ms = now + RESCUE_SCAN_MS;
+            if (where != STA_NOWHERE) esp_mesh_lite_disconnect();
+            esp_mesh_lite_connect();
         }
         return false;
     }
     if (s_pin_state == PIN_HELD && (s_pin_lost || !on_unit || memcmp(ap.bssid, s_pin_ap, 6) != 0)) {
         pin_release("the station left it: any parent now", true);
+    }
+
+    /* The parent of the last look is gone: the units that hang from it are no
+     * way out until they have the news (siot_path_parent_lost). */
+    if (!on_unit && s_parent_seen) {
+        xSemaphoreTake(s_path_lock, portMAX_DELAY);
+        siot_path_parent_lost(&s_path, now, s_parent_last);
+        xSemaphoreGive(s_path_lock);
+        if (where == STA_NOWHERE) rec_cause(SIOT_LINK_OUT_PARENT_LOST);
+    }
+
+    /* Attached to nothing, level >= 2: the parent was lost (see ADRIFT_GRACE_MS). */
+    const bool adrift = level >= 2 && where == STA_NOWHERE && !s_root_barred && !s_taking;
+    if (!adrift) {
+        s_adrift_since_ms = 0;
+    } else if (s_adrift_since_ms == 0) {
+        s_adrift_since_ms = now;
+        s_rec.flags |= SIOT_LINK_OUT_F_NOWHERE;
+    } else if (now - s_adrift_since_ms >= ADRIFT_GRACE_MS && now >= s_rescue_next_ms) {
+        s_rescue_next_ms = now + RESCUE_RETRY_MS;
+        if (path_rescue(now, "", false)) return true;
     }
 
     /* A root that is not one (see ORPHAN_RESCUE_MS). */
@@ -866,10 +1008,33 @@ static bool path_poll(int64_t now, uint8_t level, sta_where_t where, const char 
         s_orphan_since_ms = 0;
     } else if (s_orphan_since_ms == 0) {
         s_orphan_since_ms = now;
-    } else if (now >= s_rescue_next_ms &&
-               now - s_orphan_since_ms >= ORPHAN_RESCUE_MS + (int64_t)(siot_identity_get()->mac[5] % 16) * 2000) {
-        s_rescue_next_ms = now + SIOT_PATH_ADVERT_MS; /* nobody with a path yet: look again at the next adverts */
-        if (path_rescue(now, parent, true)) return true;
+        s_orphan_any_ms = now + ORPHAN_ANY_MS;
+        s_rec.flags |= SIOT_LINK_OUT_F_ORPHAN;
+    } else if (now >= s_rescue_next_ms) {
+        /* The driver's word since this began: the board is not on the air. */
+        const uint32_t absent = s_board_absent_s;
+        const bool not_found = absent != 0 && (int64_t)absent * 1000 >= s_orphan_since_ms;
+        if (not_found || now - s_orphan_since_ms >= ORPHAN_RESCUE_MS) {
+            s_rescue_next_ms = now + RESCUE_RETRY_MS;
+            if (path_rescue(now, parent, true)) return true;
+            if (!s_had_session && now >= s_orphan_any_ms) {
+                /* Nobody says it has a path. A unit that had the board keeps
+                 * the mesh; this one never did: any unit it hears, as at
+                 * start — level 1 barred, no parent pinned, its access point
+                 * left open (the units under it have their own way out). */
+                s_any_round = true;
+                s_root_bar_ms = ANY_PARENT_MS;
+                s_root_barred = true;
+                s_root_bar_until_ms = now + ANY_PARENT_MS;
+                rec_count(&s_rec.any_rounds);
+                const esp_err_t bar = esp_mesh_lite_set_disallowed_level(1);
+                ESP_LOGW(TAG, "no path: holding the root's role with no board for %d s and no unit in reach says it "
+                              "has a path — any parent the library finds for %d s (level 1 barred: %s), then the "
+                              "board again",
+                         (int)((now - s_orphan_since_ms) / 1000), ANY_PARENT_MS / 1000, esp_err_to_name(bar));
+                return false;
+            }
+        }
     }
 
     /* A parent this unit did not have at the last look: one it chose by its
@@ -925,6 +1090,15 @@ static bool path_poll(int64_t now, uint8_t level, sta_where_t where, const char 
 
 void siot_link_mesh_path_allow(bool allow) { s_path_allowed = allow; }
 
+/* The root that had its session with the board and lost the board itself:
+ * attached to nothing, still at level 1, not told to yield. It keeps the mesh
+ * (brief §6.3) and says HELD. */
+static bool root_held(uint8_t level, sta_where_t where)
+{
+    return level == 1 && where == STA_NOWHERE && s_had_session && !s_root_barred && !s_taking &&
+           s_pin_state == PIN_NONE;
+}
+
 size_t siot_link_mesh_path_advert(uint8_t *out, size_t cap, bool alarm)
 {
     if (!s_started || s_path_lock == NULL) return 0;
@@ -942,6 +1116,7 @@ size_t siot_link_mesh_path_advert(uint8_t *out, size_t cap, bool alarm)
         xSemaphoreTake(s_path_lock, portMAX_DELAY);
         siot_path_own(&s_path, now_ms(), level ? level : 1, true, false, false, &none);
         none.alarm = siot_path_alarm(&s_path, now_ms(), alarm);
+        none.held = root_held(level, where);
         xSemaphoreGive(s_path_lock);
         return siot_path_advert_encode(&none, out, cap);
     }
@@ -958,8 +1133,22 @@ size_t siot_link_mesh_path_advert(uint8_t *out, size_t cap, bool alarm)
     xSemaphoreTake(s_path_lock, portMAX_DELAY);
     siot_path_own(&s_path, now_ms(), level, root, root && s_tcp_sock >= 0, full, &a);
     a.alarm = siot_path_alarm(&s_path, now_ms(), alarm);
+    a.held = child && !a.complete && siot_path_parent_held(&s_path, now_ms()); /* its tree is whole, the central is off */
     xSemaphoreGive(s_path_lock);
     return siot_path_advert_encode(&a, out, cap);
+}
+
+bool siot_link_mesh_tree_held(void)
+{
+    if (!s_started || s_path_lock == NULL) return false;
+    const uint8_t level = esp_mesh_lite_get_level();
+    const sta_where_t where = sta_where(NULL);
+    if (root_held(level, where)) return true;
+    if (level < 2 || where != STA_ON_UNIT) return false;
+    xSemaphoreTake(s_path_lock, portMAX_DELAY);
+    const bool held = siot_path_parent_held(&s_path, now_ms());
+    xSemaphoreGive(s_path_lock);
+    return held;
 }
 
 int8_t siot_link_mesh_own_path(void)
@@ -1016,13 +1205,16 @@ static void mesh_guard_poll(void)
     if (s_root_barred && (level >= 2 || now >= s_root_bar_until_ms)) {
         s_root_barred = false;
         const esp_err_t bar = esp_mesh_lite_set_disallowed_level(0); /* 0 = no level barred */
+        const char *what = s_any_round ? "no path" : "one root";
+        s_any_round = false;
         if (level >= 2) {
-            ESP_LOGI(TAG, "one root: joined the mesh at level %u — level 1 allowed again (%s)", level, esp_err_to_name(bar));
+            ESP_LOGI(TAG, "%s: joined the mesh at level %u — level 1 allowed again (%s)", what, level, esp_err_to_name(bar));
         } else {
-            ESP_LOGW(TAG, "one root: no unit of the mesh heard in %d s — level 1 allowed again (%s): the board decides",
-                     ROOT_YIELD_BAR_MS / 1000, esp_err_to_name(bar));
+            ESP_LOGW(TAG, "%s: no unit of the mesh heard in %" PRIu32 " s — level 1 allowed again (%s): the board decides",
+                     what, s_root_bar_ms / 1000, esp_err_to_name(bar));
         }
     }
+    if (where == STA_ON_UNIT) s_had_session = false; /* a child now: whoever is the root keeps the mesh */
 
     /* 3. Really in the mesh: a child of a unit that has a level, or the root
      *    on the board. The access point opens again. */
@@ -1116,6 +1308,21 @@ static void mesh_guard_poll(void)
     if (heard > since) since = heard;
     if (s_last_rejoin_ms > since) since = s_last_rejoin_ms;
     const uint32_t spread_ms = (uint32_t)(siot_identity_get()->mac[5] % 16) * 1000;
+    /* Nothing for NO_PATH_FAST_MS, the parent's advert does not vouch for a
+     * path, and a neighbour has one: go (see ORPHAN_RESCUE_MS, "back in,
+     * fast"). Nobody with a path = the central is silent for everyone: stay. */
+    if (now - since >= NO_PATH_FAST_MS + spread_ms / 4 && now >= s_rescue_next_ms && s_parent_seen) {
+        s_rescue_next_ms = now + RESCUE_RETRY_MS;
+        xSemaphoreTake(s_path_lock, portMAX_DELAY);
+        const bool vouched = siot_path_parent_complete(&s_path, now);
+        if (!vouched) siot_path_parent_lost(&s_path, now, s_parent_last);
+        xSemaphoreGive(s_path_lock);
+        if (!vouched && path_rescue(now, parent, false)) {
+            rec_cause(SIOT_LINK_OUT_PARENT_SILENT);
+            s_rec.flags |= SIOT_LINK_OUT_F_PATHLESS;
+            return;
+        }
+    }
     if (now - since < (int64_t)s_rejoin_wait_ms + spread_ms) return;
     const uint32_t waited_s = (uint32_t)((now - since) / 1000);
     s_last_rejoin_ms = now;
@@ -1123,9 +1330,11 @@ static void mesh_guard_poll(void)
     ESP_LOGW(TAG, "no path: attached to %s for %" PRIu32 " s with nothing from the central — leaving it to look "
                   "for another parent (next look in %" PRIu32 " s if this one has no path either)",
              parent, waited_s, s_rejoin_wait_ms / 1000);
-    if (s_pin_state == PIN_HELD) { /* the parent this unit chose: not again for a while */
+    rec_cause(SIOT_LINK_OUT_PARENT_SILENT);
+    s_rec.flags |= SIOT_LINK_OUT_F_PATHLESS;
+    if (s_pin_state == PIN_HELD) { /* the parent this unit chose: passed over for one round */
         xSemaphoreTake(s_path_lock, portMAX_DELAY);
-        siot_path_mark_bad(&s_path, now, s_pin_ap);
+        siot_path_mark_bad_for(&s_path, now, s_pin_ap, SIOT_PATH_RESCUE_SKIP_MS);
         xSemaphoreGive(s_path_lock);
     }
     pin_release("it has no path to the central", true);
@@ -1221,6 +1430,7 @@ static void root_tcp_task(void *arg)
         if (sock < 0) { vTaskDelay(pdMS_TO_TICKS(TCP_RECONNECT_BACKOFF_MS)); continue; } /* root without a board: keep the mesh, keep trying */
 
         ESP_LOGI(TAG, "connected to the board (%s:%d)", BOARD_TCP_IP, BOARD_TCP_PORT);
+        s_had_session = true;
         xSemaphoreTake(s_tcp_lock, portMAX_DELAY);
         s_tcp_sock = sock;
         xSemaphoreGive(s_tcp_lock);
@@ -1245,6 +1455,7 @@ static void root_tcp_task(void *arg)
         xSemaphoreGive(s_tcp_lock);
         close(sock);
         if (yield) { root_bar_start(); continue; }
+        rec_cause(SIOT_LINK_OUT_BOARD_LOST);
         vTaskDelay(pdMS_TO_TICKS(TCP_RECONNECT_BACKOFF_MS));
     }
 }
@@ -1379,6 +1590,16 @@ static esp_err_t node_start(void)
     mesh_lite_sta_config_t router_cfg = {0};
     strlcpy((char *)router_cfg.ssid, s_code.net_ssid, sizeof(router_cfg.ssid));
     strlcpy((char *)router_cfg.password, s_code.net_psk, sizeof(router_cfg.password));
+#if CONFIG_SIOT_BENCH_BOARD_DEAF
+    /* RELAXED FOR THE BENCH (docs/ota/before-production.md item 12): this unit
+     * is told the board's access point has an address nothing has, so every
+     * connect to the board ends in "no such access point" — a unit out of the
+     * board's reach, on a table where everything hears everything. It can
+     * never be the root. */
+    router_cfg.bssid_set = true;
+    memcpy(router_cfg.bssid, (const uint8_t[6]){0x02, 0x00, 0x00, 0x00, 0x00, 0x01}, 6);
+    ESP_LOGE(TAG, "BENCH BUILD: this unit is DEAF TO THE BOARD (CONFIG_SIOT_BENCH_BOARD_DEAF) — never in a product");
+#endif
     err = esp_mesh_lite_set_router_config(&router_cfg);
     if (err != ESP_OK) return err;
 

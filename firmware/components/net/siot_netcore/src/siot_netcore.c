@@ -1,5 +1,6 @@
 #include "siot_netcore.h"
 
+#include <stddef.h>
 #include <string.h>
 
 #include "esp_attr.h"
@@ -87,37 +88,158 @@ static int64_t  s_other_ack_ms;      /* the central's last ACK of ANOTHER unit's
 static uint32_t s_rejoin_wait_ms = CONFIRM_REJOIN_MS;
 static uint8_t  s_rejoins;           /* rejoins since the central last confirmed us */
 
-/* Last resort (2026-11-06). Every unit that ever stayed out of the mesh on
- * the table came back the moment someone pressed RESTART — the library keeps
- * state in RAM that only a restart clears. So a unit that has been out of the
- * mesh for MESH_OUT_RESTART_S in a row (siot_link_mesh_out_s: attached to
- * nothing, or to something that is not the mesh, while the board is on the
- * air) restarts itself, after saying why on its console.
+/* No path to the central (2026-11-23; it was "out of the mesh for 5 minutes",
+ * 2026-11-06, which never fired for a unit out of the board's reach — attached
+ * to nothing with the board not on the air counted as "the board is off" —
+ * and such units stayed offline for hours until restarted by hand).
  *
- *   - never while an alarm is active (a restart forgets it): it waits;
- *   - not when the board is simply off — the link does not count that as out;
- *   - a unit that is out again after such a restart waits twice as long each
- *     time: 5, 10, 20, then 30 minutes (MESH_OUT_RESTART_MAX_S) — a unit that
- *     nothing can bring back restarts twice an hour, no more. The count lives
- *     in RTC memory (it survives esp_restart, not a power cut) and goes back
- *     to zero once the unit is in the mesh and hears the central. */
-#define MESH_OUT_RESTART_S      300
-#define MESH_OUT_RESTART_MAX_S 1800
-#define MESH_OUT_MAGIC   0x4D4F5554u /* "MOUT": the count below is ours, not power-on noise */
-static RTC_NOINIT_ATTR uint32_t s_out_magic;
-static RTC_NOINIT_ATTR uint32_t s_out_restarts;
+ * A path is proven by what comes down from the central (the board's HEARTBEAT
+ * every 15 s, whatever the tablet does) or, on the root, by its session with
+ * the board. siot_link gets a unit with no path back in within seconds when a
+ * neighbour has one (link_mesh_node.c, "NO PATH: BACK IN, FAST"). What it
+ * cannot undo is the library's own state, which only a restart clears — every
+ * unit that ever stuck on the table came back the moment RESTART was pressed.
+ * So a unit that has had no proof of a path for NO_PATH_RESTART_S restarts
+ * itself, and again every NO_PATH_RESTART_MAX_S while it stays so.
+ *
+ *   - not when the tree is whole and the CENTRAL is what is missing
+ *     (siot_link_mesh_tree_held: the root that had the board says HELD, the
+ *     units under it hear it): the mesh stays formed for the day it is back;
+ *   - an ALARM survives it: its payload lives in RTC memory (s_keep) and the
+ *     unit comes back in alarm, LED and re-announcement included. (It used to
+ *     be "never while in alarm": a unit in alarm with no path is the one that
+ *     needs the restart most.)
+ *
+ * The outage record (protocol §7.17 OUTAGE_REPORT, v3.14): how long the unit
+ * had no path, how it began, what was tried and how many restarts it took,
+ * sent to the central when the path is back — units are on a ceiling, nobody
+ * reads their console. What happened before a restart is carried in s_keep. */
+#define NO_PATH_RESTART_S      120
+#define NO_PATH_RESTART_MAX_S  240
+#define OUTAGE_START_MS      20000 /* no proof for this long: an outage has begun (one board HEARTBEAT lost is not one) */
+#define OUTAGE_BOOT_S           60 /* a start that took this long to find the mesh is reported */
+#define OUTAGE_REPORT_VER        1
+#define OUTAGE_REPORT_LEN       12
+/* v3.15: a report of a unit that left its parent for a better path says so
+ * (CAUSE 6) and carries, after the twelve bytes, where it went and what for
+ * — VERSION 2. Every other report is VERSION 1, byte for byte as before. */
+#define OUTAGE_REPORT_VER_MOVE   2
+#define OUTAGE_REPORT_MOVE_LEN  26 /* + TO(6) + FROM(6) + PATH_BEFORE + PATH_AFTER */
+#define OUTAGE_REPORT_TRIES      8 /* 3 x 2 s, then once a minute */
+#define OUTAGE_END_RESCUE        1 /* moved to a neighbour that said it had a path */
+#define OUTAGE_END_ROOT          2 /* as the root, on the board */
+#define OUTAGE_END_OTHER         3 /* the library's own choice, or the path of the parent it had came back */
+#define OUTAGE_END_MOVED         4 /* on the unit with the better path it left its parent for (v3.15) */
+#define KEEP_MAGIC   0x4B454550u /* "KEEP" */
+typedef struct {
+    uint32_t magic;
+    uint32_t acc_s;       /* seconds with no path before the restart(s) of this outage */
+    uint8_t  carry;       /* 1 = the outage fields below are of an outage this unit restarted itself in */
+    uint8_t  restarts;
+    uint8_t  cause;       /* SIOT_LINK_OUT_* */
+    uint8_t  flags;       /* SIOT_LINK_OUT_F_* */
+    uint8_t  rescues;
+    uint8_t  rescue_fails;
+    uint8_t  any_rounds;
+    uint8_t  alarm;       /* 1 = alarm_payload is the alarm this unit is in */
+    uint8_t  alarm_payload[SAFR_EVENT_LEN];
+    uint32_t sum;
+} keep_t;
+static RTC_NOINIT_ATTR keep_t s_keep; /* survives esp_restart, not a power cut */
 
-static uint32_t out_restarts(void)
+static uint32_t keep_sum(void)
 {
-    return s_out_magic == MESH_OUT_MAGIC && s_out_restarts <= 0xFF ? s_out_restarts : 0;
+    const uint8_t *p = (const uint8_t *)&s_keep;
+    uint32_t sum = 0x5A17C0DEu;
+    for (size_t i = 0; i < offsetof(keep_t, sum); i++) sum = (sum << 5) + sum + p[i];
+    return sum;
 }
 
-static uint32_t out_restart_wait_s(void)
+static void keep_store(void) { s_keep.magic = KEEP_MAGIC; s_keep.sum = keep_sum(); }
+
+/* At start: what RTC memory holds is ours only with its checksum (power-on
+ * leaves noise there). */
+static void keep_load(void)
 {
-    const uint32_t n = out_restarts();
-    const uint32_t wait = (uint32_t)MESH_OUT_RESTART_S << (n > 3 ? 3 : n);
-    return wait > MESH_OUT_RESTART_MAX_S ? MESH_OUT_RESTART_MAX_S : wait;
+    if (s_keep.magic != KEEP_MAGIC || s_keep.sum != keep_sum()) memset(&s_keep, 0, sizeof(s_keep));
+    if (!s_keep.carry) {
+        s_keep.acc_s = 0;
+        s_keep.restarts = s_keep.cause = s_keep.flags = s_keep.rescues = s_keep.rescue_fails = s_keep.any_rounds = 0;
+    }
+    s_keep.carry = 0; /* only the restart below sets it */
+    keep_store();
 }
+
+static void keep_outage_clear(void)
+{
+    s_keep.acc_s = 0;
+    s_keep.carry = 0;
+    s_keep.restarts = s_keep.cause = s_keep.flags = s_keep.rescues = s_keep.rescue_fails = s_keep.any_rounds = 0;
+    keep_store();
+}
+
+static uint8_t sat_add(uint8_t a, uint8_t b) { return (uint8_t)(a + b < 0xFF ? a + b : 0xFF); }
+
+/* What siot_link did since the last look, added to what is kept. */
+static void keep_merge_link(void)
+{
+    siot_link_recovery_t r;
+    siot_link_mesh_recovery(&r, true);
+    if (s_keep.cause == SIOT_LINK_OUT_NONE) s_keep.cause = r.cause;
+    s_keep.flags |= r.flags;
+    s_keep.rescues = sat_add(s_keep.rescues, r.rescues);
+    s_keep.rescue_fails = sat_add(s_keep.rescue_fails, r.rescue_fails);
+    s_keep.any_rounds = sat_add(s_keep.any_rounds, r.any_rounds);
+}
+
+static bool     s_report_used;
+static uint8_t  s_report_payload[OUTAGE_REPORT_MOVE_LEN];
+static uint8_t  s_report_len;
+static uint16_t s_report_msg_id;
+static uint8_t  s_report_tries;
+static int64_t  s_report_next_ms;
+
+/* The OUTAGE_REPORT to send from now on (it replaces one not yet confirmed):
+ * what is kept of the outage, `total_s`, how it ended and — a move to a
+ * better path — where the unit went (spec §7.17). */
+static void report_start(int64_t t, uint32_t total_s, uint8_t end, const siot_link_move_t *mv)
+{
+    uint8_t *p = s_report_payload;
+    p[0] = mv ? OUTAGE_REPORT_VER_MOVE : OUTAGE_REPORT_VER;
+    siot_put_u32(&p[1], total_s);
+    p[5] = s_keep.cause;
+    p[6] = s_keep.flags;
+    p[7] = s_keep.rescues;
+    p[8] = s_keep.rescue_fails;
+    p[9] = s_keep.any_rounds;
+    p[10] = s_keep.restarts;
+    p[11] = end;
+    s_report_len = OUTAGE_REPORT_LEN;
+    if (mv) {
+        memcpy(&p[12], mv->to, 6);
+        memcpy(&p[18], mv->from, 6);
+        p[24] = (uint8_t)mv->path_before;
+        p[25] = (uint8_t)mv->path_after;
+        s_report_len = OUTAGE_REPORT_MOVE_LEN;
+    }
+    s_report_used = true;
+    s_report_msg_id = siot_safr_next_msg_id(); /* one MSG_ID for every copy: the central lists it once */
+    s_report_tries = 0;
+    s_report_next_ms = t;
+}
+
+static uint32_t no_path_restart_wait_s(void)
+{
+    return s_keep.restarts == 0 ? NO_PATH_RESTART_S : NO_PATH_RESTART_MAX_S;
+}
+
+static int64_t  s_root_proof_ms = -1; /* the root's last tick with its session to the board */
+static bool     s_outage;             /* no proof of a path for OUTAGE_START_MS */
+static bool     s_outage_held;        /* ...and the tree said HELD meanwhile: the central was off */
+static bool     s_proven_once;        /* a path was proven since this start */
+static int64_t  s_held_check_ms;
+static int64_t  s_outage_from_ms;     /* the last proof before the outage */
+/* The report waiting for the central's ACK. */
 
 /* The best path (protocol §7.16 PATH_ADVERT, v3.12; siot_link_path.h): this
  * unit says its path to the root on ESP-NOW every SIOT_PATH_ADVERT_MS, hears
@@ -302,6 +424,9 @@ static void emit_event(int64_t t, uint8_t evt_type, uint8_t evt_code, bool ack_r
         s_alarm_active = true;
         memcpy(s_alarm_payload, payload, SAFR_EVENT_LEN);
         s_alarm_next_retx_ms = t + ALARM_RETX_MS;
+        s_keep.alarm = 1; /* a restart does not forget it (see NO_PATH_RESTART_S) */
+        memcpy(s_keep.alarm_payload, payload, SAFR_EVENT_LEN);
+        keep_store();
         siot_evbus_post(SIOT_EVT_ALARM_SET, NULL, 0);
     }
     if (ack_req && track) {
@@ -434,8 +559,13 @@ static void on_ack(const siot_safr_frame_t *f, const uint8_t *raw, size_t raw_le
     ESP_LOGI(TAG, "ACK for msg_id %u status %u (%s)", acked, f->payload[2],
              s_pending_used && s_pending_msg_id == acked ? "confirms the pending frame"
              : s_pending_used ? "pending is another id" : "nothing pending");
+    const bool report = s_report_used && s_report_tries > 0 && s_report_msg_id == acked;
+    if (report) {
+        s_report_used = false;
+        ESP_LOGI(TAG, "OUTAGE_REPORT confirmed by the central (try %u)", s_report_tries);
+    }
     const bool ours = (s_pending_used && s_pending_msg_id == acked) ||
-                      (s_announce_tries > 0 && s_announce_msg_id == acked);
+                      (s_announce_tries > 0 && s_announce_msg_id == acked) || report;
     if (ours) { /* the central hears this unit */
         if (s_rejoins > 0) {
             ESP_LOGW(TAG, "one-way link over: the central confirms this unit again after %u rejoin(s)", s_rejoins);
@@ -633,6 +763,8 @@ static void on_command(const siot_safr_frame_t *f, const uint8_t *raw, size_t ra
             xSemaphoreTake(s_lock, portMAX_DELAY);
             s_alarm_active = false;
             s_pending_used = false;
+            s_keep.alarm = 0;
+            keep_store();
             xSemaphoreGive(s_lock);
             siot_evbus_post(SIOT_EVT_ALARM_CLEARED, NULL, 0);
             break;
@@ -852,26 +984,123 @@ static void netcore_task(void *arg)
             if (!board_reachable(t)) s_last_confirm_ms = 0;
         }
 
-        /* Last resort (see MESH_OUT_RESTART_S): out of the mesh for too long. */
-        const uint32_t out_s = siot_link_mesh_out_s();
-        if (out_s == 0) {
-            if (out_restarts() != 0 && siot_link_mesh_level() > 0 && board_reachable(t)) {
-                ESP_LOGI(TAG, "in the mesh and the central is heard: the restart wait is back to %d min",
-                         MESH_OUT_RESTART_S / 60);
-                s_out_restarts = 0;
+        /* No path (see NO_PATH_RESTART_S): the proof, the outage, the restart. */
+        if (siot_link_mesh_level() == 1 && siot_link_mesh_board_up()) s_root_proof_ms = t;
+        const int64_t proof_ms = s_root_proof_ms > s_last_downlink_ms ? s_root_proof_ms : s_last_downlink_ms;
+        const int64_t gap_ms = proof_ms >= 0 ? t - proof_ms : t; /* never proven: since this start */
+        if (gap_ms >= OUTAGE_START_MS) {
+            if (!s_outage) {
+                s_outage = true;
+                s_outage_held = false;
+                s_held_check_ms = 0;
             }
-        } else if (out_s >= out_restart_wait_s() && !s_alarm_active) {
-            char where[160];
-            siot_link_mesh_describe(where, sizeof(where));
-            const uint32_t n = out_restarts() + 1;
-            s_out_magic = MESH_OUT_MAGIC;
-            s_out_restarts = n;
-            ESP_LOGE(TAG, "out of the mesh for %u s — RESTARTING this unit (restart %u of this kind; if it is out "
-                          "again the next one waits %u min). %s",
-                     (unsigned)out_s, (unsigned)n, (unsigned)(out_restart_wait_s() / 60), where);
-            xSemaphoreGive(s_lock);
-            vTaskDelay(pdMS_TO_TICKS(300)); /* let the line out */
-            esp_restart();
+            if (t >= s_held_check_ms) {
+                s_held_check_ms = t + 5000;
+                if (siot_link_mesh_tree_held()) s_outage_held = true;
+            }
+            const uint32_t gap_s = (uint32_t)(gap_ms / 1000);
+            if (gap_s >= no_path_restart_wait_s() && !siot_link_mesh_tree_held()) {
+                char where[160];
+                siot_link_mesh_describe(where, sizeof(where));
+                keep_merge_link();
+                if (s_keep.cause == SIOT_LINK_OUT_NONE && !s_proven_once) s_keep.cause = SIOT_LINK_OUT_BOOT;
+                s_keep.acc_s += gap_s;
+                s_keep.restarts = sat_add(s_keep.restarts, 1);
+                s_keep.carry = 1;
+                keep_store();
+                ESP_LOGE(TAG, "no path to the central for %u s (%u s in all) — RESTARTING this unit (restart %u of "
+                              "this outage; the next one after %d s more)%s. %s",
+                         (unsigned)gap_s, (unsigned)s_keep.acc_s, s_keep.restarts, NO_PATH_RESTART_MAX_S,
+                         s_alarm_active ? "; it is in ALARM and comes back in alarm" : "", where);
+                xSemaphoreGive(s_lock);
+                vTaskDelay(pdMS_TO_TICKS(300)); /* let the line out */
+                esp_restart();
+            }
+        } else if (proof_ms >= 0 && (s_outage || s_keep.restarts != 0)) {
+            /* The path is back — also right after a restart of ours, before
+             * this start counted as an outage: what it was, for the central. */
+            const bool held = s_outage && s_outage_held;
+            s_outage = false;
+            const uint32_t last_s = (uint32_t)((s_proven_once ? proof_ms - s_outage_from_ms : proof_ms) / 1000);
+            siot_link_recovery_t now_rec;
+            siot_link_mesh_recovery(&now_rec, false);
+            const bool rescued = now_rec.rescued;
+            keep_merge_link();
+            const uint32_t total_s = s_keep.acc_s + last_s;
+            if (s_keep.cause == SIOT_LINK_OUT_NONE && !s_proven_once && total_s >= OUTAGE_BOOT_S) {
+                s_keep.cause = SIOT_LINK_OUT_BOOT;
+            }
+            const bool acted = s_keep.cause != SIOT_LINK_OUT_NONE || s_keep.flags != 0 || s_keep.rescues != 0 ||
+                               s_keep.any_rounds != 0 || s_keep.restarts != 0;
+            /* The central was off and the tree kept still: it knows, and every
+             * unit saying so at once would be a storm. A restart is always told. */
+            /* The move to a better path this outage began with, if any (not
+             * kept over a restart: the report then says the cause alone). */
+            siot_link_move_t mv;
+            siot_link_mesh_move(&mv, true);
+            const bool moved = s_keep.cause == SIOT_LINK_OUT_MOVE && mv.state != SIOT_LINK_MOVE_NONE;
+            if (acted && (!held || s_keep.restarts != 0)) {
+                const uint8_t end = siot_link_mesh_level() == 1 ? OUTAGE_END_ROOT
+                                    : rescued ? OUTAGE_END_RESCUE
+                                    : moved && mv.state == SIOT_LINK_MOVE_MOVED ? OUTAGE_END_MOVED
+                                    : OUTAGE_END_OTHER;
+                report_start(t, total_s, end, moved ? &mv : NULL);
+                ESP_LOGW(TAG, "the path to the central is back after %u s without one (cause %u, flags 0x%02X, "
+                              "%u rescue(s) of which %u missed, %u any-parent round(s), %u restart(s)): telling the central",
+                         (unsigned)total_s, s_keep.cause, s_keep.flags, s_keep.rescues, s_keep.rescue_fails,
+                         s_keep.any_rounds, s_keep.restarts);
+            }
+            keep_outage_clear();
+            if (s_alarm_active) s_alarm_next_retx_ms = t; /* the alarm first: it waited for this path */
+        }
+        if (gap_ms < OUTAGE_START_MS) {
+            /* A move to a better path that never became an outage (v3.15): the
+             * central is told of it all the same, once the path is proven
+             * again — where the unit went, what for, how long it took. So a
+             * reorganisation is on the central's list, beside whatever the
+             * units under this one say of those seconds. */
+            if (!s_outage && proof_ms >= 0) {
+                siot_link_move_t mv;
+                siot_link_mesh_move(&mv, false);
+                if ((mv.state == SIOT_LINK_MOVE_MOVED || mv.state == SIOT_LINK_MOVE_MISSED) && proof_ms > mv.ended_ms) {
+                    siot_link_mesh_move(NULL, true);
+                    const uint32_t took_s = (uint32_t)((proof_ms - mv.started_ms) / 1000);
+                    const uint8_t cause = s_keep.cause;
+                    s_keep.cause = SIOT_LINK_OUT_MOVE; /* for this report only: nothing is kept of a blink */
+                    report_start(t, took_s,
+                                 siot_link_mesh_level() == 1 ? OUTAGE_END_ROOT
+                                 : mv.state == SIOT_LINK_MOVE_MOVED ? OUTAGE_END_MOVED : OUTAGE_END_OTHER,
+                                 &mv);
+                    s_keep.cause = cause;
+                    ESP_LOGW(TAG, "this unit %s a parent with a better path (%d -> %d dBm, %u s): telling the central",
+                             mv.state == SIOT_LINK_MOVE_MOVED ? "moved to" : "left its parent for, and did not reach,",
+                             mv.path_before, mv.path_after, (unsigned)took_s);
+                }
+            }
+            if (proof_ms >= 0) {
+                s_proven_once = true;
+                s_outage_from_ms = proof_ms; /* an outage that begins now began at this proof */
+            }
+            /* What the link did about a blink that never became an outage is
+             * not the cause of the next one. */
+            if (!s_outage && gap_ms < STEP_MS * 2) siot_link_mesh_recovery(NULL, true);
+        }
+
+        /* OUTAGE_REPORT (spec §7.17), until the central's ACK: 3 x 2 s, then once a minute. */
+        if (s_report_used && siot_link_mesh_level() > 0 && siot_link_is_up(SIOT_LINK_MESH) && board_reachable(t) &&
+            t >= s_report_next_ms) {
+            if (s_report_tries >= OUTAGE_REPORT_TRIES) {
+                s_report_used = false;
+                ESP_LOGW(TAG, "OUTAGE_REPORT never confirmed by the central: dropped");
+            } else {
+                if (send_uplink(SAFR_MSG_OUTAGE_REPORT, s_report_msg_id, SAFR_F_ACK_REQ, s_report_payload,
+                                s_report_len) == ESP_OK) {
+                    s_report_tries++;
+                    s_report_next_ms = t + (s_report_tries < ANNOUNCE_FAST_TRIES ? ANNOUNCE_FAST_MS : ANNOUNCE_SLOW_MS);
+                } else {
+                    s_report_next_ms = t + ANNOUNCE_FAST_MS;
+                }
+            }
         }
 
         /* Fast phase (spec §9.1): 3 × 2 s, same MSG_ID, fresh MSG_CTR. */
@@ -907,6 +1136,7 @@ esp_err_t siot_netcore_start(void)
 {
     if (!siot_config_has_code() || !siot_identity_valid()) return ESP_ERR_INVALID_STATE;
     if (s_lock == NULL) s_lock = xSemaphoreCreateMutex();
+    keep_load();
     s_epoch_ref_ms = now_ms();
     siot_hbwin_init(&s_hbwin, s_epoch_ref_ms);
 
@@ -927,6 +1157,18 @@ esp_err_t siot_netcore_start(void)
      * JOINING (no board on site) would otherwise blink white forever. */
     s_state = SIOT_STATE_SETUP;
     post_state(SIOT_STATE_JOINING);
+
+    /* The alarm this unit was in when it restarted (see NO_PATH_RESTART_S):
+     * still in alarm — the LED, and the re-announcement as soon as there is a
+     * path. Only RESET from the central ends an alarm. */
+    if (s_keep.alarm) {
+        s_alarm_active = true;
+        memcpy(s_alarm_payload, s_keep.alarm_payload, SAFR_EVENT_LEN);
+        s_alarm_next_retx_ms = 0;
+        ESP_LOGW(TAG, "this unit restarted in ALARM (type %u code %u dev_seq %u): still in alarm",
+                 s_alarm_payload[0], s_alarm_payload[1], siot_get_u16(&s_alarm_payload[15]));
+        siot_evbus_post(SIOT_EVT_ALARM_SET, NULL, 0);
+    }
 
     if (xTaskCreatePinnedToCore(netcore_task, "netcore_task", 4096, NULL, 15, &s_task, 1) != pdPASS) {
         return ESP_ERR_NO_MEM;
