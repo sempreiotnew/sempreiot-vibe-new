@@ -764,11 +764,64 @@ class MirrorAlarm {
 }
 
 class MirrorAlarms {
-  const MirrorAlarms({required this.at, required this.alarms});
+  const MirrorAlarms({required this.at, required this.alarms, this.panel});
 
   /// When the central published this list (its clock).
   final DateTime at;
   final List<MirrorAlarm> alarms;
+
+  /// What Principal shows besides the alarms (2026-11-19); null from a
+  /// central whose app does not publish it yet.
+  final MirrorPanel? panel;
+}
+
+/// One line of the central's event list, already in words.
+class MirrorPanelEvent {
+  const MirrorPanelEvent(
+      {required this.at, required this.severity, required this.text});
+
+  final DateTime at;
+
+  /// 0 ok · 1 trouble · 2 alert · 3 alarm (DeviceEvents.severity).
+  final int severity;
+  final String text;
+}
+
+/// One unit that needs attention: its name and why ([offline] | [battery]).
+class MirrorTrouble {
+  const MirrorTrouble({required this.name, required this.why});
+
+  static const offline = 'offline';
+  static const battery = 'battery';
+
+  final String name;
+  final String why;
+}
+
+/// The numbers and the last events of the central's Principal, carried on
+/// the retained alarm message so a phone has them the moment it opens —
+/// without watching the live map (docs/cloud/central-mirror.md §4.5).
+class MirrorPanel {
+  const MirrorPanel({
+    required this.total,
+    required this.troubles,
+    this.troubleList = const [],
+    this.events = const [],
+  });
+
+  /// At most this many events and troubles are carried.
+  static const maxEvents = 20;
+  static const maxTroubles = 10;
+
+  /// Units installed (heard at least once), and how many need attention.
+  final int total;
+  final int troubles;
+
+  /// The first [maxTroubles] of them, by name.
+  final List<MirrorTrouble> troubleList;
+
+  /// The last [maxEvents] events, newest first.
+  final List<MirrorPanelEvent> events;
 }
 
 List<Map<String, dynamic>> _alarmsToJson(List<MirrorAlarm> alarms) => [
@@ -781,20 +834,76 @@ List<Map<String, dynamic>> _alarmsToJson(List<MirrorAlarm> alarms) => [
         },
     ];
 
+Map<String, dynamic> _panelToJson(MirrorPanel p) => {
+      'n': p.total,
+      'nt': p.troubles,
+      'tr': [
+        for (final t in p.troubleList.take(MirrorPanel.maxTroubles))
+          {'n': t.name, 'w': t.why},
+      ],
+      'ev': [
+        for (final e in p.events.take(MirrorPanel.maxEvents))
+          {
+            't': e.at.toUtc().toIso8601String(),
+            's': e.severity,
+            'x': e.text,
+          },
+      ],
+    };
+
+/// Old phones read `alarms` alone and ignore `panel`.
 String encodeMirrorAlarms({
   required DateTime at,
   required List<MirrorAlarm> alarms,
+  MirrorPanel? panel,
 }) =>
     jsonEncode({
       'v': mirrorVersion,
       'at': at.toUtc().toIso8601String(),
       'alarms': _alarmsToJson(alarms),
+      if (panel != null) 'panel': _panelToJson(panel),
     });
 
-/// The list without the time it was published: the same alarms held = the
-/// same signature = nothing new to publish.
-String mirrorAlarmsSignature(List<MirrorAlarm> alarms) =>
-    jsonEncode(_alarmsToJson(alarms));
+/// The list without the time it was published: the same alarms held (and
+/// the same numbers and events) = the same signature = nothing new to
+/// publish.
+String mirrorAlarmsSignature(List<MirrorAlarm> alarms, [MirrorPanel? panel]) =>
+    jsonEncode([
+      _alarmsToJson(alarms),
+      if (panel != null) _panelToJson(panel),
+    ]);
+
+MirrorPanel? _panelFromJson(Object? raw) {
+  if (raw is! Map) return null;
+  final total = raw['n'];
+  final troubles = raw['nt'];
+  if (total is! num || troubles is! num) return null;
+  final tr = raw['tr'];
+  final ev = raw['ev'];
+  return MirrorPanel(
+    total: total.toInt(),
+    troubles: troubles.toInt(),
+    troubleList: [
+      if (tr is List)
+        for (final t in tr)
+          if (t is Map && t['n'] is String)
+            MirrorTrouble(
+                name: t['n'] as String,
+                why: t['w'] as String? ?? MirrorTrouble.offline),
+    ],
+    events: [
+      if (ev is List)
+        for (final e in ev)
+          if (e is Map && e['x'] is String)
+            if (DateTime.tryParse(e['t'] as String? ?? '') case final at?)
+              MirrorPanelEvent(
+                at: at,
+                severity: (e['s'] as num?)?.toInt() ?? 0,
+                text: e['x'] as String,
+              ),
+    ],
+  );
+}
 
 MirrorAlarms? decodeMirrorAlarms(String payload) {
   try {
@@ -815,6 +924,7 @@ MirrorAlarms? decodeMirrorAlarms(String payload) {
               since: DateTime.tryParse(a['since'] as String? ?? ''),
             ),
       ],
+      panel: _panelFromJson(map['panel']),
     );
   } catch (_) {
     return null;

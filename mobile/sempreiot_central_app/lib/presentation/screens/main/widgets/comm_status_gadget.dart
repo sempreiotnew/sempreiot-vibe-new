@@ -8,6 +8,8 @@ import '../../../../features/central/application/central_iot_provider.dart';
 import '../../../../features/central/application/serial_link_provider.dart';
 import '../../../../features/central/application/supervision_provider.dart';
 import '../../../../features/iot/application/presence_provider.dart';
+import 'panel_objects.dart';
+import 'principal_panel.dart';
 
 /// One communication channel shown in the gadget: a rounded (Apple-style)
 /// icon tile with its label and current status underneath.
@@ -15,12 +17,16 @@ class CommTileData {
   const CommTileData({
     required this.icon,
     required this.label,
+    required this.channel,
     required this.statusText,
     required this.color,
   });
 
   final IconData icon;
   final String label;
+
+  /// Which object draws it on Principal (panel_objects.dart).
+  final PanelObjectKind channel;
   final String statusText;
   final Color color;
 }
@@ -35,24 +41,28 @@ CommTileData _wifiTile(BuildContext context, String? state) {
     'online' => const CommTileData(
         icon: Icons.wifi_rounded,
         label: 'WI-FI',
+        channel: PanelObjectKind.wifi,
         statusText: 'Conectado',
         color: AppColors.success,
       ),
     'limited' => const CommTileData(
         icon: Icons.wifi_rounded,
         label: 'WI-FI',
+        channel: PanelObjectKind.wifi,
         statusText: 'Limitado',
         color: AppColors.warning,
       ),
     'offline' => const CommTileData(
         icon: Icons.wifi_off_rounded,
         label: 'WI-FI',
+        channel: PanelObjectKind.wifi,
         statusText: 'Sem rede',
         color: AppColors.error,
       ),
     _ => CommTileData(
         icon: Icons.wifi_rounded,
         label: 'WI-FI',
+        channel: PanelObjectKind.wifi,
         statusText: 'Verificando…',
         color: context.textSecondary.withValues(alpha: 0.6),
       ),
@@ -64,30 +74,35 @@ CommTileData _usbTile(BuildContext context, String? state) {
     'connected' => const CommTileData(
         icon: Icons.usb_rounded,
         label: 'USB',
+        channel: PanelObjectKind.usb,
         statusText: 'Conectado',
         color: AppColors.success,
       ),
     'connecting' => const CommTileData(
         icon: Icons.usb_rounded,
         label: 'USB',
+        channel: PanelObjectKind.usb,
         statusText: 'Conectando…',
         color: AppColors.warning,
       ),
     'error' => const CommTileData(
         icon: Icons.usb_off_rounded,
         label: 'USB',
+        channel: PanelObjectKind.usb,
         statusText: 'Erro',
         color: AppColors.error,
       ),
     'disconnected' => CommTileData(
         icon: Icons.usb_off_rounded,
         label: 'USB',
+        channel: PanelObjectKind.usb,
         statusText: 'Desconectado',
         color: context.textSecondary.withValues(alpha: 0.6),
       ),
     _ => CommTileData(
         icon: Icons.usb_rounded,
         label: 'USB',
+        channel: PanelObjectKind.usb,
         statusText: 'Verificando…',
         color: context.textSecondary.withValues(alpha: 0.6),
       ),
@@ -99,24 +114,28 @@ CommTileData _meshTile(BuildContext context, String? state) {
     'connected' => const CommTileData(
         icon: Icons.hub_rounded,
         label: 'REDE INTERNA',
+        channel: PanelObjectKind.mesh,
         statusText: 'Conectado',
         color: AppColors.success,
       ),
     'connecting' => const CommTileData(
         icon: Icons.hub_rounded,
         label: 'REDE INTERNA',
+        channel: PanelObjectKind.mesh,
         statusText: 'Conectando…',
         color: AppColors.warning,
       ),
     'disconnected' => CommTileData(
         icon: Icons.hub_rounded,
         label: 'REDE INTERNA',
+        channel: PanelObjectKind.mesh,
         statusText: 'Desconectado',
         color: context.textSecondary.withValues(alpha: 0.6),
       ),
     _ => CommTileData(
         icon: Icons.hub_rounded,
         label: 'REDE INTERNA',
+        channel: PanelObjectKind.mesh,
         statusText: 'Verificando…',
         color: context.textSecondary.withValues(alpha: 0.6),
       ),
@@ -128,24 +147,28 @@ CommTileData _cloudTile(BuildContext context, String? state) {
     'connected' => const CommTileData(
         icon: Icons.cloud_done_rounded,
         label: 'NUVEM',
+        channel: PanelObjectKind.cloud,
         statusText: 'Conectado',
         color: AppColors.success,
       ),
     'connecting' => const CommTileData(
         icon: Icons.cloud_rounded,
         label: 'NUVEM',
+        channel: PanelObjectKind.cloud,
         statusText: 'Conectando…',
         color: AppColors.warning,
       ),
     'disconnected' => const CommTileData(
         icon: Icons.cloud_off_rounded,
         label: 'NUVEM',
+        channel: PanelObjectKind.cloud,
         statusText: 'Desconectado',
         color: AppColors.error,
       ),
     _ => CommTileData(
         icon: Icons.cloud_rounded,
         label: 'NUVEM',
+        channel: PanelObjectKind.cloud,
         statusText: 'Verificando…',
         color: context.textSecondary.withValues(alpha: 0.6),
       ),
@@ -155,7 +178,9 @@ CommTileData _cloudTile(BuildContext context, String? state) {
 /// COMUNICAÇÃO gadget for the central's own dashboard (CENTRAL mode):
 /// reads the device's local Wi-Fi, USB and MQTT state.
 class CentralCommGadget extends ConsumerWidget {
-  const CentralCommGadget({super.key});
+  const CentralCommGadget({super.key, this.minHeight = 0});
+
+  final double minHeight;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -172,7 +197,7 @@ class CentralCommGadget extends ConsumerWidget {
             ? 'connected'
             : 'disconnected';
 
-    return CommStatusGadget(tiles: [
+    return CommStatusGadget(minHeight: minHeight, tiles: [
       _wifiTile(context, network.name),
       _usbTile(context, link.name),
       _meshTile(context, mesh),
@@ -186,9 +211,11 @@ class CentralCommGadget extends ConsumerWidget {
 /// the phone's own connectivity — through the same tile builders the
 /// central uses, so both screens always match.
 class UserCentralCommGadget extends ConsumerWidget {
-  const UserCentralCommGadget({super.key, required this.identityId});
+  const UserCentralCommGadget(
+      {super.key, required this.identityId, this.minHeight = 0});
 
   final String identityId;
+  final double minHeight;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -214,7 +241,7 @@ class UserCentralCommGadget extends ConsumerWidget {
       PresenceStatus.unknown => (null, null, null, null),
     };
 
-    return CommStatusGadget(tiles: [
+    return CommStatusGadget(minHeight: minHeight, tiles: [
       _wifiTile(context, wifi),
       _usbTile(context, usb),
       _meshTile(context, mesh),
@@ -223,43 +250,33 @@ class UserCentralCommGadget extends ConsumerWidget {
   }
 }
 
-/// Dumb rendering of the gadget: a surface card with one rounded icon tile
-/// per channel. Tile size adapts to the available width so it fits phones,
-/// tablets and web without overflowing.
+/// Dumb rendering of the gadget: Principal's "Comunicação" card, one
+/// object per channel (the router, the board's cable, the units' network,
+/// the cloud — panel_objects.dart) with its name and its state in words
+/// underneath. The object's size follows the available width so it fits
+/// phones, tablets and web without overflowing.
 class CommStatusGadget extends StatelessWidget {
-  const CommStatusGadget({super.key, required this.tiles});
+  const CommStatusGadget({super.key, required this.tiles, this.minHeight = 0});
 
   final List<CommTileData> tiles;
+  final double minHeight;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      decoration: BoxDecoration(
-        color: context.surfaceColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: context.borderColor.withValues(alpha: 0.6),
-          width: 0.5,
-        ),
-      ),
+    return PanelCard(
+      title: 'COMUNICAÇÃO',
+      minHeight: minHeight,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          // Icon scales with the slot width but stays in a comfortable
-          // range on tablets/web, where the row is also capped and centered.
           final slotWidth = constraints.maxWidth / tiles.length;
-          final iconSize = (slotWidth * 0.45).clamp(44.0, 56.0);
+          final objectWidth = (slotWidth * 0.72).clamp(52.0, 104.0);
 
-          return Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: Row(
-                children: [
-                  for (final tile in tiles)
-                    Expanded(child: _CommTile(data: tile, size: iconSize)),
-                ],
-              ),
-            ),
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final tile in tiles)
+                Expanded(child: _CommTile(data: tile, width: objectWidth)),
+            ],
           );
         },
       ),
@@ -268,10 +285,10 @@ class CommStatusGadget extends StatelessWidget {
 }
 
 class _CommTile extends StatelessWidget {
-  const _CommTile({required this.data, required this.size});
+  const _CommTile({required this.data, required this.width});
 
   final CommTileData data;
-  final double size;
+  final double width;
 
   @override
   Widget build(BuildContext context) {
@@ -280,21 +297,13 @@ class _CommTile extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 300),
-            width: size,
-            height: size,
-            decoration: BoxDecoration(
-              color: data.color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(size * 0.28),
-              border: Border.all(
-                color: data.color.withValues(alpha: 0.3),
-                width: 0.8,
-              ),
-            ),
-            child: Icon(data.icon, color: data.color, size: size * 0.44),
+          PanelObject(
+            kind: data.channel,
+            accent: data.color,
+            ok: data.statusText == 'Conectado',
+            width: width,
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 2),
             child: FittedBox(
@@ -304,9 +313,9 @@ class _CommTile extends StatelessWidget {
                 maxLines: 1,
                 style: TextStyle(
                   color: context.textPrimary,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.6,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.4,
                 ),
               ),
             ),
@@ -321,8 +330,8 @@ class _CommTile extends StatelessWidget {
                 maxLines: 1,
                 style: TextStyle(
                   color: data.color,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w500,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),

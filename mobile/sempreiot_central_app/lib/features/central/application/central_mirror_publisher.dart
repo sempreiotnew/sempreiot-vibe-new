@@ -20,6 +20,7 @@ import 'device_update_history.dart';
 import 'device_update_source.dart';
 import 'firmware_release_provider.dart';
 import 'remote_ota.dart';
+import 'panel_provider.dart';
 import 'remote_system_test.dart';
 import 'root_advisor_provider.dart';
 import 'device_update_state.dart';
@@ -201,6 +202,7 @@ class CentralMirrorPublisher {
 
   String? _alarmSignature;
   List<MirrorAlarm> _alarms = const [];
+  MirrorPanel? _panel;
   String? _testsSignature;
   SystemTestRun? _testRunning;
   List<SystemTestRun> _testsRecent = const [];
@@ -581,6 +583,14 @@ class CentralMirrorPublisher {
     _publishAlarms(force: false);
   }
 
+  /// Principal's numbers or its last events changed: they travel on the
+  /// same retained message as the alarms (one write per second at most,
+  /// as every retained topic — [retainedWriteGap]).
+  void onPanel(MirrorPanel panel) {
+    _panel = panel;
+    _publishAlarms(force: false);
+  }
+
   /// A new MQTT session: no phone is known to be watching yet, and the
   /// retained alarm list is written again — it may have changed while the
   /// central was offline.
@@ -650,7 +660,7 @@ class CentralMirrorPublisher {
   }
 
   void _publishAlarms({required bool force}) {
-    final signature = mirrorAlarmsSignature(_alarms);
+    final signature = mirrorAlarmsSignature(_alarms, _panel);
     if (!force && !_alarmsDirty && signature == _alarmSignature) return;
     final id = _identityId();
     if (id == null || !_retainedWriteDue(mirrorAlarmTopic(id))) {
@@ -659,7 +669,7 @@ class CentralMirrorPublisher {
     }
     final sent = _retainedWrite(
       mirrorAlarmTopic(id),
-      encodeMirrorAlarms(at: _clock(), alarms: _alarms),
+      encodeMirrorAlarms(at: _clock(), alarms: _alarms, panel: _panel),
     );
     _alarmsDirty = !sent;
     if (sent) _alarmSignature = signature;
@@ -790,6 +800,9 @@ final centralMirrorPublisherProvider = Provider<void>((ref) {
       final labels = ref.read(labelIndexProvider);
       publisher.onAlarms([for (final d in latched) _alarmOf(d, labels)]);
     }
+  }, fireImmediately: true);
+  ref.listen<MirrorPanel?>(localMirrorPanelProvider, (_, next) {
+    if (next != null) publisher.onPanel(next);
   }, fireImmediately: true);
   ref.listen(centralIotConnectionProvider, (prev, next) {
     if (next.valueOrNull == true && prev?.valueOrNull != true) {

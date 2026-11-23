@@ -15,9 +15,14 @@ import '../../application/central_mirror_viewer.dart';
 /// opened after the alarm started, and stays while the central is offline.
 /// Renders nothing while no alarm is held.
 class RemoteAlarmBanner extends ConsumerWidget {
-  const RemoteAlarmBanner({super.key, required this.identityId});
+  const RemoteAlarmBanner(
+      {super.key, required this.identityId, this.embedded = false});
 
   final String identityId;
+
+  /// Inside Principal's status block (2026-11-19), which already says
+  /// "ALARME" and draws the red box: only the explanation and the devices.
+  final bool embedded;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -26,43 +31,62 @@ class RemoteAlarmBanner extends ConsumerWidget {
     if (alarms.isEmpty) return const SizedBox.shrink();
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      decoration: BoxDecoration(
-        color: AppColors.error.withValues(alpha: context.isDark ? 0.16 : 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: AppColors.error.withValues(alpha: 0.55),
-          width: 0.8,
-        ),
-      ),
+      margin: embedded ? null : const EdgeInsets.only(bottom: 10),
+      padding: embedded ? null : const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: embedded
+          ? null
+          : BoxDecoration(
+              color: AppColors.error
+                  .withValues(alpha: context.isDark ? 0.16 : 0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: AppColors.error.withValues(alpha: 0.55),
+                width: 0.8,
+              ),
+            ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (!embedded) ...[
+            Row(
+              children: [
+                const Icon(Icons.local_fire_department_rounded,
+                    color: AppColors.error, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    alarms.length == 1
+                        ? 'ALARME RETIDO — 1 dispositivo'
+                        : 'ALARME RETIDO — ${alarms.length} dispositivos',
+                    style: const TextStyle(
+                      color: AppColors.error,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+          ],
           Row(
             children: [
-              const Icon(Icons.local_fire_department_rounded,
-                  color: AppColors.error, size: 20),
-              const SizedBox(width: 8),
+              if (embedded) ...[
+                Icon(Icons.lock_outline_rounded,
+                    size: 15, color: context.textSecondary),
+                const SizedBox(width: 6),
+              ],
               Expanded(
                 child: Text(
-                  alarms.length == 1
-                      ? 'ALARME RETIDO — 1 dispositivo'
-                      : 'ALARME RETIDO — ${alarms.length} dispositivos',
-                  style: const TextStyle(
-                    color: AppColors.error,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.8,
-                  ),
+                  'O alarme fica retido até o rearme do operador, na '
+                  'central.',
+                  style: TextStyle(
+                      color: context.textSecondary,
+                      fontSize: embedded ? 12 : 11),
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'O alarme fica retido até o rearme do operador, na central.',
-            style: TextStyle(color: context.textSecondary, fontSize: 11),
           ),
           const SizedBox(height: 8),
           Wrap(

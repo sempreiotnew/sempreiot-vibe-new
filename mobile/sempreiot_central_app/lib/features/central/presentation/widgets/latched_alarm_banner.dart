@@ -21,7 +21,12 @@ import 'device_command_widgets.dart';
 /// The answer shows as ticks beside the device — and under it on the Rede
 /// map (device_command_provider.dart) — never as a snackbar.
 class LatchedAlarmBanner extends ConsumerWidget {
-  const LatchedAlarmBanner({super.key});
+  const LatchedAlarmBanner({super.key, this.embedded = false});
+
+  /// Inside Principal's status block (2026-11-19), which already says
+  /// "ALARME" and draws the red box: only the explanation, Rearmar tudo
+  /// and the devices.
+  final bool embedded;
 
   static const keyRearmAll = ValueKey('alarm-rearm-all');
 
@@ -57,58 +62,75 @@ class LatchedAlarmBanner extends ConsumerWidget {
         if (!busy(d.mac)) d.mac
     ];
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      decoration: BoxDecoration(
-        color: AppColors.error.withValues(alpha: context.isDark ? 0.16 : 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: AppColors.error.withValues(alpha: 0.55),
-          width: 0.8,
-        ),
+    final rearmAll = FilledButton.icon(
+      key: keyRearmAll,
+      onPressed: free.isEmpty ? null : () => free.forEach(rearm),
+      style: FilledButton.styleFrom(
+        backgroundColor: AppColors.error,
+        foregroundColor: Colors.white,
+        visualDensity: VisualDensity.compact,
       ),
+      icon: const Icon(Icons.restart_alt_rounded, size: 18),
+      label: const Text('Rearmar tudo'),
+    );
+    final explanation = Text(
+      'O alarme fica retido até o rearme do operador, mesmo que o '
+      'sensor já tenha voltado ao normal. Cada dispositivo sai da '
+      'lista quando confirma o rearme.',
+      style:
+          TextStyle(color: context.textSecondary, fontSize: embedded ? 12 : 11),
+    );
+
+    return Container(
+      margin: embedded ? null : const EdgeInsets.only(bottom: 10),
+      padding: embedded ? null : const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: embedded
+          ? null
+          : BoxDecoration(
+              color: AppColors.error
+                  .withValues(alpha: context.isDark ? 0.16 : 0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: AppColors.error.withValues(alpha: 0.55),
+                width: 0.8,
+              ),
+            ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.local_fire_department_rounded,
-                  color: AppColors.error, size: 20),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  latched.length == 1
-                      ? 'ALARME RETIDO — 1 dispositivo'
-                      : 'ALARME RETIDO — ${latched.length} dispositivos',
-                  style: const TextStyle(
-                    color: AppColors.error,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.8,
+          if (embedded)
+            Row(
+              children: [
+                Expanded(child: explanation),
+                const SizedBox(width: 12),
+                rearmAll,
+              ],
+            )
+          else ...[
+            Row(
+              children: [
+                const Icon(Icons.local_fire_department_rounded,
+                    color: AppColors.error, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    latched.length == 1
+                        ? 'ALARME RETIDO — 1 dispositivo'
+                        : 'ALARME RETIDO — ${latched.length} dispositivos',
+                    style: const TextStyle(
+                      color: AppColors.error,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.8,
+                    ),
                   ),
                 ),
-              ),
-              FilledButton.icon(
-                key: keyRearmAll,
-                onPressed: free.isEmpty ? null : () => free.forEach(rearm),
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.error,
-                  foregroundColor: Colors.white,
-                  visualDensity: VisualDensity.compact,
-                ),
-                icon: const Icon(Icons.restart_alt_rounded, size: 18),
-                label: const Text('Rearmar tudo'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'O alarme fica retido até o rearme do operador, mesmo que o '
-            'sensor já tenha voltado ao normal. Cada dispositivo sai da '
-            'lista quando confirma o rearme.',
-            style: TextStyle(color: context.textSecondary, fontSize: 11),
-          ),
+                rearmAll,
+              ],
+            ),
+            const SizedBox(height: 6),
+            explanation,
+          ],
           const SizedBox(height: 8),
           Wrap(
             spacing: 6,

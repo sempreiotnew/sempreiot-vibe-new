@@ -562,6 +562,35 @@ from `state`.
 What this is not: a notification. With the app closed the phone shows nothing until it is opened
 (§8 D5).
 
+**The panel on the same message (2026-11-19).** The alarm message also carries what the phone's
+Principal needs without watching the live map — the numbers and the last events:
+
+```json
+{"v":1,"at":"…","alarms":[…],
+ "panel":{"n":12,"nt":2,
+          "tr":[{"n":"Sala 2","w":"offline"},{"n":"Corredor","w":"battery"}],
+          "ev":[{"t":"2026-11-19T21:00:05.000Z","s":3,"x":"Hall — alarme de fumaça"}]}}
+```
+
+- `n` units installed (heard at least once) · `nt` units that need attention — not heard, or battery
+  under 20 %, what the Rede legend already flags; what a "trouble" finally is waits for the product's
+  definition · `tr` the first 10 of them, by name and why (`offline` | `battery`) · `ev` the last
+  **20** rows of the tablet's event table (`DeviceEvents`), newest first, already in words: time,
+  severity (0 ok · 1 trouble · 2 alert · 3 alarm), text. Every kind the table holds today travels
+  (unit events, supervision, the central's own lines, frame diagnostics); the 60 s re-announcement
+  of an alarm does not.
+- **Why here and not a topic of its own:** no cloud change. A central may publish (retained) only
+  where its IoT policy says, and a publish anywhere else drops its connection for ever
+  (`tools/cloud_test_topic_policy.sh`); `alarm` is already allowed and already read by every phone.
+  An app that does not know `panel` ignores it; a phone that gets no `panel` (the central's app is
+  older) shows the alarms alone and says the events are not sent yet.
+- **Cost:** the message is written again on every new event or change of the numbers — one retained
+  write per second at most, as every retained topic — about 3 KB (one billed message). A quiet site:
+  a handful a day.
+- **What it is not:** the full history. "Ver todos" on a phone lists these 20 and says the rest is at
+  the central; a deeper history from a phone needs a request/answer on a topic of its own (and the
+  policy change), not built.
+
 ---
 
 ## 5. The user's view of a central (phone)
@@ -598,7 +627,7 @@ What cannot be mirrored, as on the tablet: survey blinks, setup, button hold —
 wire (see the header of `device_led_provider.dart`). The **IDENTIFY blink** is mirrored: the
 tablet starts it on the root's ACK, which is not a tick, so it travels as an event (§3.3).
 
-Not built in step 2: the counters of Principal (placeholders on the tablet too), the event history.
+Principal's counters and its last events come from the retained `alarm` message (§4.5, 2026-11-19): the phone shows them without watching. The central's battery and temperature are placeholders on the tablet too.
 
 ---
 

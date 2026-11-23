@@ -22,14 +22,12 @@ import '../../widgets/iot_network_animation.dart';
 import '../auth/login_screen.dart';
 import '../../../features/central/presentation/screens/devices_screen.dart';
 import '../../../features/central/presentation/screens/topology_screen.dart';
-import '../../../features/central/presentation/widgets/latched_alarm_banner.dart';
+import '../../../features/central/presentation/widgets/alarm_strip.dart';
 import '../../../features/central/presentation/widgets/mirror_status_strip.dart';
-import '../../../features/central/presentation/widgets/remote_alarm_banner.dart';
 import '../../../features/central/presentation/widgets/system_test_sheets.dart';
 import 'main_tab.dart';
-import 'status_panel_style_provider.dart';
 import 'widgets/comm_status_gadget.dart';
-import 'widgets/dot_matrix_display.dart';
+import 'widgets/principal_panel.dart';
 import 'widgets/main_app_bar.dart';
 import 'widgets/main_bottom_nav.dart';
 import 'widgets/main_drawer.dart';
@@ -207,8 +205,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           // (the tab switcher destroys the other tabs' screens).
           body: SystemTestReportWatcher(
             centralId: widget.centralId,
-            child:
-                _TabBody(currentTab: _currentTab, centralId: widget.centralId),
+            child: _TabBody(
+              currentTab: _currentTab,
+              centralId: widget.centralId,
+              onOpenPrincipal: () => _handleTabChange(MainTab.principal),
+            ),
           ),
           bottomNavigationBar: AnimatedSwitcher(
             duration: const Duration(milliseconds: 420),
@@ -276,10 +277,26 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 // ── Tab body with fade transitions ───────────────────────────────────────────
 
 class _TabBody extends StatelessWidget {
-  const _TabBody({required this.currentTab, this.centralId});
+  const _TabBody({
+    required this.currentTab,
+    required this.onOpenPrincipal,
+    this.centralId,
+  });
 
   final MainTab currentTab;
   final String? centralId;
+
+  /// The alarm strip of Dispositivos and Rede leads to Principal.
+  final VoidCallback onOpenPrincipal;
+
+  /// A screen of another tab under the alarm strip: an alarm held is said
+  /// on every tab, not on Principal alone.
+  Widget _underAlarmStrip(Widget screen) => Column(
+        children: [
+          AlarmStrip(centralId: centralId, onOpen: onOpenPrincipal),
+          Expanded(child: screen),
+        ],
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -311,21 +328,23 @@ class _TabBody extends StatelessWidget {
           // On the tablet: its own registry. On a user's phone inside a
           // central: the same screens, fed by that central's mirror.
           MainTab.devices => AppConfig.isCentral
-              ? const DevicesScreen()
+              ? _underAlarmStrip(const DevicesScreen())
               : centralId != null
-                  ? _Mirrored(
-                      centralId: centralId!, child: const DevicesScreen())
+                  ? _underAlarmStrip(_Mirrored(
+                      centralId: centralId!, child: const DevicesScreen()))
                   : const _PlaceholderTab(
                       icon: Icons.devices_rounded,
                       title: 'Dispositivos',
                       subtitle: 'Nenhum dispositivo conectado ainda.',
                     ),
-          MainTab.rede => AppConfig.isCentral || centralId == null
-              ? const TopologyScreen(embedded: true)
-              : _Mirrored(
-                  centralId: centralId!,
-                  child: const TopologyScreen(embedded: true),
-                ),
+          MainTab.rede => AppConfig.isCentral
+              ? _underAlarmStrip(const TopologyScreen(embedded: true))
+              : centralId == null
+                  ? const TopologyScreen(embedded: true)
+                  : _underAlarmStrip(_Mirrored(
+                      centralId: centralId!,
+                      child: const TopologyScreen(embedded: true),
+                    )),
         },
       ),
     );
@@ -383,142 +402,20 @@ class _CentralDashboard extends ConsumerWidget {
   /// phone's own connectivity.
   final String? centralId;
 
-  // Placeholder counts — wire to real providers when backend is ready.
-  static const _totalDevices = 0;
-  static const _totalOnline = 0;
-  static const _totalOffline = 0;
-  static const _totalAlertas = 0;
-  static const _totalOk = 0;
-  static const _totalAlarme = 0;
-
-  (Color, String) _centralStatus(WidgetRef ref) {
-    if (centralId == null) {
-      return switch (ref.watch(networkStatusProvider)) {
-        NetworkStatus.online => (AppColors.success, 'Operacional'),
-        NetworkStatus.limited => (AppColors.warning, 'Acesso limitado'),
-        NetworkStatus.offline => (AppColors.error, 'Sem conexão'),
-      };
-    }
-    return switch (ref.watch(presenceStatusProvider(centralId!))) {
-      PresenceStatus.online => (AppColors.success, 'Operacional'),
-      PresenceStatus.offline => (AppColors.error, 'Sem conexão'),
-      PresenceStatus.unknown => (AppColors.warning, 'Verificando…'),
-    };
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final (statusColor, statusLabel) = _centralStatus(ref);
     // USER mode with the central offline: the dashboard stays visible but
     // greyed out and untouchable — there is nothing to act on remotely.
     final offline = centralId != null &&
         ref.watch(presenceStatusProvider(centralId!)) == PresenceStatus.offline;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // The tablet reads its own latches; a user's phone reads the
-          // central's retained alarm list (no reset from a phone).
-          if (centralId == null)
-            const LatchedAlarmBanner()
-          else
-            RemoteAlarmBanner(identityId: centralId!),
-          if (centralId == null) const _ForeignSystemBanner(),
-          _CentralStatusSection(color: statusColor, label: statusLabel),
-          const SizedBox(height: 10),
-          _OfflineDim(
-            dimmed: offline,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const _SectionLabel('DISPOSITIVOS'),
-                const SizedBox(height: 6),
-                const Row(
-                  children: [
-                    Expanded(
-                      child: _MetricCard(
-                        icon: Icons.devices_rounded,
-                        label: 'Total Dispositivos',
-                        value: _totalDevices,
-                        accent: AppColors.secondary,
-                        compact: true,
-                      ),
-                    ),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: _MetricCard(
-                        icon: Icons.sensors_rounded,
-                        label: 'Dispositivos Online',
-                        value: _totalOnline,
-                        accent: AppColors.success,
-                        compact: true,
-                      ),
-                    ),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: _MetricCard(
-                        icon: Icons.sensors_off_rounded,
-                        label: 'Dispositivos Offline',
-                        value: _totalOffline,
-                        accent: AppColors.error,
-                        compact: true,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                const _SectionLabel('EVENTOS'),
-                const SizedBox(height: 6),
-                const Row(
-                  children: [
-                    Expanded(
-                      child: _MetricCard(
-                        icon: Icons.check_circle_rounded,
-                        label: 'OK',
-                        value: _totalOk,
-                        accent: AppColors.success,
-                        compact: true,
-                      ),
-                    ),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: _MetricCard(
-                        icon: Icons.notifications_rounded,
-                        label: 'Alertas',
-                        value: _totalAlertas,
-                        accent: AppColors.warning,
-                        compact: true,
-                      ),
-                    ),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: _MetricCard(
-                        icon: Icons.local_fire_department_rounded,
-                        label: 'Alarmes',
-                        value: _totalAlarme,
-                        accent: AppColors.error,
-                        compact: true,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                const _SectionLabel('COMUNICAÇÃO'),
-                const SizedBox(height: 6),
-                centralId == null
-                    ? const CentralCommGadget()
-                    : UserCentralCommGadget(identityId: centralId!),
-                const SizedBox(height: 6),
-                const _SectionLabel('BATERIA / TEMPERATURA'),
-                const SizedBox(height: 6),
-                const _GadgetRow(),
-              ],
-            ),
-          ),
-        ],
-      ),
+    return PrincipalBody(
+      centralId: centralId,
+      header: centralId == null ? const _ForeignSystemBanner() : null,
+      commBuilder: (minHeight) => centralId == null
+          ? CentralCommGadget(minHeight: minHeight)
+          : UserCentralCommGadget(identityId: centralId!, minHeight: minHeight),
+      dim: (child) => _OfflineDim(dimmed: offline, child: child),
     );
   }
 }
@@ -792,260 +689,6 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
-/// "Status da Central" with a persisted style switch: the default card or a
-/// retro digital panel like the segment displays on old fire alarm centrals.
-class _CentralStatusSection extends ConsumerWidget {
-  const _CentralStatusSection({required this.color, required this.label});
-
-  final Color color;
-  final String label;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final arcade = ref.watch(statusPanelArcadeProvider);
-
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 350),
-      transitionBuilder: (child, animation) => FadeTransition(
-        opacity: animation,
-        child: SizeTransition(
-          sizeFactor: animation,
-          axisAlignment: -1,
-          child: child,
-        ),
-      ),
-      layoutBuilder: (currentChild, previousChildren) => Stack(
-        alignment: Alignment.topCenter,
-        children: [
-          ...previousChildren,
-          if (currentChild != null) currentChild,
-        ],
-      ),
-      child: arcade
-          ? _ArcadeStatusPanel(
-              key: const ValueKey('status_arcade'),
-              color: color,
-              label: label,
-            )
-          : _CentralStatusCard(
-              key: const ValueKey('status_card'),
-              color: color,
-              label: label,
-            ),
-    );
-  }
-}
-
-/// Compact switch that flips the status panel style. Sized down so it fits
-/// inside both card variants without stretching them.
-class _PanelStyleSwitch extends ConsumerWidget {
-  const _PanelStyleSwitch();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final arcade = ref.watch(statusPanelArcadeProvider);
-
-    return Tooltip(
-      message: arcade ? 'Painel clássico' : 'Painel digital',
-      child: SizedBox(
-        width: 38,
-        height: 24,
-        child: FittedBox(
-          fit: BoxFit.contain,
-          child: Switch(
-            value: arcade,
-            activeTrackColor: AppColors.success.withValues(alpha: 0.4),
-            thumbColor: WidgetStatePropertyAll(
-              arcade ? AppColors.success : null,
-            ),
-            onChanged: (_) =>
-                ref.read(statusPanelArcadeProvider.notifier).toggle(),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Retro digital panel: dark bezel, glowing segment-style readout and the
-/// classic three-LED column (OK / alerta / falha) of old alarm centrals.
-class _ArcadeStatusPanel extends StatelessWidget {
-  const _ArcadeStatusPanel(
-      {super.key, required this.color, required this.label});
-
-  final Color color;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        // A physical device bezel — intentionally dark in both themes.
-        color: const Color(0xFF15181D),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF2A2F38), width: 1),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: const Color(0xFF060B07),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: color.withValues(alpha: 0.25),
-                  width: 0.8,
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'STATUS DA CENTRAL',
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontFamilyFallback: const ['Courier'],
-                      fontSize: 9,
-                      letterSpacing: 2.5,
-                      color: color.withValues(alpha: 0.55),
-                    ),
-                  ),
-                  const SizedBox(height: 7),
-                  DotMatrixDisplay(
-                    text: label,
-                    color: color,
-                    height: 25,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _ArcadeLed(
-                  color: AppColors.success, active: color == AppColors.success),
-              const SizedBox(height: 4),
-              _ArcadeLed(
-                  color: AppColors.warning, active: color == AppColors.warning),
-              const SizedBox(height: 4),
-              _ArcadeLed(
-                  color: AppColors.error, active: color == AppColors.error),
-            ],
-          ),
-          const SizedBox(width: 8),
-          const _PanelStyleSwitch(),
-          const SizedBox(width: 2),
-        ],
-      ),
-    );
-  }
-}
-
-class _ArcadeLed extends StatelessWidget {
-  const _ArcadeLed({required this.color, required this.active});
-
-  final Color color;
-  final bool active;
-
-  @override
-  Widget build(BuildContext context) {
-    if (active) return _PulsingStatusDot(color: color, active: true);
-    return SizedBox(
-      width: 20,
-      height: 20,
-      child: Center(
-        child: Container(
-          width: 9,
-          height: 9,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: color.withValues(alpha: 0.15),
-            border: Border.all(color: color.withValues(alpha: 0.3), width: 0.8),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _CentralStatusCard extends StatelessWidget {
-  const _CentralStatusCard(
-      {super.key, required this.color, required this.label});
-
-  final Color color;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final statusColor = color;
-    final statusLabel = label;
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: context.surfaceColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: statusColor.withValues(alpha: 0.25),
-          width: 0.8,
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: statusColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(11),
-            ),
-            child: Icon(
-              Icons.sensors_rounded,
-              color: statusColor,
-              size: 20,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Status da Central',
-                  style: TextStyle(
-                    color: context.textSecondary,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: 0.3,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  statusLabel,
-                  style: TextStyle(
-                    color: context.textPrimary,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.2,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          _PulsingStatusDot(
-              color: statusColor, active: statusColor == AppColors.success),
-          const SizedBox(width: 8),
-          const _PanelStyleSwitch(),
-        ],
-      ),
-    );
-  }
-}
-
 class _PulsingStatusDot extends StatefulWidget {
   const _PulsingStatusDot({required this.color, required this.active});
 
@@ -1264,402 +907,6 @@ class _MetricCard extends StatelessWidget {
 }
 
 // ── Gadget row ───────────────────────────────────────────────────────────────
-
-class _GadgetRow extends StatelessWidget {
-  const _GadgetRow();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(child: _BatteryGadget(percent: 78)),
-        SizedBox(width: 8),
-        Expanded(child: _TemperatureGadget(celsius: 32)),
-      ],
-    );
-  }
-}
-
-class _BatteryGadget extends StatefulWidget {
-  const _BatteryGadget({this.percent = 78});
-  final int percent;
-
-  @override
-  State<_BatteryGadget> createState() => _BatteryGadgetState();
-}
-
-class _BatteryGadgetState extends State<_BatteryGadget>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  late final Animation<double> _anim;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    );
-    _anim = Tween<double>(begin: 0, end: widget.percent / 100).animate(
-      CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic),
-    );
-    _ctrl.forward();
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final color = widget.percent > 50
-        ? AppColors.success
-        : widget.percent > 20
-            ? AppColors.warning
-            : AppColors.error;
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: context.surfaceColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withValues(alpha: 0.2), width: 0.8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.battery_charging_full_rounded, size: 11, color: color),
-              const SizedBox(width: 5),
-              Text(
-                'BATERIA',
-                style: TextStyle(
-                  color: context.textSecondary,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 1.2,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 84,
-            width: double.infinity,
-            child: AnimatedBuilder(
-              animation: _anim,
-              builder: (context, _) => Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: SizedBox(
-                      width: 112,
-                      height: 40,
-                      child: CustomPaint(
-                        painter: _BatteryIconPainter(
-                          progress: _anim.value,
-                          color: color,
-                          track: context.textSecondary.withValues(alpha: 0.4),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    '${(widget.percent * _anim.value).round()}%',
-                    style: TextStyle(
-                      color: context.textPrimary,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.5,
-                      height: 1,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'carga',
-                    style: TextStyle(
-                      color: context.textSecondary,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Horizontal battery icon: outlined body + terminal cap, with the charge
-/// level filled left-to-right in the status color.
-class _BatteryIconPainter extends CustomPainter {
-  const _BatteryIconPainter({
-    required this.progress,
-    required this.color,
-    required this.track,
-  });
-
-  final double progress;
-  final Color color;
-  final Color track;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final capW = size.width * 0.06;
-    final bodyW = size.width - capW - 2;
-    final radius = size.height * 0.22;
-
-    final body = RRect.fromRectAndRadius(
-      Rect.fromLTWH(1.25, 1.25, bodyW - 2.5, size.height - 2.5),
-      Radius.circular(radius),
-    );
-    canvas.drawRRect(
-      body,
-      Paint()
-        ..color = track
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.5,
-    );
-
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(bodyW + 2, size.height * 0.32, capW, size.height * 0.36),
-        const Radius.circular(2.5),
-      ),
-      Paint()..color = track,
-    );
-
-    if (progress <= 0) return;
-    const inset = 4.5;
-    final fill = Rect.fromLTWH(
-      1.25 + inset,
-      1.25 + inset,
-      (bodyW - 2.5 - inset * 2) * progress.clamp(0.0, 1.0),
-      size.height - 2.5 - inset * 2,
-    );
-    final rr = RRect.fromRectAndRadius(fill, Radius.circular(radius * 0.55));
-    canvas.drawRRect(
-      rr,
-      Paint()
-        ..color = color.withValues(alpha: 0.35)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
-    );
-    canvas.drawRRect(rr, Paint()..color = color);
-  }
-
-  @override
-  bool shouldRepaint(_BatteryIconPainter old) =>
-      old.progress != progress || old.color != color || old.track != track;
-}
-
-/// Vertical thermometer: bulb at the bottom, mercury column rising with the
-/// temperature, plus scale ticks beside the tube.
-class _ThermometerPainter extends CustomPainter {
-  const _ThermometerPainter({
-    required this.progress,
-    required this.color,
-    required this.track,
-  });
-
-  final double progress;
-  final Color color;
-  final Color track;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final cx = size.width / 2;
-    final bulbR = size.width * 0.32;
-    final bulbC = Offset(cx, size.height - bulbR - 1.5);
-    final tubeW = size.width * 0.42;
-    final tubeTop = tubeW / 2 + 1.5;
-
-    final tube = RRect.fromRectAndRadius(
-      Rect.fromLTRB(cx - tubeW / 2, tubeTop, cx + tubeW / 2, bulbC.dy),
-      Radius.circular(tubeW / 2),
-    );
-
-    final trackFill = Paint()..color = track.withValues(alpha: 0.15);
-    canvas.drawRRect(tube, trackFill);
-    canvas.drawCircle(bulbC, bulbR, trackFill);
-
-    final outline = Paint()
-      ..color = track
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.8;
-    canvas.drawRRect(tube, outline);
-    canvas.drawCircle(bulbC, bulbR, outline);
-
-    final tick = Paint()
-      ..color = track
-      ..strokeWidth = 1.4;
-    final tickX = cx + tubeW / 2 + 2.5;
-    for (var i = 1; i <= 3; i++) {
-      final y = tubeTop + (bulbC.dy - tubeTop) * i / 4;
-      canvas.drawLine(Offset(tickX, y), Offset(tickX + 3.5, y), tick);
-    }
-
-    final glow = Paint()
-      ..color = color.withValues(alpha: 0.3)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
-    canvas.drawCircle(bulbC, bulbR - 2.2, glow);
-    canvas.drawCircle(bulbC, bulbR - 2.2, Paint()..color = color);
-
-    if (progress > 0) {
-      final innerW = tubeW * 0.5;
-      final maxTop = tubeTop + innerW / 2 + 1.5;
-      final level = bulbC.dy - (bulbC.dy - maxTop) * progress.clamp(0.0, 1.0);
-      final mercury = RRect.fromRectAndRadius(
-        Rect.fromLTRB(cx - innerW / 2, level, cx + innerW / 2, bulbC.dy),
-        Radius.circular(innerW / 2),
-      );
-      canvas.drawRRect(mercury, glow);
-      canvas.drawRRect(mercury, Paint()..color = color);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_ThermometerPainter old) =>
-      old.progress != progress || old.color != color || old.track != track;
-}
-
-class _TemperatureGadget extends StatefulWidget {
-  const _TemperatureGadget({this.celsius = 32});
-  final double celsius;
-
-  @override
-  State<_TemperatureGadget> createState() => _TemperatureGadgetState();
-}
-
-class _TemperatureGadgetState extends State<_TemperatureGadget>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  late final Animation<double> _anim;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    );
-    _anim = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic),
-    );
-    _ctrl.forward();
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  // Maps 0–80°C range to a 0..1 progress value for the arc.
-  double get _progress => (widget.celsius / 80).clamp(0.0, 1.0);
-
-  Color get _color {
-    if (widget.celsius < 30) return AppColors.success;
-    if (widget.celsius < 50) return AppColors.warning;
-    return AppColors.error;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final color = _color;
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: context.surfaceColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withValues(alpha: 0.2), width: 0.8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.thermostat_rounded, size: 11, color: color),
-              const SizedBox(width: 5),
-              Text(
-                'TEMPERATURA',
-                style: TextStyle(
-                  color: context.textSecondary,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 1.2,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 84,
-            width: double.infinity,
-            child: AnimatedBuilder(
-              animation: _anim,
-              builder: (context, _) => Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  SizedBox(
-                    width: 30,
-                    height: 76,
-                    child: CustomPaint(
-                      painter: _ThermometerPainter(
-                        progress: _progress * _anim.value,
-                        color: color,
-                        track: context.textSecondary.withValues(alpha: 0.4),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${(widget.celsius * _anim.value).toStringAsFixed(0)}°',
-                        style: TextStyle(
-                          color: context.textPrimary,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.5,
-                          height: 1,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'celsius',
-                        style: TextStyle(
-                          color: context.textSecondary,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Generic placeholder tab ──────────────────────────────────────────────────
 
 class _PlaceholderTab extends StatelessWidget {
   const _PlaceholderTab({
