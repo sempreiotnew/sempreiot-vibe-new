@@ -29,11 +29,20 @@ import 'topology_provider.dart';
 ///  * a firmware update lights nothing of its own: OTA_STATUS is a
 ///    background frame and so is OTA_RESULT (blue 100 ms, folded):
 ///    `is_message` of siot_ui_led.c names neither;
-///  * a leaf is dark except for the walk test — a button press, or the one
-///    it runs by itself right after provisioning (spec §12.8): blue 100 ms
+///  * a leaf lights for the walk test — a button press, or the one it runs
+///    by itself right after provisioning (spec §12.8): blue 100 ms
 ///    ("heard you"), blue 500 ms (the MANUAL_TEST left), cyan if the
 ///    central's ACK comes within 3 s. Its red blink (no ACK reached it) is
 ///    not shown: the tablet cannot know its ACK was lost on the way down;
+///  * and (2026-11-25) for each wake's HEARTBEAT, as on a press: blue
+///    500 ms (it left), cyan 500 ms (its parent answered and has a path to
+///    the central — the parent's word, siot_leafcore.c `heartbeat_led`;
+///    the tablet's own ACK of a heartbeat travels the map back to the unit
+///    but its parent drops it, spec §12.5). A heartbeat
+///    that reached the tablet went through a parent with a path, so both
+///    are drawn from it. The red blink of a wake nobody answered, or whose
+///    parent has no path, is not shown: that heartbeat never arrives. The
+///    other frames of a wake (outbox events, the name) light nothing;
 ///  * IDENTIFY: blue blink 1 s for N s, no pulses meanwhile;
 ///  * base: node in alarm red blink (500 ms on / 500 ms off; red solid
 ///    until 2026-11-11), root (level 1) green flash, board magenta flash,
@@ -159,7 +168,7 @@ class DeviceLedEngine extends ChangeNotifier {
 
     if (tick.direction == SafrTrafficDirection.uplink) {
       if (isLeaf) {
-        // §12.8: only the walk test lights a leaf.
+        // §12.8: the walk test and each wake's heartbeat light a leaf.
         if (tick.msgType == SafrMsgType.event &&
             tick.eventCode == SafrEventCode.manualTest) {
           _led(tick.mac)
@@ -167,6 +176,12 @@ class DeviceLedEngine extends ChangeNotifier {
             ..pulse(LedColor.blue, ledMsgMs, now);
           _walkTestUntil[tick.mac] =
               now.add(const Duration(milliseconds: leafWalkTestAckMs));
+        } else if (tick.msgType == SafrMsgType.heartbeat) {
+          // It left (blue) and its parent, which has a path — the frame is
+          // here — answered (cyan).
+          _led(tick.mac)
+            ..pulse(LedColor.blue, ledMsgMs, now)
+            ..pulse(LedColor.cyan, ledMsgMs, now);
         }
       } else {
         _tx(tick.mac, tick.msgType, now);

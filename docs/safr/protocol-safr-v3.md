@@ -595,7 +595,7 @@ the payload — `EPOCH u32` and `CHANNEL u8` (§12.4). Receivers accept both the
 
 `DST_MAC` = original sender; `SRC_MAC` = the confirmer. The **root** ACKs central
 downlink on behalf of the mesh; the **central** ACKs any uplink frame carrying
-`F_ACK_REQ` — **except a HEARTBEAT** *(2026-10-03)*: only a leaf's asks for an ACK, and that ACK is its parent's (§12.4); the central's would cross the whole mesh to be dropped by the parent, the leaf already asleep. ACK frames themselves never set `F_ACK_REQ`. The **board** ACKs
+`F_ACK_REQ` — **a leaf's HEARTBEAT included** *(amended 2026-11-25, the user's; from 2026-10-03 until then the central did not answer it)*: only a leaf's asks for an ACK, the ACK it acts on is its parent's (§12.4), and the central's crosses the mesh to be dropped by the parent (§12.5) — it is sent so the tablet's map shows the confirmation going back to the unit, at the cost of one frame down the cable and one copy through every node, per leaf, per minute. ACK frames themselves never set `F_ACK_REQ`. The **board** ACKs
 every downlink COMMAND itself before relaying it, and **forwards the central's
 ACKs down** into the mesh so a node sees the tablet's confirmation of its
 `F_ACK_REQ` uplinks (Phase 1 brief §14 item 4).
@@ -1331,9 +1331,11 @@ Timer wake, in order:
 6. Sleep. **Hard budget 500 ms** outside alarm: whatever state the exchange is
    in, the leaf sleeps at the budget; undelivered mailbox frames wait.
 
-**No LED in sleep, ever.** A leaf shows patterns only while awake and only when
-an installer is plausibly present: the setup window, the verdict after
-provisioning, a button press, and the COMM_FAULT chirp (§12.8).
+**No LED in sleep, ever.** A leaf shows patterns only while awake: the setup
+window, the verdict after provisioning, a button press, the COMM_FAULT chirp
+and (amended 2026-11-25) the heartbeat of each wake (§12.8). The heartbeat's
+pulses keep the unit awake ≈ 1.1 s past the exchange — outside the 500 ms
+budget, which still bounds the exchange itself.
 
 ### 12.3 Parent discovery, binding and back-off
 
@@ -1548,6 +1550,22 @@ the same LEDs from that EVENT.
 `SURVEY_ANSWER`, `SURVEY_RESULT`). The first cut pulsed the offers itself,
 400 ms back to back with no gap: four good neighbours read as 1.6 s of solid
 green instead of four blinks (found on the bench 2026-09-29).
+
+**Each wake's heartbeat** (amended 2026-11-25, the user's: a wake shows what a
+press shows; from 2026-10-03 until then a provisioned leaf was dark on every
+timer wake). **Blue 500 ms** = the `HEARTBEAT` left (the parent's radio took
+it); **cyan 500 ms** = the parent's ACK came **without `NO_PATH`**; **one red
+blink** (400 ms, once per wake) = no ACK, or an ACK with `NO_PATH`. This cyan
+is the **parent's word** that it has a path to the central — the central
+answers the heartbeat too (§9.1) but the parent drops that ACK (§12.5); only
+the walk test's cyan is the central's own ACK. It is the one exception to "cyan = the central
+confirmed this unit's frame" (root `CLAUDE.md`). The other frames of a wake
+(outbox events, `TOPOLOGY`, `NAME_ANNOUNCE`) light nothing. The unit sleeps
+when the pulses have played (≈ 1.1 s). The tablet draws the blue and the cyan
+from the heartbeat it receives; it cannot show the red (that heartbeat never
+arrives). On the Rede map the heartbeat travels up as a blue packet and the
+central's ACK of it travels back to the unit as a cyan one (as before
+2026-09-28).
 
 **COMM_FAULT:** on each wake one short **red blink + trouble chirp** (the
 conventional detector behaviour; colours not final).

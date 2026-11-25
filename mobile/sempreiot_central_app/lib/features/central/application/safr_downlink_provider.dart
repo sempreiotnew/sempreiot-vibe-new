@@ -357,11 +357,14 @@ class SafrDownlink {
     // The cyan packet going down = the unit's cyan LED: the tablet's ACK for
     // an EVENT it sent, or for the OTA_RESULT of its update (§13.4 — the
     // node posts SIOT_EVT_ACK_RECEIVED for every ACK addressed to it,
-    // siot_netcore.c `on_ack`). Heartbeats are ACKed on the wire too (spec
-    // §7.5) but the parent never hands those to a leaf, so they never light
-    // a LED and never travel the map.
+    // siot_netcore.c `on_ack`). A battery unit's HEARTBEAT too (the user's,
+    // 2026-11-25, as before 2026-09-28): the ACK the tablet sends for it
+    // travels the map back to the unit, whose LED turns cyan on that wake —
+    // on its parent's answer (siot_leafcore.c `heartbeat_led`); the parent
+    // drops the tablet's own ACK at the last hop (spec §12.5).
     if (source.msgType == SafrMsgType.event ||
-        source.msgType == SafrMsgType.otaResult) {
+        source.msgType == SafrMsgType.otaResult ||
+        source.msgType == SafrMsgType.heartbeat) {
       _ref.read(safrTrafficProvider).emit(SafrTrafficTick(
             mac: source.srcMac,
             direction: SafrTrafficDirection.downlink,

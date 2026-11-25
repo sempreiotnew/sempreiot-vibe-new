@@ -62,7 +62,8 @@ exactly** on screen. Source of truth: `firmware/components/ui/siot_ui_led` (`sio
 
 1. **One meaning per colour, on every device.** white blink = setup · white breathe = finding the
    network · blue = a frame this unit sent (100 ms background, 500 ms message) · **cyan = the
-   central confirmed this unit's frame (the ONLY "confirmed" colour — never green)** · green flash =
+   central confirmed this unit's frame (the ONLY "confirmed" colour — never green; on a battery unit's
+   60 s wake the cyan is its parent saying it has a path to the central, protocol §12.8, 2026-11-25)** · green flash =
    root node · magenta flash = board · red = alarm (blinking 500 ms on / 500 ms off while the unit is in alarm) / fault / nothing came back · green / yellow / red
    blinks = link quality in a survey · blue blink = IDENTIFY. Do not give a device its own colour
    for something another device already signals.

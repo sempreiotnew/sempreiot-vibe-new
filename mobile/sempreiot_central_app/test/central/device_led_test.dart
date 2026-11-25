@@ -147,11 +147,23 @@ void main() {
     expect(at(boardMac, 1400), LedColor.blue);
   });
 
-  test('a leaf stays dark for routine frames', () {
-    tickAt(0, up(leafMac, SafrMsgType.heartbeat));
+  test('a leaf stays dark for the other frames of a wake', () {
+    tickAt(0, up(leafMac, SafrMsgType.nameAnnounce));
     tickAt(10, up(leafMac, SafrMsgType.event, code: SafrEventCode.smokeAlarm));
     expect(at(leafMac, 50), isNull);
     expect(at(leafMac, 300), isNull);
+  });
+
+  // 2026-11-25: a wake shows what a press shows (siot_leafcore.c
+  // `heartbeat_led`).
+  test('leaf heartbeat: blue 500 (it left), cyan 500 (the parent answered)',
+      () {
+    tickAt(0, up(leafMac, SafrMsgType.heartbeat));
+    expect(at(leafMac, 50), LedColor.blue);
+    expect(at(leafMac, 450), LedColor.blue);
+    expect(at(leafMac, 550), LedColor.cyan);
+    expect(at(leafMac, 950), LedColor.cyan);
+    expect(at(leafMac, 1100), isNull);
   });
 
   test('leaf walk test: blue 100, blue 500, cyan when the ACK is in time', () {

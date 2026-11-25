@@ -893,6 +893,41 @@ static void drain_outbox(void)
 /* An image was installed on this wake: the next one starts in INSTALL_WAKE_MS. */
 static bool s_installed;
 
+/* The heartbeat's LEDs (§12.8, the user's, 2026-11-25): a wake shows what a
+ * press shows — blue 500 ms = the heartbeat left, cyan 500 ms = the parent
+ * answered and has a path to the central, one red blink = nobody answered, or
+ * the parent has no path. The cyan here is the PARENT's word (the central
+ * answers a heartbeat too, but the parent drops that ACK, §12.5); only the
+ * walk test's cyan is the central's own.
+ * The pulses queue in siot_ui_led; the wake ends when they have played
+ * (s_led_until_ms, siot_leafcore_run). One red per wake: a second try that
+ * fails too is the same answer. */
+static int64_t s_led_until_ms;
+static bool    s_wake_red;
+
+static void led_hold(uint32_t ms)
+{
+    const int64_t t = now_ms();
+    s_led_until_ms = (s_led_until_ms > t ? s_led_until_ms : t) + ms;
+}
+
+static void heartbeat_led(bool sent, bool confirmed)
+{
+    if (sent) {
+        siot_ui_led_pulse(SIOT_LED_BLUE_SOLID, SIOT_LED_MSG_MS, false);
+        led_hold(SIOT_LED_MSG_MS);
+    }
+    if (confirmed) {
+        const siot_evt_ack_t ack = {.msg_id = s_ack_wanted, .status = SAFR_ACK_OK};
+        siot_evbus_post(SIOT_EVT_ACK_RECEIVED, &ack, sizeof(ack)); /* siot_ui_led: the one cyan rule */
+        led_hold(SIOT_LED_MSG_MS + 100);
+    } else if (!s_wake_red) {
+        s_wake_red = true;
+        siot_ui_led_pulse(SIOT_LED_RED_SOLID, SIOT_LED_SURVEY_ANSWER_MS, false);
+        led_hold(SIOT_LED_SURVEY_ANSWER_MS + 100);
+    }
+}
+
 /* One timer wake while bound. Returns true when the parent answered. */
 static bool heartbeat_cycle(void)
 {
@@ -901,6 +936,7 @@ static bool heartbeat_cycle(void)
     build_heartbeat(p);
     s_mailbox_left = 0;
     const bool ok = send_acked(SAFR_MSG_HEARTBEAT, p, sizeof(p), SIOT_LEAF_ACK_WAIT_MS, 0);
+    heartbeat_led(ok || s_last_tx_ok, ok && !s_rtc.no_path);
     if (!ok) {
         s_rtc.misses++;
         ESP_LOGW(TAG, "heartbeat: no parent ACK (miss %u)", s_rtc.misses);
@@ -1126,6 +1162,7 @@ static void one_wake(esp_sleep_wakeup_cause_t cause)
     s_rtc.wakes_since_probe++;
     s_rebound = false;
     s_parent_heard = false;
+    s_wake_red = false;
     ESP_LOGW(TAG, "wake #%lu cause=%s bind=%s misses=%u outbox=%u ch=%u", (unsigned long)s_rtc.wake_count,
              cause_name(cause), s_rtc.bind == BIND_BOUND ? "bound" : s_rtc.bind == BIND_COMM_FAULT ? "COMM_FAULT" : "none",
              s_rtc.misses, siot_leaf_outbox_count(&s_rtc.outbox), s_rtc.channel);
@@ -1238,7 +1275,8 @@ void siot_leafcore_run(bool has_code)
      * it; a leaf never posted one, so the end of a survey (which re-applies
      * the base pattern) flashed the setup white — read as a cyan
      * "confirmation" with the board off. A provisioned leaf rests dark:
-     * ONLINE at level 0 is SIOT_LED_OFF; only the §12.8 flows light it. */
+     * ONLINE at level 0 is SIOT_LED_OFF; only the §12.8 flows light it —
+     * a press, the verdict, and (2026-11-25) each wake's heartbeat. */
     const siot_evt_state_t running = {.prev = SIOT_STATE_SETUP, .next = SIOT_STATE_ONLINE};
     siot_evbus_post(SIOT_EVT_STATE_CHANGED, &running, sizeof(running));
     if (s_rtc.magic != RTC_MAGIC || s_rtc.system_id != s_code->system_id) {
@@ -1266,6 +1304,7 @@ void siot_leafcore_run(bool has_code)
     esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
     for (;;) {
         one_wake(cause);
+        while (now_ms() < s_led_until_ms) pump(50); /* the heartbeat's blue / cyan / red play to the end */
         const int64_t awake = now_ms();
         const uint32_t left = s_installed                         ? INSTALL_WAKE_MS
                             : awake >= (int64_t)HB_INTERVAL_MS ? 1000u

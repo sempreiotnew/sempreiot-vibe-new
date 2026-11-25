@@ -15,9 +15,8 @@ import 'device_command_widgets.dart';
 /// a battery detector's every frame (its wake is the news that it is
 /// alive), an event, a command going down, an ACK either way. Null for a
 /// mains unit's routine traffic (heartbeats, topology), which neither the
-/// map nor the card shows. Not the unit's LED: a detector's LED stays dark
-/// on a timer wake (protocol §12.8), and the screen's LED dot follows the
-/// real one exactly.
+/// map nor the card shows. Not the unit's LED: that is the screen's LED
+/// dot, which follows the real one exactly (protocol §12.8).
 Color? trafficRippleColor(SafrTrafficTick tick, TopologyNode node) {
   if (tick.mac != node.mac) return null;
   final uplink = tick.direction == SafrTrafficDirection.uplink;

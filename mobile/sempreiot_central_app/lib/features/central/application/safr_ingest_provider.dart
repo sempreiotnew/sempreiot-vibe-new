@@ -296,13 +296,14 @@ class SafrIngestService {
     }
 
     // Spec §9.1: process once, ACK every time (even duplicates/replays).
-    // Except a HEARTBEAT (spec §7.5): only a battery leaf's asks for an ACK,
-    // and its parent's ACK is the one that counts — by the time the
-    // tablet's could arrive the leaf sleeps, and the parent drops it
-    // (siot_leafmgr.c forwards only ACKs that close an EVENT in custody).
-    // Answering would cost a frame each way on the cable and one copy
-    // through every node of the mesh, per leaf, per minute.
-    if (frame.ackRequired && frame.msgType != SafrMsgType.heartbeat) {
+    // A HEARTBEAT too (spec §7.5, the user's, 2026-11-25 — as before
+    // 2026-10-03): only a battery leaf's asks for an ACK, and the tablet
+    // answers it so the Rede map shows the confirmation going back to the
+    // unit. Its parent's ACK is still the one the leaf acts on (the parent
+    // drops the tablet's: siot_leafmgr.c forwards only ACKs that close an
+    // EVENT in custody). Cost, accepted: a frame down the cable and one
+    // copy through every node of the mesh, per leaf, per minute.
+    if (frame.ackRequired) {
       await onAckRequired?.call(frame);
       if (accepted != null) {
         await (db.update(db.deviceEvents)..where((t) => t.id.equals(accepted)))
