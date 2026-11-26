@@ -1634,6 +1634,13 @@ class SafrOutageReportPayload extends SafrV2Payload {
       rescues == 0 &&
       anyRounds == 0;
 
+  /// The unit left its parent **by itself**, for a better path, and did not
+  /// have to restart: the network re-forming on purpose, however it ended
+  /// (on the unit it chose, or back by another one). Never a trouble on the
+  /// operator's list (the user's, 2026-11-25) — the same rule as
+  /// `NetworkIncident.reorganisation`. A unit that restarted itself was lost.
+  bool get reorganisation => cause == SafrOutageCause.moved && restarts == 0;
+
   final Duration duration;
   final SafrOutageCause cause;
   final int flags;

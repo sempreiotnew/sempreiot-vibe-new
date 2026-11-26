@@ -215,6 +215,40 @@ _Static_assert(MESH_MAX_LEVEL == 15, "mesh depth: CONFIG_MESH_LITE_MAXIMUM_LEVEL
  * MESH_LITE_MSG_ID_INVALID and 1..3 are taken by the library. */
 #define MESH_UPLINK_MSG_ID    0x53414652u /* "SAFR" */
 #define MESH_DOWNLINK_MSG_ID  0x53414644u /* "SAFD" */
+/* ASK THE PARENT BEFORE LEAVING IT (protocol §7.16.1, 2026-11-25). The
+ * central's HEARTBEAT comes down every 15 s and each unit passes it on ONCE,
+ * to everybody, with no second try: two lost in a row were 30 s of silence,
+ * and the unit left a parent that worked ("ficou 44 s sem caminho" on a
+ * bench where every unit heard 8 of 8). A unit never asked; it only listened.
+ *
+ * Now, after NO_PATH_ASK_MS with nothing from the central, a unit ASKS its
+ * parent — NO_PATH_ASK_TRIES times, NO_PATH_ASK_EVERY_MS apart — and the
+ * parent ANSWERS, to all its children, how long ago it had its own proof of
+ * a path: a frame of the central that came down to it, the answer of ITS
+ * parent, or — the root — its session with the board (age 0). The answer is
+ * the parent's proof, so it is this unit's too: the wait starts over from
+ * the moment that proof was made, the unit stays, nothing is recorded.
+ *
+ *   - the parent's proof is as old as this unit's (it answers, and has
+ *     nothing newer): the parent itself says it has no path — the unit goes
+ *     to a neighbour with one at NO_PATH_FAST_MS, whatever the parent's
+ *     advert says;
+ *   - no answer at all (a parent on a firmware before this one, or gone):
+ *     the rule as it was — NO_PATH_FAST_MS of silence and an advert that does
+ *     not vouch for a path.
+ *
+ * The slow rule (NO_PATH_REJOIN_MS with nothing actually coming down) and
+ * siot_netcore's restart look at real frames only, as before: a parent that
+ * says "yes" for a minute while nothing of it arrives is left. */
+#define MESH_PATH_ASK_MSG_ID  0x53414651u /* "SAFQ" */
+#define MESH_PATH_ANS_MSG_ID  0x53414641u /* "SAFA" */
+#define PATH_ASK_VER               1
+#define PATH_AGE_NONE         0xFFFFu /* no proof of a path at all */
+#define NO_PATH_ASK_MS         20000
+#define NO_PATH_ASK_EVERY_MS    3000
+#define NO_PATH_ASK_TRIES          3
+#define NO_PATH_ASK_IDLE_MS    30000  /* after the tries, while the unit stays where it is */
+#define PATH_ANSWER_FRESH_MS   10000  /* an answer this recent is the parent's word now */
 
 static siot_installation_t s_code;
 static char s_softap_ssid[33];
@@ -229,6 +263,13 @@ static bool    s_ap_closed;             /* this unit's access point is closed (l
 static uint8_t s_false_root_polls;      /* polls in a row at "level 1, attached to another unit" */
 static volatile uint32_t s_last_downlink_s; /* when the last frame of the central came down the mesh to us (s since boot; 0 = never) */
 static int64_t s_on_unit_since_ms;      /* attached to another unit since (0 = not attached to one) */
+static volatile uint32_t s_parent_proof_s; /* when the proof a parent answered with was made (s since boot + 1; 0 = none) */
+static volatile uint32_t s_parent_ans_s;   /* when the parent last answered at all (s since boot + 1; 0 = not this parent) */
+static int64_t s_ask_round_ms;          /* the proof the asks in progress are about */
+static int64_t s_ask_next_ms;
+static uint8_t s_ask_tries;
+static esp_err_t mesh_send_raw(uint32_t msg_id, const uint8_t *data, size_t len,
+                               esp_err_t (*transport)(const uint8_t *, size_t));
 static int64_t s_last_rejoin_ms;
 static uint32_t s_rejoin_wait_ms = NO_PATH_REJOIN_MS;
 static int64_t s_unproven_since_ms;     /* at level 1 with no session to the board since (0 = not so) */
@@ -1045,6 +1086,7 @@ static bool path_poll(int64_t now, uint8_t level, sta_where_t where, const char 
     } else if (!s_parent_seen || memcmp(s_parent_last, ap.bssid, 6) != 0) {
         s_parent_seen = true;
         memcpy(s_parent_last, ap.bssid, 6);
+        s_parent_ans_s = 0; /* another parent: it has said nothing yet (MESH_PATH_ASK_MSG_ID) */
         s_join_until_ms = s_pin_state == PIN_HELD && !s_move_rescue ? 0 : now + SIOT_PATH_JOIN_MS;
     }
 
@@ -1300,6 +1342,8 @@ static void mesh_guard_poll(void)
     /* 4. Attached to a unit, and the central is not heard through it. */
     if (where != STA_ON_UNIT) {
         s_on_unit_since_ms = 0;
+        s_parent_ans_s = 0; /* the next parent has said nothing yet */
+        s_ask_tries = 0;
         return;
     }
     if (s_on_unit_since_ms == 0) s_on_unit_since_ms = now;
@@ -1308,16 +1352,42 @@ static void mesh_guard_poll(void)
     if (heard > since) since = heard;
     if (s_last_rejoin_ms > since) since = s_last_rejoin_ms;
     const uint32_t spread_ms = (uint32_t)(siot_identity_get()->mac[5] % 16) * 1000;
-    /* Nothing for NO_PATH_FAST_MS, the parent's advert does not vouch for a
-     * path, and a neighbour has one: go (see ORPHAN_RESCUE_MS, "back in,
-     * fast"). Nobody with a path = the central is silent for everyone: stay. */
-    if (now - since >= NO_PATH_FAST_MS + spread_ms / 4 && now >= s_rescue_next_ms && s_parent_seen) {
+    /* The parent's own proof counts as this unit's for the fast rule (see
+     * MESH_PATH_ASK_MSG_ID); the slow rule below keeps to real frames. */
+    int64_t proof = since;
+    const int64_t parent_proof = (int64_t)s_parent_proof_s * 1000;
+    if (parent_proof > proof) proof = parent_proof;
+    if (now - proof >= NO_PATH_ASK_MS && now >= s_ask_next_ms) {
+        if (s_ask_round_ms != proof) {
+            s_ask_round_ms = proof;
+            s_ask_tries = 0;
+        }
+        const bool first = s_ask_tries == 0;
+        if (s_ask_tries < NO_PATH_ASK_TRIES) s_ask_tries++;
+        s_ask_next_ms = now + (s_ask_tries < NO_PATH_ASK_TRIES ? NO_PATH_ASK_EVERY_MS : NO_PATH_ASK_IDLE_MS);
+        const uint8_t ask[1] = {PATH_ASK_VER};
+        const esp_err_t err = mesh_send_raw(MESH_PATH_ASK_MSG_ID, ask, sizeof(ask), esp_mesh_lite_send_raw_msg_to_parent);
+        if (first) {
+            ESP_LOGI(TAG, "nothing from the central for %d s through %s: asking it whether it still has a path (%s)",
+                     (int)((now - proof) / 1000), parent, esp_err_to_name(err));
+        }
+    }
+    /* Nothing for NO_PATH_FAST_MS, the parent says it has no newer proof —
+     * or does not answer and its advert does not vouch for a path — and a
+     * neighbour has one: go (see ORPHAN_RESCUE_MS, "back in, fast"). Nobody
+     * with a path = the central is silent for everyone: stay. */
+    if (now - proof >= NO_PATH_FAST_MS + spread_ms / 4 && now >= s_rescue_next_ms && s_parent_seen) {
         s_rescue_next_ms = now + RESCUE_RETRY_MS;
+        const int64_t ans = (int64_t)s_parent_ans_s * 1000;
+        const bool said_no = ans != 0 && now - ans <= PATH_ANSWER_FRESH_MS;
         xSemaphoreTake(s_path_lock, portMAX_DELAY);
-        const bool vouched = siot_path_parent_complete(&s_path, now);
+        const bool vouched = !said_no && siot_path_parent_complete(&s_path, now);
         if (!vouched) siot_path_parent_lost(&s_path, now, s_parent_last);
         xSemaphoreGive(s_path_lock);
         if (!vouched && path_rescue(now, parent, false)) {
+            ESP_LOGW(TAG, "no path: nothing from the central for %d s and %s %s",
+                     (int)((now - proof) / 1000), parent,
+                     said_no ? "answers that it has no newer proof of a path either" : "does not answer and does not vouch for one");
             rec_cause(SIOT_LINK_OUT_PARENT_SILENT);
             s_rec.flags |= SIOT_LINK_OUT_F_PATHLESS;
             return;
@@ -1505,10 +1575,66 @@ static esp_err_t on_downlink_raw_msg(uint8_t *data, uint32_t size, uint8_t **out
     return ESP_OK;
 }
 
+/* How long ago this unit had proof of a path to the central, in seconds
+ * (PATH_AGE_NONE = never): the root's session with the board is proof now; a
+ * child's is the last frame of the central that came down to it, or the proof
+ * its parent answered with (see MESH_PATH_ASK_MSG_ID). */
+static uint16_t proof_age_s(void)
+{
+    if (is_root()) return s_tcp_sock >= 0 ? 0 : PATH_AGE_NONE;
+    const uint32_t heard = s_last_downlink_s, told = s_parent_proof_s;
+    const uint32_t last = heard > told ? heard : told;
+    if (last == 0) return PATH_AGE_NONE;
+    const uint32_t now_s = (uint32_t)(now_ms() / 1000) + 1;
+    const uint32_t age = now_s > last ? now_s - last : 0;
+    return (uint16_t)(age >= PATH_AGE_NONE ? PATH_AGE_NONE - 1 : age);
+}
+
+/* What this unit knows of its path, to all its children (they all wait for
+ * the same frames). */
+static void path_answer_children(void)
+{
+    const uint16_t age = proof_age_s();
+    const uint8_t ans[3] = {PATH_ASK_VER, (uint8_t)(age >> 8), (uint8_t)age};
+    mesh_send_raw(MESH_PATH_ANS_MSG_ID, ans, sizeof(ans), esp_mesh_lite_send_broadcast_raw_msg_to_child);
+}
+
+/* A child asks whether this unit still has a path. */
+static esp_err_t on_path_ask_raw_msg(uint8_t *data, uint32_t size, uint8_t **outbuf, uint32_t *outlen, uint32_t seq)
+{
+    (void)outbuf; (void)outlen; (void)seq;
+    if (size < 1 || data[0] != PATH_ASK_VER) return ESP_OK;
+    path_answer_children();
+    return ESP_OK;
+}
+
+/* The parent's answer: its proof is this unit's, from the moment it was made.
+ * A proof that is news here is news for the units under this one too, which
+ * are waiting for the same frames: it is passed on at once, so one question
+ * anywhere settles the whole branch below (downwards only: it ends at the
+ * last level). */
+static esp_err_t on_path_ans_raw_msg(uint8_t *data, uint32_t size, uint8_t **outbuf, uint32_t *outlen, uint32_t seq)
+{
+    (void)outbuf; (void)outlen; (void)seq;
+    if (size < 3 || data[0] != PATH_ASK_VER) return ESP_OK;
+    const uint32_t age = ((uint32_t)data[1] << 8) | data[2];
+    const uint32_t now_s = (uint32_t)(now_ms() / 1000) + 1;
+    s_parent_ans_s = now_s;
+    if (age == PATH_AGE_NONE) return ESP_OK;
+    const uint32_t made_s = now_s > age ? now_s - age : 1;
+    const uint32_t heard = s_last_downlink_s, told = s_parent_proof_s;
+    const uint32_t had = heard > told ? heard : told;
+    if (made_s > told) s_parent_proof_s = made_s;
+    if (made_s > had + 3) path_answer_children(); /* 3 s: the same proof told twice is not news */
+    return ESP_OK;
+}
+
 /* NULL-terminated: the library walks the array until raw_process == NULL. */
 static const esp_mesh_lite_raw_msg_action_t s_raw_actions[] = {
     {MESH_UPLINK_MSG_ID,   0, on_uplink_raw_msg},
     {MESH_DOWNLINK_MSG_ID, 0, on_downlink_raw_msg},
+    {MESH_PATH_ASK_MSG_ID, 0, on_path_ask_raw_msg},
+    {MESH_PATH_ANS_MSG_ID, 0, on_path_ans_raw_msg},
     {0, 0, NULL},
 };
 

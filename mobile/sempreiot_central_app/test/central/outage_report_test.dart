@@ -193,6 +193,23 @@ void main() {
       expect(line.outage!.end, 4);
     });
 
+    test('a move that came back by another unit, with no restart, is news',
+        () async {
+      await send(const SafrOutageReportPayload(
+        duration: Duration(seconds: 44),
+        cause: SafrOutageCause.moved,
+        rescues: 1,
+        end: SafrOutageEnd.rescued,
+        moveTo: better,
+        moveFrom: parent,
+        pathBefore: -86,
+        pathAfter: -71,
+      ));
+      final r = await rows();
+      expect(r.single.severity, 0);
+      expect(panelEventOf(r.single, nameOf)!.kind, PanelEventKind.info);
+    });
+
     test('a move that went wrong is a trouble that says it left by itself',
         () async {
       await send(const SafrOutageReportPayload(

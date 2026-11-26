@@ -819,9 +819,11 @@ class SafrIngestService {
           receivedAt: now,
           deviceMac: frame.srcMac,
           msgType: SafrMsgType.outageReport.wire,
-          // Trouble: the unit was unreachable for that long. A move to a
-          // better path that worked is news (v3.15).
-          severity: p.cleanMove ? 0 : 1,
+          // Trouble: the unit was unreachable for that long. A unit that left
+          // its parent by itself for a better path is the network re-forming:
+          // news, however the move ended, unless it had to restart (v3.15;
+          // 2026-11-25: a reorganisation is never a PROBLEMA).
+          severity: p.reorganisation ? 0 : 1,
           packetId: Value(packetId),
           detailJson: jsonEncode({
             'kind': 'outage',

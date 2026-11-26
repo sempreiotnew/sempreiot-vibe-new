@@ -1030,6 +1030,47 @@ the building above with the bench times: the tree re-formed by itself and was ju
 on the map, no console captured). Not yet run with the production times. The −80 line, the 5 dB
 margin after a join and `ALARM` were written later the same day: host-tested, **not run on units**.*
 
+#### 7.16.1 Asking the parent before leaving it *(2026-11-25)*
+
+A unit used to judge its path by listening only: the board's HEARTBEAT comes down every 15 s and each
+unit passes it on **once**, to all its children, with no second try. Two lost in a row were 30 s of
+silence, and a unit whose parent's advert did not vouch for a path at that moment left a parent that
+worked (bench, 2026-11-25: "ficou 44 s sem caminho" on a table where every unit heard 8 of 8).
+
+A unit now **asks** before it decides. This is not a SAFR frame: it is two raw messages of the mesh
+link itself, between a unit and its parent, like the two that carry SAFR frames up and down.
+
+| Message | Mesh-Lite raw id | Direction | Payload |
+|---|---|---|---|
+| ASK | `0x53414651` ("SAFQ") | child → its parent | `VERSION = 1` (1 byte) |
+| ANSWER | `0x53414641` ("SAFA") | parent → **all** its children | `VERSION = 1` ‖ `AGE_S` u16 big-endian (3 bytes) |
+
+`AGE_S` = how many seconds ago the parent had **proof of a path**: `0` for the root with its session to
+the board; for any other unit, since the last frame of the central that came down to it or since the
+proof its own parent answered with, whichever is newer; `0xFFFF` = none.
+
+**Rule.**
+
+- 20 s with nothing from the central: the unit asks, 3 times, 3 s apart (then once every 30 s while
+  it stays where it is).
+- The parent's proof is the unit's own, from the moment it was made: the 30 s start over from there,
+  the unit stays, nothing is recorded and nothing is reported. A unit that learns a newer proof this
+  way passes it on to its own children at once, so one question settles the whole branch below.
+- 30 s with no proof, and the parent **answered** within the last 10 s (it has nothing newer either):
+  the parent itself says it has no path — the unit goes to a neighbour that has one, whatever the
+  parent's advert says.
+- 30 s with no proof and **no answer** (a parent on a firmware before this one, or gone): the rule as
+  it was — it leaves only if the parent's advert does not vouch for a path.
+
+Not touched: nobody in reach with a path = the unit stays; 60 s with no *frame* actually coming down
+(doubling to 10 min) = the unit looks for another parent whatever the answers said; 2 minutes with no
+frame = the restart (§7.17). The messages are not authenticated beyond the mesh's own Wi-Fi key: a
+false "yes" can hold a unit for those 60 s at most, a false "no" changes nothing unless the central
+has been silent for 30 s.
+
+*Written 2026-11-25; the node image builds. **Not run on units.** It helps only between two units that
+both run it.*
+
 ---
 
 ### 7.17 OUTAGE_REPORT — `MSG_TYPE 0x19` (uplink, mains unit → central) — payload 12 bytes, 26 for a move *(v3.14, 2026-11-23; v3.15, 2026-11-24)*
@@ -1071,8 +1112,9 @@ it did not get there. A move that became an outage (20 s with no proof) is repor
 above, with `CAUSE 6` as how it began; if the unit restarted itself meanwhile, the fourteen bytes
 are not kept and the report is `VERSION 1` with `CAUSE 6`. The units under it report as before
 (`CAUSE 3`): that they were under a unit that was moving is read at the central, from the two
-reports standing in the same seconds. A central reads a `VERSION 2` with `END 4` and no restart
-as news, not as a trouble.
+reports standing in the same seconds. A central reads `CAUSE 6` with no restart as news, not as
+a trouble, however the move ended *(2026-11-25: a reorganisation is never listed as a problem; it
+was "`VERSION 2` with `END 4` and no restart")*.
 
 **How.** `F_ACK_REQ`, `DST_MAC` broadcast: sent again with the **same `MSG_ID`** (fresh `MSG_CTR`)
 until the central's ACK comes down — 3 × 2 s, then once a minute, 8 tries in all, then dropped.
