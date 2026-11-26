@@ -1179,15 +1179,37 @@ class _WireDetailScaffold extends ConsumerWidget {
         if (p.faultFlags != 0)
           (
             'Falhas ativas',
-            '0x${p.faultFlags.toRadixString(16)}',
+            '0x${p.faultFlags.toRadixString(16)}'
+                '${_faultNames(p.faultFlags)}',
             'Bitmask de todas as falhas simultâneas; FAULT_CODE indica a '
                 'principal.',
           ),
       ];
 
+  /// " · Temperatura · Sensor molhado": the FAULT_FLAGS bits by name
+  /// (§7.1.5).
+  String _faultNames(int flags) {
+    final names = [
+      if (flags & v2p.fltSmokeSensor != 0) 'Sensor de fumaça',
+      if (flags & v2p.fltTempSensor != 0) 'Sensor de temperatura',
+      if (flags & v2p.fltBattCritical != 0) 'Bateria crítica',
+      if (flags & v2p.fltMeshLost != 0) 'Rede perdida',
+      if (flags & v2p.fltRelayFail != 0) 'Relé',
+      if (flags & v2p.fltSensorWet != 0) 'Sensor molhado',
+    ];
+    return names.isEmpty ? '' : ' · ${names.join(' · ')}';
+  }
+
   String? _eventCodeExplain(v2p.SafrEventCode c) => switch (c) {
         v2p.SafrEventCode.smokeAlarm => 'Fumaça acima do limiar de alarme.',
-        v2p.SafrEventCode.heatAlarm => 'Temperatura de alarme.',
+        v2p.SafrEventCode.heatAlarm =>
+          'Calor — temperatura fixa: leitura ≥ 57,0 °C (§7.1.6).',
+        v2p.SafrEventCode.heatRiseAlarm =>
+          'Calor — subida rápida: 8,0 °C em 60 s (§7.1.6). O campo '
+              'Temperatura é a leitura que disparou.',
+        v2p.SafrEventCode.sensorWet =>
+          'Sensor molhado: umidade ≥ 99,7 % — as leituras da unidade não '
+              'são confiáveis. Limpa com RESTORE de FAULT_CODE 6.',
         v2p.SafrEventCode.smokeRising => 'Fumaça subindo — pré-alarme.',
         v2p.SafrEventCode.manualTest =>
           'Teste manual (botão) — distinto de alarme real (NFPA 72).',
@@ -1227,6 +1249,12 @@ class _WireDetailScaffold extends ConsumerWidget {
               'Temperatura',
               '${(p.tempTenths! / 10).toStringAsFixed(1)} °C',
               null
+            ),
+          if (p.humidityPct != null)
+            (
+              'Umidade',
+              '${p.humidityPct}%',
+              'HUMIDITY (v3.16, §7.3): umidade relativa, em % inteiros.',
             ),
           (
             'RSSI → pai',

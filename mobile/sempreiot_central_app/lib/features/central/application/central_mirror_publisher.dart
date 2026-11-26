@@ -684,6 +684,8 @@ MirrorAlarm _alarmOf(MeshDevice d, LabelIndex labels) => MirrorAlarm(
       address: labels.name(SafrLabelKind.address, d.addressId),
       productCode: d.productCode,
       leaf: d.role == SafrNodeRole.leaf.wire,
+      code: d.alarmCode,
+      tempTenths: d.alarmTempTenths,
     );
 
 /// Central mode only: runs [CentralMirrorPublisher] on the tablet's live

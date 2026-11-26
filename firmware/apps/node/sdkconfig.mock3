@@ -1,0 +1,6 @@
+# BENCH ONLY (docs/ota/before-production.md item 13): a node whose temperature and humidity are
+# scripted — 100 % humidity for 60 s: sensor molhado, 180 s after every boot.
+# firmware/build.sh node --mock 3  ->  apps/node/build-mock3
+CONFIG_SIOT_FEATURE_SENSING=y
+CONFIG_SIOT_SENSOR_MOCK=y
+CONFIG_SIOT_SENSOR_MOCK_SCENARIO=3

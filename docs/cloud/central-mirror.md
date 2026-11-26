@@ -212,6 +212,22 @@ joins in the middle of a test (or asks for the snapshot again after a lost batch
 the clocks, the ticks and the Central's tally, not only with what moves from then on. The tracker on
 the phone ignores a step it has already passed, so a snapshot older than the events never goes back.
 
+**Heat and humidity (2026-11-26, protocol 3.16).** A unit that ever sent a reading also says `temp`
+(°C × 10), `hum` (whole %, absent when the frame carried none) and `tempAt` (when the central
+received it) — its last reading, as the tablet's Dispositivo screen shows it, with its age. They
+change on every heartbeat, so they travel as `rssi` and `lastSeen` do: with the next snapshot, every
+30 s at most, never a snapshot of their own. What the screen *says* of the reading does change the
+map and is published at once: `rising` (the central's own stored points show ≥ 4.0 °C within 60 s —
+the amber pill; the phone does not compute it), `alarmCode` + `alarmTemp` (why the alarm is held:
+the EVENT_CODE of the newest ALARM and its TEMP — a heat alarm reads "Calor — 58 °C" and turns the
+pill red) and `wet` (the unit said `SENSOR_WET` and has not said it cleared). An older phone ignores
+them; an older central does not send them and the phone shows no pill and no reading. About 60 bytes
+more per unit that has the sensor.
+**The chart is not mirrored**: the last hour of points lives in the tablet's `DeviceReadings` table,
+and sending it needs a request/answer on a topic of its own (as `ota/history`) and so an IoT policy
+change — not built. The phone's Dispositivo screen shows the current values and says the chart is at
+the central.
+
 When it is published, while watched:
 
 - on `hello`;
@@ -576,6 +592,12 @@ Principal needs without watching the live map — the numbers and the last event
   product code) and `leaf` = 1 (a battery unit): what a phone needs to draw the unit itself — its 3D
   model, in alarm, with its name and where it is — before it has the central's map. An older phone
   ignores them; an older central does not send them and the phone draws the unit without its model.
+- *(2026-11-26)* Each entry of `alarms` may also say `code` (the EVENT_CODE of the newest ALARM of
+  the latch) and `temp` (its TEMP, °C × 10): a heat alarm's tile then reads "Calor — 58 °C" or
+  "Calor — subida rápida, 41 °C" instead of "em alarme · há 5 min". A `tr` entry may say `w` =
+  `wet`: the unit said `SENSOR_WET` (protocol §7.1.2) — listed as "Sensor molhado". **An older
+  phone reads any `w` that is not `battery` as "sem comunicação"**, so on an app older than this a
+  wet sensor is listed with the wrong reason until the phone is updated.
 - `n` units installed (heard at least once) · `nt` units that need attention — not heard, or battery
   under 20 %, what the Rede legend already flags; what a "trouble" finally is waits for the product's
   definition · `tr` the first 10 of them, by name and why (`offline` | `battery`) · `ev` the last

@@ -78,6 +78,14 @@ class MeshDevices extends Table {
   // cleared ONLY by operator RESET. Survives restarts by design.
   IntColumn get alarmLatched => integer().withDefault(const Constant(0))();
   DateTimeColumn get alarmLatchedAt => dateTime().nullable()();
+  // Why the alarm is held (schema 17): the EVENT_CODE of the newest ALARM
+  // of this latch and the TEMP it carried (°C × 10) — "Calor — 58 °C" on
+  // Principal, the red temperature pill. Cleared with the latch.
+  IntColumn get alarmCode => integer().nullable()();
+  IntColumn get alarmTempTenths => integer().nullable()();
+  // SENSOR_WET trouble (protocol §7.1.2 0x0E, v3.16): 1 from the TROUBLE
+  // until the RESTORE that carries FAULT_CODE 6.
+  IntColumn get sensorWet => integer().withDefault(const Constant(0))();
   // v3.2 DEVICE_TABLE mirror (spec §7.12, lifecycle §3): the board's view of
   // this MAC. boardState: 0 expected · 1 online · 2 missing · 3 retired,
   // null = not (yet) in the board's table. boardFlags: SafrDeviceFlags bits.
@@ -211,6 +219,24 @@ class DeviceLabels extends Table {
   Set<Column> get primaryKey => {kind, labelId};
 }
 
+/// Temperature and humidity as the units reported them (phase 5 brief
+/// §4.6, protocol §7.3 / §7.1 v3.16): one row per accepted frame that
+/// carries a temperature — a HEARTBEAT, or an EVENT, whose TEMP is not
+/// n/a. Nothing is computed or filled in: a gap in the frames is a gap
+/// here. Kept [readingRetention] per unit.
+class DeviceReadings extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get deviceMac => text()();
+
+  /// When the tablet received the frame (UTC).
+  DateTimeColumn get at => dateTime()();
+  IntColumn get tempTenths => integer()(); // °C × 10
+  IntColumn get humidityPct => integer().nullable()(); // whole %, null = n/a
+}
+
+/// How long a unit's readings are kept.
+const readingRetention = Duration(hours: 24);
+
 @DriftDatabase(tables: [
   SerialPackets,
   DeviceMetadata,
@@ -221,6 +247,7 @@ class DeviceLabels extends Table {
   OtaRunUnits,
   SystemTests,
   DeviceLabels,
+  DeviceReadings,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(driftDatabase(name: 'sempreiot'));
@@ -229,7 +256,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 16;
+  int get schemaVersion => 17;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -239,6 +266,7 @@ class AppDatabase extends _$AppDatabase {
             'CREATE INDEX idx_received_at ON serial_packets(received_at DESC)',
           );
           await _createDeviceEventIndexes();
+          await _createReadingIndex();
           await seedDefaultMetadata();
         },
         onUpgrade: (m, from, to) async {
@@ -341,6 +369,25 @@ class AppDatabase extends _$AppDatabase {
                   'ALTER TABLE mesh_devices DROP COLUMN link_degraded');
             }
           }
+          if (from < 17) {
+            // Heat and humidity (phase 5, protocol 3.16): the readings
+            // history, why an alarm is held, and the SENSOR_WET trouble.
+            // Each step only when absent (the migration tests take a file
+            // of this version back to an older one).
+            if (!await _hasTable('device_readings')) {
+              await m.createTable(deviceReadings);
+            }
+            await _createReadingIndex();
+            if (!await _hasColumn('mesh_devices', 'alarm_code')) {
+              await m.addColumn(meshDevices, meshDevices.alarmCode);
+            }
+            if (!await _hasColumn('mesh_devices', 'alarm_temp_tenths')) {
+              await m.addColumn(meshDevices, meshDevices.alarmTempTenths);
+            }
+            if (!await _hasColumn('mesh_devices', 'sensor_wet')) {
+              await m.addColumn(meshDevices, meshDevices.sensorWet);
+            }
+          }
         },
       );
 
@@ -371,6 +418,58 @@ class AppDatabase extends _$AppDatabase {
       'ON device_events(severity)',
     );
   }
+
+  Future<void> _createReadingIndex() => customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_dev_readings_mac_at '
+        'ON device_readings(device_mac, at)',
+      );
+
+  /// One reading of [mac], received at [at]; the unit's rows older than
+  /// [readingRetention] leave in the same step.
+  Future<void> addReading({
+    required String mac,
+    required DateTime at,
+    required int tempTenths,
+    int? humidityPct,
+  }) async {
+    await into(deviceReadings).insert(DeviceReadingsCompanion.insert(
+      deviceMac: mac,
+      at: at,
+      tempTenths: tempTenths,
+      humidityPct: Value(humidityPct),
+    ));
+    await (delete(deviceReadings)
+          ..where((t) =>
+              t.deviceMac.equals(mac) &
+              t.at.isSmallerThanValue(at.subtract(readingRetention))))
+        .go();
+  }
+
+  /// Readings older than [readingRetention] of every unit — the ones of a
+  /// unit that stopped sending are not pruned by [addReading]. At startup.
+  Future<int> pruneReadings(DateTime now) => (delete(deviceReadings)
+        ..where((t) => t.at.isSmallerThanValue(now.subtract(readingRetention))))
+      .go();
+
+  /// The readings of [mac] received since [since], oldest first, live.
+  Stream<List<DeviceReading>> watchReadings(String mac, DateTime since) =>
+      (select(deviceReadings)
+            ..where((t) =>
+                t.deviceMac.equals(mac) & t.at.isBiggerOrEqualValue(since))
+            ..orderBy([(t) => OrderingTerm.asc(t.at), (t) => OrderingTerm.asc(t.id)]))
+          .watch();
+
+  /// For every unit: its newest reading and the ones of the [window]
+  /// before it, oldest first, live — the last value and what the
+  /// "subindo" rule looks at.
+  Stream<List<DeviceReading>> watchLatestReadings(Duration window) =>
+      (select(deviceReadings)
+            ..where((t) => CustomExpression<bool>(
+                'at >= (SELECT MAX(n.at) FROM device_readings n '
+                'WHERE n.device_mac = device_readings.device_mac) - '
+                '${window.inSeconds}'))
+            ..orderBy([(t) => OrderingTerm.asc(t.at), (t) => OrderingTerm.asc(t.id)]))
+          .watch();
 
   Future<void> deleteOlderThan(DateTime cutoff) async {
     await (delete(serialPackets)
@@ -417,12 +516,14 @@ class AppDatabase extends _$AppDatabase {
   /// / endereçamento tables and the event feed. Called whenever the central
   /// changes identity — "Desvincular", or a code with another SYSTEM_ID
   /// adopted — so the next installation starts empty and never inherits the
-  /// units of the one before (lifecycle §5 N). Audit, OTA history, system
+  /// units of the one before (lifecycle §5 N) — their temperature history
+  /// included. Audit, OTA history, system
   /// tests and raw packets stay: they are this tablet's record.
   Future<void> forgetInstallationUnits() => transaction(() async {
         await delete(meshDevices).go();
         await delete(deviceLabels).go();
         await delete(deviceEvents).go();
+        await delete(deviceReadings).go();
       });
 
   /// Wipes the mesh device registry (the Rede map). Live devices
@@ -551,6 +652,8 @@ class AppDatabase extends _$AppDatabase {
     await query.write(const MeshDevicesCompanion(
       alarmLatched: Value(0),
       alarmLatchedAt: Value(null),
+      alarmCode: Value(null),
+      alarmTempTenths: Value(null),
     ));
   }
 }

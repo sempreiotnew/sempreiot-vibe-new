@@ -68,6 +68,13 @@ here. Do **not** keep divergent layout comments in code — cite this file inste
   it gets back in, every timer: only what it reports. Additive, `VER` unchanged; a report that is
   not about a move is `VERSION 1`, byte for byte as in 3.14; an older tablet reads the first twelve
   bytes of a `VERSION 2`. *Built and host-tested 2026-11-24, **not yet run on units**.*
+  Revision **3.16** (2026-11-26, `docs/phases-development/phase5-heat-humidity-sensing-brief.md`) is
+  the **heat and humidity sensing** of the HDC2080: two EVENT_CODEs — `HEAT_RISE_ALARM` (`0x0D`, the
+  rate-of-rise alarm; `HEAT_ALARM` `0x02` stays the fixed-temperature one) and `SENSOR_WET` (`0x0E`,
+  a TROUBLE: humidity at saturation) with its fault bit (§7.1.5 bit5) — and `HUMIDITY` appended to
+  the HEARTBEAT at offset 23 (§7.3), a battery unit's heartbeat growing from 20 to 24 bytes with the
+  three mains-only bytes sent as "nothing". Additive, `VER` unchanged: an older central shows the two
+  codes as unknown events of their severity and reads the first bytes of the longer heartbeat.
 - Status: implemented (uplink + downlink + journal backfill); v3.2 additions: implemented, bench pending;
   v3.3: implemented; **v3.4: specified, firmware Phase 2 (`docs/phases-development/phase2-leaf-brief.md`)**
 - Supersedes: SAFR v2 (`VER = 0x02` — decode-only for stored packets) and
@@ -369,7 +376,7 @@ Sentinels for "not available": `0xFF` (uint8), `0xFFFF` (uint16), `0x7FFF` (int1
 | MSG_TYPE | Name | Direction | Payload |
 |----------|------|-----------|---------|
 | 0x01 | EVENT | uplink | 17 bytes |
-| 0x02 | HEARTBEAT | uplink; the board's own copy also downlink (§7.3) | 20 bytes |
+| 0x02 | HEARTBEAT | uplink; the board's own copy also downlink (§7.3) | 20 bytes (up to 24 from v3.16, §7.3) |
 | 0x03 | TOPOLOGY | uplink | 14 + 7·children |
 | 0x04 | ACK | both | 4 bytes |
 | 0x05 | COMMAND | downlink | 2 + n bytes |
@@ -440,6 +447,8 @@ The core message: something changed at a device.
 | 0x0A | AC_LOST (on battery — GPIO6 BOOST) | TROUBLE | latches for root/repeaters ⛑ NFPA 72 §23.16 |
 | 0x0B | RESTORE (condition cleared; pairs with prior code in FAULT_CODE) | OK | |
 | 0x0C | **RF_INTERFERENCE** (RF path degraded/jammed) | TROUBLE | ⛑ EN 54-25: interference on the radio path must be detected and signaled |
+| 0x0D | **HEAT_RISE_ALARM** *(v3.16)* | ALARM | rate of rise: the temperature went up **8.0 °C within 60 s** (§7.1.6). `HEAT_ALARM` 0x02 is the fixed-temperature alarm (**≥ 57.0 °C**). Two codes so the feed says why it fired |
+| 0x0E | **SENSOR_WET** *(v3.16)* | TROUBLE | relative humidity **≥ 99.7 %** — the sensing element is saturated and the unit's readings are not to be trusted. Cleared by RESTORE with `FAULT_CODE 6` once below 95 % (§7.1.6) |
 
 #### 7.1.3 PWR_FLAGS (maps 1:1 to the device GPIOs)
 
@@ -473,6 +482,26 @@ The core message: something changed at a device.
 | bit2 / 3 | BATT_CRITICAL |
 | bit3 / 4 | MESH_LOST |
 | bit4 / 5 | RELAY_FAIL (GPIO12) |
+| bit5 / 6 | SENSOR_WET *(v3.16)* — humidity at saturation (EVENT_CODE 0x0E) |
+
+#### 7.1.6 Heat and humidity rules *(v3.16)*
+
+Decided **on the unit**, with the full-resolution reading, never by the central: an alarm must not
+depend on the radio. The numbers are fixed in the firmware (not settable from the central) and are
+catalogued, with their status, in `docs/phases-development/phase5-heat-humidity-sensing-brief.md` §4.
+All temperatures in °C; `TEMP` and `HUMIDITY` of the EVENT carry the reading that fired it.
+
+| Rule | Fires | EVENT | Clears |
+|---|---|---|---|
+| Fixed temperature | reading ≥ 57.0 °C on 3 consecutive 1 s samples | ALARM `HEAT_ALARM` 0x02 | latched at the central until RESET (§7.1.4). The unit sends RESTORE (`FAULT_CODE 0`) once below 54.0 °C for 60 s — a line in the feed, never the end of the latch |
+| Rate of rise | mean of the 4 newest samples ≥ 8.0 °C above the reference taken 60 s earlier | ALARM `HEAT_RISE_ALARM` 0x0D | as above |
+| Humidity | reading ≥ 99.7 % on 10 consecutive 1 s samples (mains unit) or on 2 consecutive 60 s wakes (battery unit) | TROUBLE `SENSOR_WET` 0x0E, `FAULT_FLAGS` bit5 | RESTORE, `FAULT_CODE 6`, once < 95.0 % for the same count |
+| Sensor failure | wrong identity, 3 failed I2C exchanges in a row, or the sensor lost its configuration | TROUBLE `SENSOR_FAULT` 0x08, `FAULT_FLAGS` bit1 | RESTORE, `FAULT_CODE 2`, after 3 good readings |
+
+The amount of the rise is **not** on the wire: a rate-of-rise alarm is shown as "subida rápida" with
+the reading. No rate of rise is evaluated during the first 120 s after power-up. A battery unit
+measures while it sleeps (the sensor samples every second and wakes it): its heat alarms are not
+tied to the 60 s wake (§12.2).
 
 ### 7.2 Critical-event delivery ⛑ NFPA 72 §23.16 / EN 54-25
 
@@ -491,7 +520,7 @@ For EVENT frames with severity ALARM or TROUBLE:
 
 The v2 behavior ("3 retries then give up") is **non-compliant and removed**.
 
-### 7.3 HEARTBEAT — `MSG_TYPE 0x02` (uplink) — payload 20 bytes (21 from a v3.6 node, 22 from v3.7)
+### 7.3 HEARTBEAT — `MSG_TYPE 0x02` (uplink) — payload 20 bytes (21 from a v3.6 node, 22 from v3.7, 23 from v3.11, **24 from v3.16**)
 
 Supervision beacon (§9.2). Never sets `F_ACK_REQ`; never inserted into the
 Events feed — it silently updates the device registry (battery, RSSI, last-seen).
@@ -522,6 +551,15 @@ HEARTBEAT is never relayed downward: uplink frames go root → central only.
 | 20 | 1 | DL_HEARD *(v3.6, powered nodes only)* — board HEARTBEATs heard in the last 120 s: 0–8 (8 expected, capped); `0xFF` = not 120 s on this link yet | the **downlink loss** of the unit's link, measured where it happens (§9.4) |
 | 21 | 1 | DL_MAP *(v3.7, powered nodes only)* — the last 8 board-heartbeat **slots**, bit 0 the most recent, 1 = heard, 0 = lost; meaningless (0) while DL_HEARD is `0xFF` | **which** beats were lost: the central draws each lost one as a gap at its time |
 | 22 | 1 | BOARD_RSSI *(v3.11, powered nodes only)* — int8 dBm: how this unit hears the **board's access point**; `0x7F` = not heard in the last 200 s | what the unit's link would be **if it were the root**: the central compares it with the root's and tells the operator when another unit would be clearly better (§7.6 `ROOT_TAKE`) |
+| 23 | 1 | HUMIDITY *(v3.16, every unit that has the sensor)* — relative humidity, whole %, `0xFF` = n/a | the reading between events: the central's device screen and its temperature / humidity chart are drawn from the heartbeats |
+
+**HUMIDITY at a fixed offset (v3.16, 2026-11-26).** Bytes 20–22 are "powered nodes only", and a
+battery unit's heartbeat ended at byte 19. So that `HUMIDITY` sits at **one** offset for every
+sender, a v3.16 battery unit sends a **24-byte** heartbeat with the three bytes in between saying
+nothing: `DL_HEARD = 0xFF`, `DL_MAP = 0`, `BOARD_RSSI = 0x7F` — exactly what a receiver already
+reads as "not there". A receiver takes any length ≥ 20 and reads only the bytes that are present.
+`TEMP` (offset 10) was already there; from v3.16 a unit with the sensor fills it (it was `0x7FFF`
+on mains units).
 
 **DL_HEARD (v3.6, 2026-10-26).** RSSI says how strong the parent is heard; nothing said how many
 frames actually arrive. Every hop down the mesh is one broadcast with no retry (§9.1), so a unit at

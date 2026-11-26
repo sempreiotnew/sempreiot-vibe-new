@@ -11,6 +11,10 @@ from pathlib import Path
 import yaml
 
 PIN_FIELDS = ("led_r", "led_g", "led_b", "button", "acok", "uart0_tx", "uart0_rx", "usb_dm", "usb_dp")
+# Optional pins: -1 (not present) when a model does not name them. The detector's sensor bus
+# (docs/spec/definition-detector.md; phase5-heat-humidity-sensing-brief.md): I2C, the level
+# shifter's enable and the sensor's interrupt (wake) line.
+OPT_PIN_FIELDS = ("i2c_sda", "i2c_scl", "i2c_en", "sensor_int")
 
 
 def c_bool(v) -> str:
@@ -70,6 +74,8 @@ def main(argv):
         for f in PIN_FIELDS:
             lines.append(f"        .{f} = {int(pins[f])},")
         lines.append(f"        .led_active_low = {c_bool(pins.get('led_active_low', False))},")
+        for f in OPT_PIN_FIELDS:
+            lines.append(f"        .{f} = {int(pins.get(f, -1))},")
         lines.append("    },")
     lines += ["};", ""]
     dst.parent.mkdir(parents=True, exist_ok=True)

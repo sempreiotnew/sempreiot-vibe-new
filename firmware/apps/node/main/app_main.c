@@ -27,6 +27,9 @@
 #if CONFIG_SIOT_FEATURE_LEAFMGR
 #include "siot_leafmgr.h"
 #endif
+#if CONFIG_SIOT_FEATURE_SENSING
+#include "siot_sensing.h"
+#endif
 
 static const char *TAG = "node";
 #define IS_BOARD false
@@ -107,6 +110,12 @@ void app_main(void)
     if (siot_survey_init(0xFF) != ESP_OK) ESP_LOGW(TAG, "survey mode unavailable (ESP-NOW init failed)");
 #if CONFIG_SIOT_FEATURE_LEAFMGR
     if (siot_leafmgr_init() != ESP_OK) ESP_LOGW(TAG, "leaf manager unavailable"); /* parent role, protocol §12.11 */
+#endif
+#if CONFIG_SIOT_FEATURE_SENSING
+    { /* protocol §7.1.6: a model without the sensor says NOT_SUPPORTED and reports nothing */
+        const esp_err_t sense = siot_sensing_init();
+        if (sense != ESP_OK && sense != ESP_ERR_NOT_SUPPORTED) ESP_LOGE(TAG, "heat / humidity sensing unavailable: %s", esp_err_to_name(sense));
+    }
 #endif
 #if CONFIG_SIOT_FEATURE_OTA
     if (siot_ota_node_init() != ESP_OK) ESP_LOGE(TAG, "firmware update unavailable"); /* protocol §13.4 */

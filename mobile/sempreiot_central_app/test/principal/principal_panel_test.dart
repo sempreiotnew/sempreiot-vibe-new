@@ -97,6 +97,7 @@ void main() {
         alarmLatched: 1,
         alarmLatchedAt: now.subtract(const Duration(minutes: 2)),
         boardFlags: 0,
+        sensorWet: 0,
       );
 
   const tiles = [

@@ -667,6 +667,13 @@ TopologyNode _copy(
       dlHeard: n.dlHeard,
       boardRssi: n.boardRssi,
       suggestedRoot: suggestedRoot ?? n.suggestedRoot,
+      tempTenths: n.tempTenths,
+      humidityPct: n.humidityPct,
+      readingAt: n.readingAt,
+      tempRising: n.tempRising,
+      alarmCode: n.alarmCode,
+      alarmTempTenths: n.alarmTempTenths,
+      sensorWet: n.sensorWet,
     );
 
 /// The mirror of the viewed central; rebuilt (and the old one unsubscribed)

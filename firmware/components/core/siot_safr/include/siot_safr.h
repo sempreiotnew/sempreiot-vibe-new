@@ -100,6 +100,8 @@ extern "C" {
 #define SAFR_EC_AC_LOST       0x0A
 #define SAFR_EC_RESTORE       0x0B
 #define SAFR_EC_RF_INTERF     0x0C
+#define SAFR_EC_HEAT_RISE     0x0D /* v3.16: rate-of-rise alarm (0x02 HEAT_ALARM is the fixed temperature) */
+#define SAFR_EC_SENSOR_WET    0x0E /* v3.16: humidity at saturation, TROUBLE */
 
 /* EVENT payload length (spec §7.1: v3 = 15 + DEV_SEQ) */
 #define SAFR_EVENT_LEN  17
@@ -123,6 +125,10 @@ extern "C" {
 #define SAFR_FLT_BATT_CRIT    0x04
 #define SAFR_FLT_MESH_LOST    0x08
 #define SAFR_FLT_RELAY_FAIL   0x10
+#define SAFR_FLT_SENSOR_WET   0x20 /* v3.16 */
+/* FAULT_CODE values (§7.1.5): the bit's position + 1 */
+#define SAFR_FC_TEMP_SENSOR    2
+#define SAFR_FC_SENSOR_WET     6
 
 /* NODE_ROLE */
 #define SAFR_ROLE_ROOT  0

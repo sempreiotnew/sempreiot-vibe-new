@@ -56,6 +56,19 @@ typedef uint8_t (*siot_netcore_cmd_hook_t)(uint8_t cmd, const uint8_t *args, siz
                                            uint8_t *detail, void *ctx);
 void siot_netcore_set_command_hook(siot_netcore_cmd_hook_t hook, void *ctx);
 
+/* ---- seams for the unit's own sensing (features/siot_sensing, protocol §7.1.6) ---- */
+
+/* What this unit measures, asked whenever netcore builds an EVENT or a
+ * HEARTBEAT: fill TEMP (tenths of °C, 0x7FFF = n/a), HUMIDITY (whole %,
+ * 0xFF = n/a) and FAULT_FLAGS (§7.1.5). Without a hook all three say "n/a". */
+typedef void (*siot_netcore_env_hook_t)(int16_t *temp_x10, uint8_t *humidity, uint8_t *fault_flags, void *ctx);
+void siot_netcore_set_env_hook(siot_netcore_env_hook_t hook, void *ctx);
+
+/* An EVENT of this unit's own. ALARM latches and is re-announced every 60 s
+ * until RESET, like every alarm; ALARM and TROUBLE ask for the central's ACK.
+ * Never call it from the env hook. */
+void siot_netcore_raise_event(uint8_t evt_type, uint8_t evt_code, uint8_t fault_code);
+
 /* This unit is in alarm (latched until RESET). */
 bool     siot_netcore_alarm_active(void);
 

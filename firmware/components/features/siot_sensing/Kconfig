@@ -1,0 +1,27 @@
+menu "SempreIoT heat and humidity sensing (siot_sensing)"
+
+    config SIOT_FEATURE_SENSING
+        bool "Heat and humidity rules on this unit (protocol section 7.1.6)"
+        default n
+        help
+            Samples the unit's temperature / humidity sensor once per second
+            and raises HEAT_ALARM (57.0 C), HEAT_RISE_ALARM (8.0 C in 60 s),
+            SENSOR_WET (99.7 %) and SENSOR_FAULT; fills TEMP / HUMIDITY in the
+            unit's EVENT and HEARTBEAT. Does nothing on a model whose pin map
+            has no sensor bus. Every number:
+            docs/phases-development/phase5-heat-humidity-sensing-brief.md
+            section 4. Node image; the battery unit's side is not written yet.
+
+    config SIOT_SENSING_DTR_TEST
+        bool "Bench: exercise the sensor's interrupt pin on a unit that is awake"
+        depends on SIOT_FEATURE_SENSING
+        default n
+        help
+            The DTR test, part A (brief section 10.1): every 60 s the
+            temperature threshold of the sensor is re-armed at the current
+            reading + 4.0 C (what a battery unit does at each wake), and every
+            change of the interrupt pin is logged with the status register.
+            Off: the threshold stays at 57 C. Detection on a mains unit never
+            depends on the pin either way.
+
+endmenu

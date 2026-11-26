@@ -806,13 +806,13 @@ static bool rebind_now(void)
     return true;
 }
 
-static void build_heartbeat(uint8_t p[20]);
+static void build_heartbeat(uint8_t p[24]);
 
 /* Sends one frame with F_ACK_REQ and waits ≤ wait_ms for the parent's ACK.
  * Returns true on the hop ACK (§12.6 custody). */
 static bool send_acked(uint8_t msg_type, const uint8_t *payload, size_t len, uint32_t wait_ms, uint8_t extra_flags)
 {
-    uint8_t hb[20];
+    uint8_t hb[24];
     s_ack_wanted = siot_safr_next_msg_id();
     s_ack_hop = s_ack_central = false;
     siot_safr_send(SAFR_BCAST_MAC, msg_type, s_ack_wanted, SAFR_F_ACK_REQ | extra_flags, payload, len);
@@ -861,7 +861,9 @@ void siot_leafcore_send(uint8_t msg_type, const uint8_t *payload, size_t len)
     siot_safr_send(SAFR_BCAST_MAC, msg_type, siot_safr_next_msg_id(), 0, payload, len);
 }
 
-static void build_heartbeat(uint8_t p[20])
+/* 24 bytes since protocol v3.16: HUMIDITY at offset 23, the three mains-only
+ * bytes before it saying "nothing" (§7.3). */
+static void build_heartbeat(uint8_t p[24])
 {
     siot_sensor_reading_t r;
     siot_sensor_read(&r);
@@ -873,6 +875,10 @@ static void build_heartbeat(uint8_t p[20])
     p[12] = (uint8_t)s_rtc.parent_link;
     memcpy(&p[13], s_rtc.parent_mac, 6);
     p[19] = leaf_level();
+    p[20] = SAFR_NA_U8;            /* DL_HEARD: a battery unit hears no board heartbeat */
+    p[21] = 0;                     /* DL_MAP */
+    p[22] = (uint8_t)SAFR_NA_RSSI; /* BOARD_RSSI */
+    p[23] = r.valid ? r.humidity : SAFR_NA_U8;
 }
 
 static void drain_outbox(void)
@@ -932,7 +938,7 @@ static void heartbeat_led(bool sent, bool confirmed)
 static bool heartbeat_cycle(void)
 {
     drain_outbox();
-    uint8_t p[20];
+    uint8_t p[24];
     build_heartbeat(p);
     s_mailbox_left = 0;
     const bool ok = send_acked(SAFR_MSG_HEARTBEAT, p, sizeof(p), SIOT_LEAF_ACK_WAIT_MS, 0);

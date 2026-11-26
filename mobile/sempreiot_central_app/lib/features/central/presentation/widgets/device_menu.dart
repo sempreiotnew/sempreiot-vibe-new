@@ -16,6 +16,8 @@ import '../../application/device_update_controller.dart';
 import '../../application/device_update_source.dart';
 import '../../application/root_election_provider.dart';
 import '../../application/topology_provider.dart';
+import '../../domain/readings/temp_reading.dart';
+import '../screens/device_readings_screen.dart';
 import '../screens/device_settings_screen.dart';
 import 'device_avatar.dart';
 import '../../application/system_test_provider.dart';
@@ -76,6 +78,10 @@ Future<void> showDeviceMenu({
       navigator.push(MaterialPageRoute(
         builder: (_) => DeviceSettingsScreen(mac: node.mac),
       ));
+    case _OpenReadings():
+      navigator.push(MaterialPageRoute(
+        builder: (_) => DeviceReadingsScreen(mac: node.mac),
+      ));
     case _RunCommand(:final kind):
       // The map tells what happens; the popover is gone so it can be seen.
       ref.read(deviceCommandProvider.notifier).run(
@@ -109,6 +115,11 @@ sealed class _DeviceAction {
 
 class _OpenDevice extends _DeviceAction {
   const _OpenDevice();
+}
+
+/// The TEMPERATURA E UMIDADE tile: the unit's readings and their chart.
+class _OpenReadings extends _DeviceAction {
+  const _OpenReadings();
 }
 
 class _RunCommand extends _DeviceAction {
@@ -438,7 +449,10 @@ class _DevicePopover extends ConsumerWidget {
             isRoot: isRoot,
             isCandidate: isCandidate,
           );
-          final facts = _Facts(node: node);
+          final facts = _Facts(
+            node: node,
+            onReadings: () => Navigator.of(context).pop(const _OpenReadings()),
+          );
           final commands = _Commands(
             node: node,
             viewOnly: viewOnly,
@@ -705,8 +719,11 @@ class _Chip extends StatelessWidget {
 // ── Facts ──────────────────────────────────────────────────────────────────
 
 class _Facts extends StatelessWidget {
-  const _Facts({required this.node});
+  const _Facts({required this.node, required this.onReadings});
   final TopologyNode node;
+
+  /// A tap on the TEMPERATURA E UMIDADE tile.
+  final VoidCallback onReadings;
 
   @override
   Widget build(BuildContext context) {
@@ -764,9 +781,191 @@ class _Facts extends StatelessWidget {
         runSpacing: gap,
         children: [
           for (final t in tiles) SizedBox(width: w, child: t),
+          // A unit that measures: both readings in one tile, the full
+          // width, and a tap opens them with the last hour's chart. Never
+          // drawn for a unit that sent no reading.
+          if (node.tempTenths != null)
+            SizedBox(
+              width: c.maxWidth,
+              child: _ReadingsTile(node: node, onTap: onReadings),
+            ),
         ],
       );
     });
+  }
+}
+
+/// TEMPERATURA E UMIDADE: the last reading of both, in one tile that opens
+/// [DeviceReadingsScreen]. Red in a heat alarm, faded when the unit is not
+/// heard — the same reading of the state as the Dispositivos pill.
+class _ReadingsTile extends StatelessWidget {
+  const _ReadingsTile({required this.node, required this.onTap});
+  final TopologyNode node;
+  final VoidCallback onTap;
+
+  static const tileKey = ValueKey('device-menu-readings');
+  static const thermometerKey = ValueKey('device-menu-thermometer');
+  static const dropKey = ValueKey('device-menu-humidity-drop');
+
+  @override
+  Widget build(BuildContext context) {
+    final offline = !node.online;
+    final muted = context.textSecondary.withValues(alpha: 0.7);
+    final tempColor = offline
+        ? muted
+        : node.heatAlarm
+            ? AppColors.error
+            : context.textPrimary;
+    final otherColor = offline ? muted : context.textPrimary;
+    // The thermometer takes the colour of the reading — the scale of the
+    // central's own thermometer on Principal — and red in a heat alarm.
+    final gaugeColor = offline
+        ? muted
+        : node.heatAlarm
+            ? AppColors.error
+            : readingsGaugeColor(node.tempTenths!);
+    final humidity =
+        node.humidityPct == null ? '—' : humidityText(node.humidityPct!);
+    const valueStyle = TextStyle(
+      fontSize: 13,
+      fontWeight: FontWeight.w700,
+      fontFeatures: [FontFeature.tabularFigures()],
+    );
+    return Semantics(
+      button: true,
+      label: 'Temperatura ${tempText(node.tempTenths!)}, umidade $humidity. '
+          'Abrir o gráfico',
+      excludeSemantics: true,
+      child: Material(
+        key: tileKey,
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: _TileFrame(
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.sensors_rounded,
+                              size: 12, color: context.textSecondary),
+                          const SizedBox(width: 5),
+                          Expanded(
+                            child: Text(
+                              'TEMPERATURA E UMIDADE',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: context.textSecondary,
+                                fontSize: 8.5,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.8,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 5),
+                      Row(
+                        children: [
+                          Icon(Icons.thermostat_rounded,
+                              key: thermometerKey, size: 15, color: gaugeColor),
+                          const SizedBox(width: 2),
+                          Flexible(
+                            child: Text(
+                              tempText(node.tempTenths!),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: valueStyle.copyWith(color: tempColor),
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          _HumidityDrop(
+                            key: dropKey,
+                            pct: node.humidityPct,
+                            color: offline ? muted : AppColors.info,
+                          ),
+                          const SizedBox(width: 3),
+                          Flexible(
+                            child: Text(
+                              humidity,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: valueStyle.copyWith(color: otherColor),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Text(
+                        offline && node.readingAt != null
+                            ? 'última leitura ${relativeTime(node.readingAt!)}'
+                            : 'ver o gráfico da última hora',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: context.textSecondary, fontSize: 9.5),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded,
+                    size: 20, color: context.textSecondary),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The colour of a temperature on the thermometer of the readings tile:
+/// green below 30 °C, amber below 50 °C, red from there (as Principal's
+/// "temperatura da central").
+Color readingsGaugeColor(int tempTenths) => tempTenths < 300
+    ? AppColors.success
+    : tempTenths < 500
+        ? AppColors.warning
+        : AppColors.error;
+
+/// How much of the humidity drop is filled: the reading itself, 0..1.
+double humidityDropFill(int? pct) =>
+    pct == null ? 0 : (pct.clamp(0, 100)) / 100;
+
+/// A drop that fills from the bottom with the humidity: empty outline at
+/// 0 %, full at 100 %. Nothing but the reading is drawn — no animation of
+/// its own.
+class _HumidityDrop extends StatelessWidget {
+  const _HumidityDrop({super.key, required this.pct, required this.color});
+  final int? pct;
+  final Color color;
+
+  static const _size = 14.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: _size,
+      height: _size,
+      child: Stack(
+        alignment: Alignment.bottomCenter,
+        children: [
+          Icon(Icons.water_drop_outlined, size: _size, color: color),
+          ClipRect(
+            child: Align(
+              alignment: Alignment.bottomCenter,
+              heightFactor: humidityDropFill(pct),
+              child: Icon(Icons.water_drop, size: _size, color: color),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

@@ -29,6 +29,9 @@ typedef struct {
     int         uart0_tx, uart0_rx;    /* flash / console / bench tablet link */
     int         usb_dm, usb_dp;        /* native USB-Serial-JTAG */
     bool        led_active_low;
+    int         i2c_sda, i2c_scl;      /* sensor bus (detectors); SIOT_PIN_NONE = no sensor bus */
+    int         i2c_en;                /* level-shifter enable, 1 = bus open; SIOT_PIN_NONE = none */
+    int         sensor_int;            /* sensor interrupt, active low, wake-capable; SIOT_PIN_NONE = not wired */
 } siot_board_def_t;
 
 /* Picks the entry for `model` (exact string) and `hw_rev` (an entry with

@@ -34,3 +34,9 @@ CONFIG_SIOT_DEV_MODEL="SIOT-NODE-01"
 
 # Phase 2 feature: parent role for battery leafs (protocol §12.11, features/siot_leafmgr).
 CONFIG_SIOT_FEATURE_LEAFMGR=y
+
+# Heat and humidity sensing (protocol §7.1.6, phase5-heat-humidity-sensing-brief.md): on in the
+# image, active only on a model whose pin map has the sensor bus (SIOT-SMOKE-AC-01). The REAL
+# sensor: a devkit reports nothing. `build.sh node --mock <1|2|3>` builds the scripted one.
+CONFIG_SIOT_FEATURE_SENSING=y
+CONFIG_SIOT_SENSOR_MOCK=n

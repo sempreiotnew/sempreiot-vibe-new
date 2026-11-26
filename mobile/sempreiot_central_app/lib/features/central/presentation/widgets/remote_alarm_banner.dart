@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
-import '../../../../core/utils/relative_time.dart';
 import '../../application/central_mirror_codec.dart';
 import '../../application/central_mirror_viewer.dart';
 import 'device_state_tile.dart';
@@ -97,8 +96,11 @@ class RemoteAlarmTile extends StatelessWidget {
         alarmSince: since,
       ),
       accent: AppColors.error,
+      // A heat alarm says why, with the reading of the event that fired it
+      // ("Calor — 58 °C"); any other alarm reads as before.
       status: Text(
-        since == null ? 'em alarme' : 'em alarme · ${relativeTime(since)}',
+        alarmStatusText(
+            code: alarm.code, tempTenths: alarm.tempTenths, since: since),
         maxLines: 1,
         style: const TextStyle(
           color: AppColors.error,

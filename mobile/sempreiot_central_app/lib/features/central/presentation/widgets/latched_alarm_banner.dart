@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/theme_ext.dart';
-import '../../../../core/utils/relative_time.dart';
 import '../../application/alarm_latch_provider.dart';
 import '../../application/device_command_provider.dart';
 import '../../application/topology_provider.dart';
@@ -202,8 +201,13 @@ class LatchedDeviceTile extends ConsumerWidget {
         alarmSince: since,
       ),
       accent: AppColors.error,
+      // A heat alarm says why, with the reading of the event that fired it
+      // ("Calor — 58 °C"); any other alarm reads as before.
       status: Text(
-        since == null ? 'em alarme' : 'em alarme · ${relativeTime(since)}',
+        alarmStatusText(
+            code: device.alarmCode,
+            tempTenths: device.alarmTempTenths,
+            since: since),
         maxLines: 1,
         style: const TextStyle(
           color: AppColors.error,

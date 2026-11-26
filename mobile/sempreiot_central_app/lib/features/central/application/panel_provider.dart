@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/config/app_config.dart';
 import '../../../core/database/app_database.dart';
+import '../domain/readings/temp_reading.dart';
 import '../domain/safr/safr_v2_frame.dart' show safrCentralMac;
 import '../domain/safr/safr_v2_payloads.dart';
 import 'alarm_latch_provider.dart';
@@ -18,9 +19,10 @@ import 'topology_provider.dart';
 /// table) and on a user's phone (from the central's retained alarm
 /// message, `MirrorPanel`).
 ///
-/// "Needs attention" is what the Rede legend already flags, nothing new: a
-/// unit that is not heard, or one whose battery is under 20 %. What a
-/// trouble finally is waits for the product's definition.
+/// "Needs attention" is what the Rede legend already flags — a unit that is
+/// not heard, or one whose battery is under 20 % — and, since 2026-11-26, a
+/// unit that said its sensor is wet (SENSOR_WET) and has not said it
+/// cleared. What a trouble finally is waits for the product's definition.
 class PanelView {
   const PanelView({
     required this.known,
@@ -60,10 +62,17 @@ String _unitName(TopologyNode n) => n.name?.isNotEmpty == true
         ? n.address!
         : n.mac;
 
-String _eventWords(SafrEventCode code) => switch (code) {
+/// An event in words. [tempTenths]: the EVENT's own TEMP — a heat alarm
+/// says the reading that fired it; [faultCode]: what a RESTORE says cleared.
+String _eventWords(SafrEventCode code, {int? tempTenths, int? faultCode}) =>
+    switch (code) {
       SafrEventCode.none => 'estado normal',
       SafrEventCode.smokeAlarm => 'alarme de fumaça',
-      SafrEventCode.heatAlarm => 'alarme de calor',
+      // "calor — 58 °C" / "calor — subida rápida, 41 °C" (protocol §7.1.6).
+      SafrEventCode.heatAlarm ||
+      SafrEventCode.heatRiseAlarm =>
+        _uncapitalized(heatAlarmWords(code, tempTenths)!),
+      SafrEventCode.sensorWet => _uncapitalized(sensorWetWords),
       SafrEventCode.smokeRising => 'pré-alarme (fumaça subindo)',
       SafrEventCode.manualTest => 'teste manual',
       SafrEventCode.tamper => 'tamper aberto',
@@ -72,7 +81,9 @@ String _eventWords(SafrEventCode code) => switch (code) {
       SafrEventCode.sensorFault => 'falha do sensor',
       SafrEventCode.commFault => 'sem comunicação',
       SafrEventCode.acLost => 'sem energia da rede elétrica',
-      SafrEventCode.restore => 'voltou ao normal',
+      SafrEventCode.restore => faultCode == safrFaultCodeSensorWet
+          ? 'sensor não está mais molhado'
+          : 'voltou ao normal',
       SafrEventCode.rfInterference => 'interferência de rádio',
       SafrEventCode.unknown => 'evento desconhecido',
     };
@@ -84,6 +95,9 @@ String _diagnosticWords(String kind) => switch (kind) {
       'replay' => 'quadro repetido, ignorado',
       _ => 'quadro ilegível',
     };
+
+String _uncapitalized(String s) =>
+    s.isEmpty ? s : s[0].toLowerCase() + s.substring(1);
 
 String _capitalized(String s) =>
     s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
@@ -121,7 +135,12 @@ MirrorPanelEvent? panelEventOf(
   } else if (description is String && description.isNotEmpty) {
     text = central ? _capitalized(description) : '$who — $description';
   } else if (row.eventCode != null) {
-    text = '$who — ${_eventWords(SafrEventCode.fromWire(row.eventCode!))}';
+    final words = _eventWords(
+      SafrEventCode.fromWire(row.eventCode!),
+      tempTenths: (detail['temp_tenths'] as num?)?.toInt(),
+      faultCode: (detail['fault_code'] as num?)?.toInt(),
+    );
+    text = '$who — $words';
   } else {
     text = '$who — evento';
   }
@@ -281,6 +300,10 @@ final localPanelProvider = Provider<PanelView>((ref) {
     if (inAlarm.contains(n.mac)) continue;
     if (!n.online) {
       troubles.add(trouble(n, MirrorTrouble.offline));
+    } else if (n.sensorWet) {
+      // The unit's own trouble (SENSOR_WET, protocol §7.1.2): its readings
+      // are not to be trusted until it says it cleared.
+      troubles.add(trouble(n, MirrorTrouble.wet));
     } else if (n.batteryPct != null && n.batteryPct! < panelLowBatteryPct) {
       troubles.add(trouble(n, MirrorTrouble.battery));
     }

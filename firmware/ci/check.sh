@@ -113,6 +113,17 @@ grep -q '^#define SIOT_PATH_BENCH_TIMES 1' "$FW_DIR/components/net/siot_link/inc
 { grep -qs '^CONFIG_SIOT_BENCH_BOARD_DEAF=y' "$FW_DIR/apps/node/sdkconfig" "$FW_DIR/apps/node/sdkconfig.defaults" \
     || [[ -d "$FW_DIR/apps/node/build-deaf" ]]; } \
     && RELAXED+=("item 12 node: a build that is deaf to the central exists (CONFIG_SIOT_BENCH_BOARD_DEAF; delete apps/node/build-deaf)")
+compgen -G "$FW_DIR/apps/node/build-mock*" > /dev/null \
+    && RELAXED+=("item 13 node: a build with scripted temperature / humidity exists (delete apps/node/build-mock*)")
+for app in node leaf; do
+    cfg="$FW_DIR/apps/$app/sdkconfig"
+    grep -q '^CONFIG_SIOT_FEATURE_SENSING=y' "$cfg" || continue
+    if grep -q '^CONFIG_SIOT_SENSOR_MOCK=y' "$cfg"; then
+        RELAXED+=("item 13 apps/$app: CONFIG_SIOT_SENSOR_MOCK=y — temperature and humidity are scripted, not measured (scenario $(sed -n 's/^CONFIG_SIOT_SENSOR_MOCK_SCENARIO=//p' "$cfg"))")
+    elif ! grep -q '^CONFIG_SIOT_SENSOR_SUPPLY_MV=1800$' "$cfg"; then
+        RELAXED+=("item 14 apps/$app: HDC2080 supply is $(sed -n 's/^CONFIG_SIOT_SENSOR_SUPPLY_MV=//p' "$cfg") mV (development unit) — the product is 1800")
+    fi
+done
 grep -q 'CHANNEL=bench ' "$FW_DIR/tools/ota_release.sh" \
     && RELAXED+=("item 9  Internet releases: one channel, 'bench' — no 'stable' channel for customers yet (ota_release.sh default)")
 

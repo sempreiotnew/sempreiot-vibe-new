@@ -7,6 +7,7 @@ import '../domain/safr/safr_v2_payloads.dart';
 import 'board_signal_provider.dart';
 import 'central_mirror_viewer.dart';
 import 'device_labels_provider.dart';
+import 'device_readings_provider.dart';
 import 'ota_rollout_controller.dart';
 import 'ota_rollout_report.dart';
 import 'serial_link_provider.dart';
@@ -42,7 +43,39 @@ class TopologyNode {
     this.dlHeard,
     this.boardRssi,
     this.suggestedRoot = false,
+    this.tempTenths,
+    this.humidityPct,
+    this.readingAt,
+    this.tempRising = false,
+    this.alarmCode,
+    this.alarmTempTenths,
+    this.sensorWet = false,
   });
+
+  /// The unit's last reading (protocol §7.3 / §7.1, v3.16): temperature in
+  /// °C × 10, humidity in whole %, and when the frame that carried them
+  /// arrived at the central. Null = the unit never sent one.
+  final int? tempTenths;
+  final int? humidityPct;
+  final DateTime? readingAt;
+
+  /// The central's own stored points show ≥ 4.0 °C within 60 s (phase 5
+  /// brief §4.6): the amber "subindo" pill. Not an alarm — the unit
+  /// decides those.
+  final bool tempRising;
+
+  /// Why the alarm is held: the EVENT_CODE of the newest ALARM of this
+  /// latch and the TEMP it carried. Null = not known (no alarm, an older
+  /// central).
+  final SafrEventCode? alarmCode;
+  final int? alarmTempTenths;
+
+  /// The unit said SENSOR_WET and has not said it cleared (protocol
+  /// §7.1.2 0x0E).
+  final bool sensorWet;
+
+  /// Held in a heat alarm — fixed temperature or rate of rise.
+  bool get heatAlarm => alarmLatched && (alarmCode?.isHeat ?? false);
 
   /// How this mains unit hears the central's board, dBm (protocol §7.3
   /// BOARD_RSSI, v3.11): what its link would be if it were the root. Null =
@@ -232,6 +265,7 @@ final topologyProvider = Provider<List<TopologyNode>>((ref) {
   final grace = ref.watch(otaRolloutTimingsProvider).updatingGrace;
   final labels = ref.watch(labelIndexProvider);
   final boardSignal = ref.watch(boardSignalProvider);
+  final readings = ref.watch(latestReadingsProvider).valueOrNull ?? const {};
   final now = DateTime.now();
 
   final parents =
@@ -278,6 +312,16 @@ final topologyProvider = Provider<List<TopologyNode>>((ref) {
         heard: linkUp && s.heard,
         dlHeard: s.device.dlHeard,
         boardRssi: boardSignal[s.device.mac],
+        tempTenths: readings[s.device.mac]?.tempTenths,
+        humidityPct: readings[s.device.mac]?.humidityPct,
+        readingAt: readings[s.device.mac]?.at,
+        tempRising: readings[s.device.mac]?.rising ?? false,
+        alarmCode: s.device.alarmLatched == 1 && s.device.alarmCode != null
+            ? SafrEventCode.fromWire(s.device.alarmCode!)
+            : null,
+        alarmTempTenths:
+            s.device.alarmLatched == 1 ? s.device.alarmTempTenths : null,
+        sensorWet: s.device.sensorWet == 1,
       ),
   ]..sort((a, b) {
       final byLayer = a.layer.compareTo(b.layer);

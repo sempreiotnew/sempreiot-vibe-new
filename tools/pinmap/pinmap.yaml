@@ -7,6 +7,11 @@
 #
 # Every entry: model (matches CONFIG_SIOT_DEV_MODEL), code, hw_rev (0 = any revision), pins.
 # A pin of -1 means "not present on this model".
+# Optional pins (absent = -1): i2c_sda / i2c_scl (the sensor bus), i2c_en (the PCA9306 level
+# shifter's enable; on a 3.3 V development unit it drives nothing) and sensor_int (the sensor's
+# interrupt, the deep-sleep wake line) — docs/spec/definition-detector.md, and
+# docs/phases-development/phase5-heat-humidity-sensing-brief.md §11.1.1 for why sensor_int is a
+# setting: on the final PCB the HDC2080 shares GPIO 4 with the smoke sensor, which is not settled.
 #
 # code = the 16-bit PRODUCT on the wire (protocol §7.11, reference §2.1): high byte = family
 # (0x01 board, 0x02 node, 0x03 leaf), low byte = the product inside the family (0xFF = the
@@ -79,7 +84,7 @@ boards:
     code: 0x0301
     family: leaf
     hw_rev: 0
-    pins: {led_r: 14, led_g: 47, led_b: 48, led_active_low: false, button: 21, acok: 5, uart0_tx: 43, uart0_rx: 44, usb_dm: 19, usb_dp: 20}
+    pins: {led_r: 14, led_g: 47, led_b: 48, led_active_low: false, button: 21, acok: 5, uart0_tx: 43, uart0_rx: 44, usb_dm: 19, usb_dp: 20, i2c_sda: 1, i2c_scl: 2, i2c_en: 38, sensor_int: 4}
   - model: SIOT-IO-01         # AC I/O module: node image + inputs / relay outputs (planned)
     code: 0x0203
     family: node
@@ -94,9 +99,9 @@ boards:
     code: 0x0205
     family: node
     hw_rev: 0
-    pins: {led_r: 14, led_g: 47, led_b: 48, led_active_low: false, button: 21, acok: 5, uart0_tx: 43, uart0_rx: 44, usb_dm: 19, usb_dp: 20}
+    pins: {led_r: 14, led_g: 47, led_b: 48, led_active_low: false, button: 21, acok: 5, uart0_tx: 43, uart0_rx: 44, usb_dm: 19, usb_dp: 20, i2c_sda: 1, i2c_scl: 2, i2c_en: 38, sensor_int: 4}
   - model: SIOT-HEAT-01       # battery heat detector: leaf image + temperature sensing (planned)
     code: 0x0302
     family: leaf
     hw_rev: 0
-    pins: {led_r: 14, led_g: 47, led_b: 48, led_active_low: false, button: 21, acok: 5, uart0_tx: 43, uart0_rx: 44, usb_dm: 19, usb_dp: 20}
+    pins: {led_r: 14, led_g: 47, led_b: 48, led_active_low: false, button: 21, acok: 5, uart0_tx: 43, uart0_rx: 44, usb_dm: 19, usb_dp: 20, i2c_sda: 1, i2c_scl: 2, i2c_en: 38, sensor_int: 4}

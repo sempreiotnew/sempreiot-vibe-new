@@ -160,6 +160,8 @@ String safrFrameSummary(SafrWireFrame f) {
         if (p.dlMap != null)
           'map:${p.dlMap!.toRadixString(2).padLeft(8, '0')}',
         if (p.batteryPct != null) 'bat:${p.batteryPct}%',
+        if (p.tempTenths != null) '${(p.tempTenths! / 10).toStringAsFixed(1)}C',
+        if (p.humidityPct != null) 'rh:${p.humidityPct}%',
         'up:${_duration(p.uptimeS)}',
       ].join(' ');
     case SafrTopologyPayload p:

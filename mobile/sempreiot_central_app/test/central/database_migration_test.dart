@@ -66,7 +66,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 16);
+    expect(version, 17);
   });
 
   test('schema v10 -> v11 adds the firmware update history, rows kept',
@@ -117,7 +117,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 16);
+    expect(version, 17);
   });
 
   test('schema v11 -> v12 adds where the image came from, rows kept', () async {
@@ -162,7 +162,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 16);
+    expect(version, 17);
   });
 
   test('schema v12 -> v13 adds the system tests, rows kept', () async {
@@ -210,7 +210,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 16);
+    expect(version, 17);
   });
 
   test('schema v13 -> v14 adds the downlink count column, rows kept',
@@ -241,7 +241,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 16);
+    expect(version, 17);
   });
 
   test('schema v14 -> v15 adds the label ids and tables, drops the zone string',
@@ -287,7 +287,7 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 16);
+    expect(version, 17);
   });
 
   test('schema v15 -> v16 drops the degraded-link flag, rows kept', () async {
@@ -325,6 +325,54 @@ void main() {
         .customSelect('PRAGMA user_version')
         .map((row) => row.read<int>('user_version'))
         .getSingle();
-    expect(version, 16);
+    expect(version, 17);
+  });
+
+  test('schema v16 -> v17 adds the readings table and the alarm cause, '
+      'rows kept', () async {
+    final dir = await Directory.systemTemp.createTemp('siot_migr_');
+    addTearDown(() => dir.delete(recursive: true));
+    final file = File('${dir.path}/sempreiot.sqlite');
+
+    final fresh = AppDatabase.forTesting(NativeDatabase(file));
+    await fresh.into(fresh.meshDevices).insert(MeshDevicesCompanion.insert(
+          mac: _unitA,
+          firstSeenAt: DateTime.utc(2026, 11, 1),
+          lastSeenAt: DateTime.utc(2026, 11, 2),
+          alarmLatched: const Value(1),
+        ));
+    await fresh.close();
+
+    final upgraded = AppDatabase.forTesting(NativeDatabase(file, setup: (raw) {
+      raw.execute('DROP INDEX idx_dev_readings_mac_at');
+      raw.execute('DROP TABLE device_readings');
+      raw.execute('ALTER TABLE mesh_devices DROP COLUMN alarm_code');
+      raw.execute('ALTER TABLE mesh_devices DROP COLUMN alarm_temp_tenths');
+      raw.execute('ALTER TABLE mesh_devices DROP COLUMN sensor_wet');
+      raw.execute('PRAGMA user_version = 16');
+    }));
+    addTearDown(upgraded.close);
+
+    final r = await (upgraded.select(upgraded.meshDevices)
+          ..where((t) => t.mac.equals(_unitA)))
+        .getSingle();
+    expect(r.alarmLatched, 1);
+    expect(r.alarmCode, isNull);
+    expect(r.alarmTempTenths, isNull);
+    expect(r.sensorWet, 0);
+
+    await upgraded.addReading(
+        mac: _unitA, at: DateTime.utc(2026, 11, 26, 12), tempTenths: 245);
+    expect(await upgraded.select(upgraded.deviceReadings).get(), hasLength(1));
+    final indexes = await upgraded
+        .customSelect("SELECT name FROM sqlite_master WHERE type = 'index'")
+        .map((row) => row.read<String>('name'))
+        .get();
+    expect(indexes, contains('idx_dev_readings_mac_at'));
+    final version = await upgraded
+        .customSelect('PRAGMA user_version')
+        .map((row) => row.read<int>('user_version'))
+        .getSingle();
+    expect(version, 17);
   });
 }

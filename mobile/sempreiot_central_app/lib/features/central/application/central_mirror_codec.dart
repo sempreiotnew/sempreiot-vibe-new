@@ -417,6 +417,16 @@ Map<String, dynamic> _unitToJson(TopologyNode n, {bool volatile = true}) => {
         'candidates': [
           for (final c in n.parentCandidates) [c.mac, c.rssi],
         ],
+      // Heat and humidity (2026-11-26). The reading changes on every
+      // heartbeat, like the dBm; what the screen says of it does not.
+      if (volatile && n.tempTenths != null) 'temp': n.tempTenths,
+      if (volatile && n.humidityPct != null) 'hum': n.humidityPct,
+      if (volatile && n.readingAt != null)
+        'tempAt': n.readingAt!.toUtc().toIso8601String(),
+      if (n.tempRising) 'rising': true,
+      if (n.alarmCode != null) 'alarmCode': n.alarmCode!.wire,
+      if (n.alarmTempTenths != null) 'alarmTemp': n.alarmTempTenths,
+      if (n.sensorWet) 'wet': true,
     };
 
 String encodeMirrorState({
@@ -504,6 +514,15 @@ TopologyNode? _unitFromJson(Object? raw, DateTime fallbackSeen) {
           if (c is List && c.length == 2 && c[0] is String && c[1] is num)
             (mac: c[0] as String, rssi: (c[1] as num).toInt()),
     ],
+    tempTenths: (raw['temp'] as num?)?.toInt(),
+    humidityPct: (raw['hum'] as num?)?.toInt(),
+    readingAt: time(raw['tempAt']),
+    tempRising: raw['rising'] == true,
+    alarmCode: raw['alarmCode'] is num
+        ? SafrEventCode.fromWire((raw['alarmCode'] as num).toInt())
+        : null,
+    alarmTempTenths: (raw['alarmTemp'] as num?)?.toInt(),
+    sensorWet: raw['wet'] == true,
   );
 }
 
@@ -763,12 +782,20 @@ class MirrorAlarm {
     this.address,
     this.productCode,
     this.leaf = false,
+    this.code,
+    this.tempTenths,
   });
 
   final String mac;
   final String? name;
   final String? zone;
   final DateTime? since;
+
+  /// Why it is held (2026-11-26): the EVENT_CODE of the newest ALARM of
+  /// the latch and the TEMP it carried (°C × 10) — "Calor — 58 °C". Absent
+  /// from a central on an older app.
+  final int? code;
+  final int? tempTenths;
 
   /// What a phone needs to draw the unit itself (2026-11-23): its
   /// endereçamento, its product (the model it is drawn as), whether it
@@ -990,6 +1017,9 @@ class MirrorTrouble {
   static const offline = 'offline';
   static const battery = 'battery';
 
+  /// SENSOR_WET (2026-11-26): the unit answers, its sensor is saturated.
+  static const wet = 'wet';
+
   /// The unit's name; its endereçamento or its MAC when it has none.
   final String name;
   final String why;
@@ -1044,6 +1074,8 @@ List<Map<String, dynamic>> _alarmsToJson(List<MirrorAlarm> alarms) => [
           if (a.address?.isNotEmpty == true) 'addr': a.address,
           if (a.productCode != null) 'prod': a.productCode,
           if (a.leaf) 'leaf': 1,
+          if (a.code != null) 'code': a.code,
+          if (a.tempTenths != null) 'temp': a.tempTenths,
         },
     ];
 
@@ -1166,6 +1198,8 @@ MirrorAlarms? decodeMirrorAlarms(String payload) {
               address: a['addr'] is String ? a['addr'] as String : null,
               productCode: (a['prod'] as num?)?.toInt(),
               leaf: a['leaf'] == 1,
+              code: (a['code'] as num?)?.toInt(),
+              tempTenths: (a['temp'] as num?)?.toInt(),
             ),
       ],
       panel: _panelFromJson(map['panel']),

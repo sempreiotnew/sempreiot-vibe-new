@@ -51,10 +51,21 @@ enum SafrEventCode {
   acLost(0x0A),
   restore(0x0B),
   rfInterference(0x0C),
+
+  /// v3.16 (spec §7.1.2, §7.1.6): rate of rise — 8.0 °C within 60 s.
+  /// [heatAlarm] is the fixed-temperature alarm (≥ 57.0 °C).
+  heatRiseAlarm(0x0D),
+
+  /// v3.16: humidity at saturation, a TROUBLE; cleared by RESTORE with
+  /// FAULT_CODE [safrFaultCodeSensorWet].
+  sensorWet(0x0E),
   unknown(0xFF);
 
   const SafrEventCode(this.wire);
   final int wire;
+
+  /// A heat alarm, whichever rule fired it.
+  bool get isHeat => this == heatAlarm || this == heatRiseAlarm;
 
   static SafrEventCode fromWire(int v) => values.firstWhere(
         (e) => e.wire == v,
@@ -75,6 +86,15 @@ const fltTempSensor = 0x02;
 const fltBattCritical = 0x04;
 const fltMeshLost = 0x08;
 const fltRelayFail = 0x10;
+const fltSensorWet = 0x20; // v3.16
+
+/// FAULT_CODE of the humidity trouble (§7.1.5, v3.16): what a RESTORE that
+/// clears SENSOR_WET carries.
+const safrFaultCodeSensorWet = 6;
+
+/// The fixed-temperature heat alarm, °C × 10 (§7.1.6): the line on the
+/// device screen's chart. The unit decides the alarm, never the central.
+const safrHeatAlarmTenths = 570;
 
 enum SafrNodeRole {
   root(0),
@@ -372,9 +392,15 @@ class SafrHeartbeatPayload extends SafrV2Payload {
     this.dlHeard,
     this.dlMap,
     this.boardRssi,
+    this.humidityPct,
   });
 
   static const wireLength = 20;
+
+  /// v3.16 HUMIDITY (spec §7.3), whole %: at offset 23 for every sender (a
+  /// battery unit fills 20–22 with "not there"). Null when not sent (a
+  /// heartbeat of 23 bytes or less) or 0xFF.
+  final int? humidityPct;
 
   /// v3.11 BOARD_RSSI (spec §7.3): how this unit hears the board's access
   /// point, dBm — what its link would be if it were the root. Null when
@@ -432,6 +458,8 @@ class SafrHeartbeatPayload extends SafrV2Payload {
       dlMap: dlMap,
       boardRssi:
           p.length > wireLength + 2 && p[22] != 0x7F ? p[22].toSigned(8) : null,
+      humidityPct:
+          p.length > wireLength + 3 && p[23] != safrNaU8 ? p[23] : null,
     );
   }
 }

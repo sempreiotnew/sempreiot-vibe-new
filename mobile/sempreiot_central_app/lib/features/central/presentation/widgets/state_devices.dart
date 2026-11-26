@@ -7,6 +7,7 @@ import '../../application/alarm_latch_provider.dart';
 import '../../application/central_mirror_codec.dart';
 import '../../application/central_mirror_viewer.dart';
 import '../../application/panel_provider.dart';
+import '../../domain/readings/temp_reading.dart';
 import 'device_state_tile.dart';
 import 'latched_alarm_banner.dart';
 import 'remote_alarm_banner.dart';
@@ -73,8 +74,13 @@ class TroubleDeviceTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final mac = trouble.mac;
     final battery = trouble.why == MirrorTrouble.battery;
+    final wet = trouble.why == MirrorTrouble.wet;
     final why = Text(
-      battery ? 'bateria baixa' : 'sem comunicação',
+      wet
+          ? sensorWetWords
+          : battery
+              ? 'bateria baixa'
+              : 'sem comunicação',
       maxLines: 1,
       style: const TextStyle(
         color: AppColors.warning,
@@ -97,9 +103,11 @@ class TroubleDeviceTile extends StatelessWidget {
             SizedBox(
               height: DeviceStateTile.avatar,
               child: Icon(
-                battery
-                    ? Icons.battery_alert_rounded
-                    : Icons.sensors_off_rounded,
+                wet
+                    ? Icons.water_drop_outlined
+                    : battery
+                        ? Icons.battery_alert_rounded
+                        : Icons.sensors_off_rounded,
                 color: AppColors.warning,
                 size: 30,
               ),
@@ -131,8 +139,9 @@ class TroubleDeviceTile extends StatelessWidget {
         productCode: trouble.productCode,
         leaf: trouble.leaf,
         batteryPct: trouble.batteryPct,
-        // Listed for its battery: it answers. Otherwise it is not heard.
-        online: battery,
+        // Listed for its battery or its wet sensor: it answers. Otherwise
+        // it is not heard.
+        online: battery || wet,
       ),
       accent: AppColors.warning,
       status: why,

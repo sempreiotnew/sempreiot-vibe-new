@@ -9,7 +9,9 @@ import '../../application/device_labels_provider.dart';
 import '../../application/root_election_provider.dart';
 import '../../application/topology_provider.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
+import '../../domain/readings/temp_reading.dart';
 import '../widgets/device_avatar.dart';
+import '../widgets/device_temp_widgets.dart';
 import '../widgets/device_traffic_ripple.dart';
 
 import 'device_settings_screen.dart';
@@ -22,6 +24,9 @@ enum _Filter { all, alarm, offline, sleeping }
 /// Dispositivo screen. Hosted inside the main tab (no own Scaffold).
 class DevicesScreen extends ConsumerStatefulWidget {
   const DevicesScreen({super.key});
+
+  /// The temperature pill of a unit's card.
+  static ValueKey<String> tempPillKey(String mac) => ValueKey('temp-pill-$mac');
 
   @override
   ConsumerState<DevicesScreen> createState() => _DevicesScreenState();
@@ -130,7 +135,9 @@ class _DevicesScreenState extends ConsumerState<DevicesScreen> {
                       gridDelegate:
                           const SliverGridDelegateWithMaxCrossAxisExtent(
                         maxCrossAxisExtent: 180,
-                        mainAxisExtent: 204,
+                        // Tall enough for a second line of pills (signal,
+                        // battery and temperature do not fit one line).
+                        mainAxisExtent: 228,
                         crossAxisSpacing: 12,
                         mainAxisSpacing: 12,
                       ),
@@ -552,11 +559,34 @@ class _CardFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Its temperature, when it ever sent one (phase 5 brief §4.6):
+    // neutral, amber while rising, red in a heat alarm, grey when the unit
+    // is not heard. Never the humidity here.
+    final tempState = tempPillState(node);
+    final temp = tempState == null
+        ? null
+        : Semantics(
+            label: tempPillSemantics(node, tempState),
+            excludeSemantics: true,
+            child: _Pill(
+              key: DevicesScreen.tempPillKey(node.mac),
+              icon: tempPillIcon(tempState),
+              text: tempText(node.tempTenths!),
+              color: tempPillColor(context, tempState),
+            ),
+          );
     if (!node.online) {
-      return _Pill(
+      final silent = _Pill(
         icon: Icons.schedule_rounded,
         text: relativeTime(node.lastSeenAt),
         color: AppColors.trouble,
+      );
+      if (temp == null) return silent;
+      return Wrap(
+        alignment: WrapAlignment.center,
+        spacing: 6,
+        runSpacing: 4,
+        children: [silent, temp],
       );
     }
     return Wrap(
@@ -579,13 +609,19 @@ class _CardFooter extends StatelessWidget {
                 ? AppColors.warning
                 : context.textSecondary,
           ),
+        if (temp != null) temp,
       ],
     );
   }
 }
 
 class _Pill extends StatelessWidget {
-  const _Pill({required this.icon, required this.text, required this.color});
+  const _Pill({
+    super.key,
+    required this.icon,
+    required this.text,
+    required this.color,
+  });
 
   final IconData icon;
   final String text;

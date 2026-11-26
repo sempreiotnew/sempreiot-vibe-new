@@ -4,10 +4,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/theme_ext.dart';
 import '../../application/root_election_provider.dart';
 import '../../application/topology_provider.dart';
-import '../../domain/safr/safr_v2_payloads.dart' show SafrNodeRole;
+import '../../../../core/utils/relative_time.dart';
+import '../../domain/readings/temp_reading.dart';
+import '../../domain/safr/safr_v2_payloads.dart'
+    show SafrEventCode, SafrNodeRole;
 import 'device_avatar.dart';
 import 'device_menu.dart';
 import 'device_traffic_ripple.dart';
+
+/// What a held alarm's tile says under the unit: why, for a heat alarm
+/// ("Calor — 58 °C", "Calor — subida rápida, 41 °C" — the reading of the
+/// EVENT that fired it), else "em alarme" and since when.
+String alarmStatusText({int? code, int? tempTenths, DateTime? since}) {
+  final heat = code == null
+      ? null
+      : heatAlarmWords(SafrEventCode.fromWire(code), tempTenths);
+  if (heat != null) return heat;
+  return since == null ? 'em alarme' : 'em alarme · ${relativeTime(since)}';
+}
 
 /// A unit named outside the map — Principal's "Estado do sistema": the
 /// units in alarm, the units that need attention — **drawn as Rede draws

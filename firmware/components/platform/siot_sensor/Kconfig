@@ -6,8 +6,10 @@ menu "SempreIoT sensors (siot_sensor)"
         help
             Scripted smoke / temperature / humidity values and a fixed battery
             percentage, for devkits without the detector PCB
-            (docs/phases-development/phase2-leaf-brief.md section 3). The
-            real ADPD188BI / HDC2080 / ADC backend is the sensing phase.
+            (docs/phases-development/phase2-leaf-brief.md section 3).
+            Off = the real HDC2080 temperature / humidity sensor on the unit's
+            I2C bus (docs/phases-development/phase5-heat-humidity-sensing-brief.md);
+            the ADPD188BI smoke sensor and the battery ADC are still to come.
 
     config SIOT_SENSOR_MOCK_BATTERY_PCT
         int "Mock battery percentage reported in HEARTBEAT / EVENT"
@@ -19,5 +21,38 @@ menu "SempreIoT sensors (siot_sensor)"
         int "Mock temperature, tenths of a degree C"
         depends on SIOT_SENSOR_MOCK
         default 250
+
+    config SIOT_SENSOR_MOCK_SCENARIO
+        int "Mock scenario (0 steady, 1 slow heat to 60 C, 2 fast rise, 3 wet)"
+        depends on SIOT_SENSOR_MOCK
+        default 0
+        range 0 3
+        help
+            What the mock temperature / humidity does after
+            SIOT_SENSOR_MOCK_SCENARIO_START_S, so the heat and humidity rules
+            (protocol 7.1.6) can be seen on a devkit:
+              0  steady at SIOT_SENSOR_MOCK_TEMP_X10, 45 %
+              1  +0.1 C per second (6 C a minute: below the rate-of-rise
+                 rule) up to 60 C, held 30 s, then back down: the FIXED
+                 alarm at 57 C, alone
+              2  +10 C in 40 s, held 30 s, then back down: the RATE-OF-RISE alarm
+              3  humidity 100 % for 60 s, then back to 45 %: "sensor molhado"
+
+    config SIOT_SENSOR_MOCK_SCENARIO_START_S
+        int "Mock scenario: seconds after boot before it starts"
+        depends on SIOT_SENSOR_MOCK
+        default 180
+        range 0 3600
+
+    config SIOT_SENSOR_SUPPLY_MV
+        int "HDC2080 supply voltage, millivolts"
+        depends on !SIOT_SENSOR_MOCK
+        default 3300
+        range 1620 3600
+        help
+            Used only for the datasheet's supply correction of the
+            temperature (0.08 C per volt above 1.8 V). The development unit
+            feeds the sensor 3.3 V; THE FINAL PRODUCT IS 1800
+            (docs/ota/before-production.md).
 
 endmenu

@@ -107,6 +107,7 @@ final centralInitProvider = FutureProvider<void>((ref) async {
   await db.deleteOlderThan(
     DateTime.now().toUtc().subtract(const Duration(days: 30)),
   );
+  await db.pruneReadings(DateTime.now().toUtc());
 });
 
 /// Lock/unlock state is managed inside MainScreen itself.

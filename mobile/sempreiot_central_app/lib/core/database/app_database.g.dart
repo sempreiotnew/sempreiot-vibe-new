@@ -977,6 +977,26 @@ class $MeshDevicesTable extends MeshDevices
   late final GeneratedColumn<DateTime> alarmLatchedAt =
       GeneratedColumn<DateTime>('alarm_latched_at', aliasedName, true,
           type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  static const VerificationMeta _alarmCodeMeta =
+      const VerificationMeta('alarmCode');
+  @override
+  late final GeneratedColumn<int> alarmCode = GeneratedColumn<int>(
+      'alarm_code', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _alarmTempTenthsMeta =
+      const VerificationMeta('alarmTempTenths');
+  @override
+  late final GeneratedColumn<int> alarmTempTenths = GeneratedColumn<int>(
+      'alarm_temp_tenths', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _sensorWetMeta =
+      const VerificationMeta('sensorWet');
+  @override
+  late final GeneratedColumn<int> sensorWet = GeneratedColumn<int>(
+      'sensor_wet', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
   static const VerificationMeta _boardStateMeta =
       const VerificationMeta('boardState');
   @override
@@ -1043,6 +1063,9 @@ class $MeshDevicesTable extends MeshDevices
         lastDevSeq,
         alarmLatched,
         alarmLatchedAt,
+        alarmCode,
+        alarmTempTenths,
+        sensorWet,
         boardState,
         boardFlags,
         tableSyncedAt,
@@ -1173,6 +1196,20 @@ class $MeshDevicesTable extends MeshDevices
           alarmLatchedAt.isAcceptableOrUnknown(
               data['alarm_latched_at']!, _alarmLatchedAtMeta));
     }
+    if (data.containsKey('alarm_code')) {
+      context.handle(_alarmCodeMeta,
+          alarmCode.isAcceptableOrUnknown(data['alarm_code']!, _alarmCodeMeta));
+    }
+    if (data.containsKey('alarm_temp_tenths')) {
+      context.handle(
+          _alarmTempTenthsMeta,
+          alarmTempTenths.isAcceptableOrUnknown(
+              data['alarm_temp_tenths']!, _alarmTempTenthsMeta));
+    }
+    if (data.containsKey('sensor_wet')) {
+      context.handle(_sensorWetMeta,
+          sensorWet.isAcceptableOrUnknown(data['sensor_wet']!, _sensorWetMeta));
+    }
     if (data.containsKey('board_state')) {
       context.handle(
           _boardStateMeta,
@@ -1262,6 +1299,12 @@ class $MeshDevicesTable extends MeshDevices
           .read(DriftSqlType.int, data['${effectivePrefix}alarm_latched'])!,
       alarmLatchedAt: attachedDatabase.typeMapping.read(
           DriftSqlType.dateTime, data['${effectivePrefix}alarm_latched_at']),
+      alarmCode: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}alarm_code']),
+      alarmTempTenths: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}alarm_temp_tenths']),
+      sensorWet: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}sensor_wet'])!,
       boardState: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}board_state']),
       boardFlags: attachedDatabase.typeMapping
@@ -1307,6 +1350,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
   final int lastDevSeq;
   final int alarmLatched;
   final DateTime? alarmLatchedAt;
+  final int? alarmCode;
+  final int? alarmTempTenths;
+  final int sensorWet;
   final int? boardState;
   final int boardFlags;
   final DateTime? tableSyncedAt;
@@ -1336,6 +1382,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       required this.lastDevSeq,
       required this.alarmLatched,
       this.alarmLatchedAt,
+      this.alarmCode,
+      this.alarmTempTenths,
+      required this.sensorWet,
       this.boardState,
       required this.boardFlags,
       this.tableSyncedAt,
@@ -1387,6 +1436,13 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
     if (!nullToAbsent || alarmLatchedAt != null) {
       map['alarm_latched_at'] = Variable<DateTime>(alarmLatchedAt);
     }
+    if (!nullToAbsent || alarmCode != null) {
+      map['alarm_code'] = Variable<int>(alarmCode);
+    }
+    if (!nullToAbsent || alarmTempTenths != null) {
+      map['alarm_temp_tenths'] = Variable<int>(alarmTempTenths);
+    }
+    map['sensor_wet'] = Variable<int>(sensorWet);
     if (!nullToAbsent || boardState != null) {
       map['board_state'] = Variable<int>(boardState);
     }
@@ -1449,6 +1505,13 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       alarmLatchedAt: alarmLatchedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(alarmLatchedAt),
+      alarmCode: alarmCode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(alarmCode),
+      alarmTempTenths: alarmTempTenths == null && nullToAbsent
+          ? const Value.absent()
+          : Value(alarmTempTenths),
+      sensorWet: Value(sensorWet),
       boardState: boardState == null && nullToAbsent
           ? const Value.absent()
           : Value(boardState),
@@ -1495,6 +1558,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       lastDevSeq: serializer.fromJson<int>(json['lastDevSeq']),
       alarmLatched: serializer.fromJson<int>(json['alarmLatched']),
       alarmLatchedAt: serializer.fromJson<DateTime?>(json['alarmLatchedAt']),
+      alarmCode: serializer.fromJson<int?>(json['alarmCode']),
+      alarmTempTenths: serializer.fromJson<int?>(json['alarmTempTenths']),
+      sensorWet: serializer.fromJson<int>(json['sensorWet']),
       boardState: serializer.fromJson<int?>(json['boardState']),
       boardFlags: serializer.fromJson<int>(json['boardFlags']),
       tableSyncedAt: serializer.fromJson<DateTime?>(json['tableSyncedAt']),
@@ -1529,6 +1595,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       'lastDevSeq': serializer.toJson<int>(lastDevSeq),
       'alarmLatched': serializer.toJson<int>(alarmLatched),
       'alarmLatchedAt': serializer.toJson<DateTime?>(alarmLatchedAt),
+      'alarmCode': serializer.toJson<int?>(alarmCode),
+      'alarmTempTenths': serializer.toJson<int?>(alarmTempTenths),
+      'sensorWet': serializer.toJson<int>(sensorWet),
       'boardState': serializer.toJson<int?>(boardState),
       'boardFlags': serializer.toJson<int>(boardFlags),
       'tableSyncedAt': serializer.toJson<DateTime?>(tableSyncedAt),
@@ -1561,6 +1630,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           int? lastDevSeq,
           int? alarmLatched,
           Value<DateTime?> alarmLatchedAt = const Value.absent(),
+          Value<int?> alarmCode = const Value.absent(),
+          Value<int?> alarmTempTenths = const Value.absent(),
+          int? sensorWet,
           Value<int?> boardState = const Value.absent(),
           int? boardFlags,
           Value<DateTime?> tableSyncedAt = const Value.absent(),
@@ -1594,6 +1666,11 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
         alarmLatched: alarmLatched ?? this.alarmLatched,
         alarmLatchedAt:
             alarmLatchedAt.present ? alarmLatchedAt.value : this.alarmLatchedAt,
+        alarmCode: alarmCode.present ? alarmCode.value : this.alarmCode,
+        alarmTempTenths: alarmTempTenths.present
+            ? alarmTempTenths.value
+            : this.alarmTempTenths,
+        sensorWet: sensorWet ?? this.sensorWet,
         boardState: boardState.present ? boardState.value : this.boardState,
         boardFlags: boardFlags ?? this.boardFlags,
         tableSyncedAt:
@@ -1644,6 +1721,11 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
       alarmLatchedAt: data.alarmLatchedAt.present
           ? data.alarmLatchedAt.value
           : this.alarmLatchedAt,
+      alarmCode: data.alarmCode.present ? data.alarmCode.value : this.alarmCode,
+      alarmTempTenths: data.alarmTempTenths.present
+          ? data.alarmTempTenths.value
+          : this.alarmTempTenths,
+      sensorWet: data.sensorWet.present ? data.sensorWet.value : this.sensorWet,
       boardState:
           data.boardState.present ? data.boardState.value : this.boardState,
       boardFlags:
@@ -1685,6 +1767,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           ..write('lastDevSeq: $lastDevSeq, ')
           ..write('alarmLatched: $alarmLatched, ')
           ..write('alarmLatchedAt: $alarmLatchedAt, ')
+          ..write('alarmCode: $alarmCode, ')
+          ..write('alarmTempTenths: $alarmTempTenths, ')
+          ..write('sensorWet: $sensorWet, ')
           ..write('boardState: $boardState, ')
           ..write('boardFlags: $boardFlags, ')
           ..write('tableSyncedAt: $tableSyncedAt, ')
@@ -1719,6 +1804,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
         lastDevSeq,
         alarmLatched,
         alarmLatchedAt,
+        alarmCode,
+        alarmTempTenths,
+        sensorWet,
         boardState,
         boardFlags,
         tableSyncedAt,
@@ -1752,6 +1840,9 @@ class MeshDevice extends DataClass implements Insertable<MeshDevice> {
           other.lastDevSeq == this.lastDevSeq &&
           other.alarmLatched == this.alarmLatched &&
           other.alarmLatchedAt == this.alarmLatchedAt &&
+          other.alarmCode == this.alarmCode &&
+          other.alarmTempTenths == this.alarmTempTenths &&
+          other.sensorWet == this.sensorWet &&
           other.boardState == this.boardState &&
           other.boardFlags == this.boardFlags &&
           other.tableSyncedAt == this.tableSyncedAt &&
@@ -1783,6 +1874,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
   final Value<int> lastDevSeq;
   final Value<int> alarmLatched;
   final Value<DateTime?> alarmLatchedAt;
+  final Value<int?> alarmCode;
+  final Value<int?> alarmTempTenths;
+  final Value<int> sensorWet;
   final Value<int?> boardState;
   final Value<int> boardFlags;
   final Value<DateTime?> tableSyncedAt;
@@ -1813,6 +1907,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     this.lastDevSeq = const Value.absent(),
     this.alarmLatched = const Value.absent(),
     this.alarmLatchedAt = const Value.absent(),
+    this.alarmCode = const Value.absent(),
+    this.alarmTempTenths = const Value.absent(),
+    this.sensorWet = const Value.absent(),
     this.boardState = const Value.absent(),
     this.boardFlags = const Value.absent(),
     this.tableSyncedAt = const Value.absent(),
@@ -1844,6 +1941,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     this.lastDevSeq = const Value.absent(),
     this.alarmLatched = const Value.absent(),
     this.alarmLatchedAt = const Value.absent(),
+    this.alarmCode = const Value.absent(),
+    this.alarmTempTenths = const Value.absent(),
+    this.sensorWet = const Value.absent(),
     this.boardState = const Value.absent(),
     this.boardFlags = const Value.absent(),
     this.tableSyncedAt = const Value.absent(),
@@ -1877,6 +1977,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     Expression<int>? lastDevSeq,
     Expression<int>? alarmLatched,
     Expression<DateTime>? alarmLatchedAt,
+    Expression<int>? alarmCode,
+    Expression<int>? alarmTempTenths,
+    Expression<int>? sensorWet,
     Expression<int>? boardState,
     Expression<int>? boardFlags,
     Expression<DateTime>? tableSyncedAt,
@@ -1908,6 +2011,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
       if (lastDevSeq != null) 'last_dev_seq': lastDevSeq,
       if (alarmLatched != null) 'alarm_latched': alarmLatched,
       if (alarmLatchedAt != null) 'alarm_latched_at': alarmLatchedAt,
+      if (alarmCode != null) 'alarm_code': alarmCode,
+      if (alarmTempTenths != null) 'alarm_temp_tenths': alarmTempTenths,
+      if (sensorWet != null) 'sensor_wet': sensorWet,
       if (boardState != null) 'board_state': boardState,
       if (boardFlags != null) 'board_flags': boardFlags,
       if (tableSyncedAt != null) 'table_synced_at': tableSyncedAt,
@@ -1941,6 +2047,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
       Value<int>? lastDevSeq,
       Value<int>? alarmLatched,
       Value<DateTime?>? alarmLatchedAt,
+      Value<int?>? alarmCode,
+      Value<int?>? alarmTempTenths,
+      Value<int>? sensorWet,
       Value<int?>? boardState,
       Value<int>? boardFlags,
       Value<DateTime?>? tableSyncedAt,
@@ -1971,6 +2080,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
       lastDevSeq: lastDevSeq ?? this.lastDevSeq,
       alarmLatched: alarmLatched ?? this.alarmLatched,
       alarmLatchedAt: alarmLatchedAt ?? this.alarmLatchedAt,
+      alarmCode: alarmCode ?? this.alarmCode,
+      alarmTempTenths: alarmTempTenths ?? this.alarmTempTenths,
+      sensorWet: sensorWet ?? this.sensorWet,
       boardState: boardState ?? this.boardState,
       boardFlags: boardFlags ?? this.boardFlags,
       tableSyncedAt: tableSyncedAt ?? this.tableSyncedAt,
@@ -2048,6 +2160,15 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
     if (alarmLatchedAt.present) {
       map['alarm_latched_at'] = Variable<DateTime>(alarmLatchedAt.value);
     }
+    if (alarmCode.present) {
+      map['alarm_code'] = Variable<int>(alarmCode.value);
+    }
+    if (alarmTempTenths.present) {
+      map['alarm_temp_tenths'] = Variable<int>(alarmTempTenths.value);
+    }
+    if (sensorWet.present) {
+      map['sensor_wet'] = Variable<int>(sensorWet.value);
+    }
     if (boardState.present) {
       map['board_state'] = Variable<int>(boardState.value);
     }
@@ -2099,6 +2220,9 @@ class MeshDevicesCompanion extends UpdateCompanion<MeshDevice> {
           ..write('lastDevSeq: $lastDevSeq, ')
           ..write('alarmLatched: $alarmLatched, ')
           ..write('alarmLatchedAt: $alarmLatchedAt, ')
+          ..write('alarmCode: $alarmCode, ')
+          ..write('alarmTempTenths: $alarmTempTenths, ')
+          ..write('sensorWet: $sensorWet, ')
           ..write('boardState: $boardState, ')
           ..write('boardFlags: $boardFlags, ')
           ..write('tableSyncedAt: $tableSyncedAt, ')
@@ -4431,6 +4555,312 @@ class DeviceLabelsCompanion extends UpdateCompanion<DeviceLabel> {
   }
 }
 
+class $DeviceReadingsTable extends DeviceReadings
+    with TableInfo<$DeviceReadingsTable, DeviceReading> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DeviceReadingsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+      'id', aliasedName, false,
+      hasAutoIncrement: true,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('PRIMARY KEY AUTOINCREMENT'));
+  static const VerificationMeta _deviceMacMeta =
+      const VerificationMeta('deviceMac');
+  @override
+  late final GeneratedColumn<String> deviceMac = GeneratedColumn<String>(
+      'device_mac', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _atMeta = const VerificationMeta('at');
+  @override
+  late final GeneratedColumn<DateTime> at = GeneratedColumn<DateTime>(
+      'at', aliasedName, false,
+      type: DriftSqlType.dateTime, requiredDuringInsert: true);
+  static const VerificationMeta _tempTenthsMeta =
+      const VerificationMeta('tempTenths');
+  @override
+  late final GeneratedColumn<int> tempTenths = GeneratedColumn<int>(
+      'temp_tenths', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _humidityPctMeta =
+      const VerificationMeta('humidityPct');
+  @override
+  late final GeneratedColumn<int> humidityPct = GeneratedColumn<int>(
+      'humidity_pct', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns =>
+      [id, deviceMac, at, tempTenths, humidityPct];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'device_readings';
+  @override
+  VerificationContext validateIntegrity(Insertable<DeviceReading> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('device_mac')) {
+      context.handle(_deviceMacMeta,
+          deviceMac.isAcceptableOrUnknown(data['device_mac']!, _deviceMacMeta));
+    } else if (isInserting) {
+      context.missing(_deviceMacMeta);
+    }
+    if (data.containsKey('at')) {
+      context.handle(_atMeta, at.isAcceptableOrUnknown(data['at']!, _atMeta));
+    } else if (isInserting) {
+      context.missing(_atMeta);
+    }
+    if (data.containsKey('temp_tenths')) {
+      context.handle(
+          _tempTenthsMeta,
+          tempTenths.isAcceptableOrUnknown(
+              data['temp_tenths']!, _tempTenthsMeta));
+    } else if (isInserting) {
+      context.missing(_tempTenthsMeta);
+    }
+    if (data.containsKey('humidity_pct')) {
+      context.handle(
+          _humidityPctMeta,
+          humidityPct.isAcceptableOrUnknown(
+              data['humidity_pct']!, _humidityPctMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  DeviceReading map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return DeviceReading(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}id'])!,
+      deviceMac: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}device_mac'])!,
+      at: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}at'])!,
+      tempTenths: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}temp_tenths'])!,
+      humidityPct: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}humidity_pct']),
+    );
+  }
+
+  @override
+  $DeviceReadingsTable createAlias(String alias) {
+    return $DeviceReadingsTable(attachedDatabase, alias);
+  }
+}
+
+class DeviceReading extends DataClass implements Insertable<DeviceReading> {
+  final int id;
+  final String deviceMac;
+
+  /// When the tablet received the frame (UTC).
+  final DateTime at;
+  final int tempTenths;
+  final int? humidityPct;
+  const DeviceReading(
+      {required this.id,
+      required this.deviceMac,
+      required this.at,
+      required this.tempTenths,
+      this.humidityPct});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['device_mac'] = Variable<String>(deviceMac);
+    map['at'] = Variable<DateTime>(at);
+    map['temp_tenths'] = Variable<int>(tempTenths);
+    if (!nullToAbsent || humidityPct != null) {
+      map['humidity_pct'] = Variable<int>(humidityPct);
+    }
+    return map;
+  }
+
+  DeviceReadingsCompanion toCompanion(bool nullToAbsent) {
+    return DeviceReadingsCompanion(
+      id: Value(id),
+      deviceMac: Value(deviceMac),
+      at: Value(at),
+      tempTenths: Value(tempTenths),
+      humidityPct: humidityPct == null && nullToAbsent
+          ? const Value.absent()
+          : Value(humidityPct),
+    );
+  }
+
+  factory DeviceReading.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return DeviceReading(
+      id: serializer.fromJson<int>(json['id']),
+      deviceMac: serializer.fromJson<String>(json['deviceMac']),
+      at: serializer.fromJson<DateTime>(json['at']),
+      tempTenths: serializer.fromJson<int>(json['tempTenths']),
+      humidityPct: serializer.fromJson<int?>(json['humidityPct']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'deviceMac': serializer.toJson<String>(deviceMac),
+      'at': serializer.toJson<DateTime>(at),
+      'tempTenths': serializer.toJson<int>(tempTenths),
+      'humidityPct': serializer.toJson<int?>(humidityPct),
+    };
+  }
+
+  DeviceReading copyWith(
+          {int? id,
+          String? deviceMac,
+          DateTime? at,
+          int? tempTenths,
+          Value<int?> humidityPct = const Value.absent()}) =>
+      DeviceReading(
+        id: id ?? this.id,
+        deviceMac: deviceMac ?? this.deviceMac,
+        at: at ?? this.at,
+        tempTenths: tempTenths ?? this.tempTenths,
+        humidityPct: humidityPct.present ? humidityPct.value : this.humidityPct,
+      );
+  DeviceReading copyWithCompanion(DeviceReadingsCompanion data) {
+    return DeviceReading(
+      id: data.id.present ? data.id.value : this.id,
+      deviceMac: data.deviceMac.present ? data.deviceMac.value : this.deviceMac,
+      at: data.at.present ? data.at.value : this.at,
+      tempTenths:
+          data.tempTenths.present ? data.tempTenths.value : this.tempTenths,
+      humidityPct:
+          data.humidityPct.present ? data.humidityPct.value : this.humidityPct,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DeviceReading(')
+          ..write('id: $id, ')
+          ..write('deviceMac: $deviceMac, ')
+          ..write('at: $at, ')
+          ..write('tempTenths: $tempTenths, ')
+          ..write('humidityPct: $humidityPct')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, deviceMac, at, tempTenths, humidityPct);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is DeviceReading &&
+          other.id == this.id &&
+          other.deviceMac == this.deviceMac &&
+          other.at == this.at &&
+          other.tempTenths == this.tempTenths &&
+          other.humidityPct == this.humidityPct);
+}
+
+class DeviceReadingsCompanion extends UpdateCompanion<DeviceReading> {
+  final Value<int> id;
+  final Value<String> deviceMac;
+  final Value<DateTime> at;
+  final Value<int> tempTenths;
+  final Value<int?> humidityPct;
+  const DeviceReadingsCompanion({
+    this.id = const Value.absent(),
+    this.deviceMac = const Value.absent(),
+    this.at = const Value.absent(),
+    this.tempTenths = const Value.absent(),
+    this.humidityPct = const Value.absent(),
+  });
+  DeviceReadingsCompanion.insert({
+    this.id = const Value.absent(),
+    required String deviceMac,
+    required DateTime at,
+    required int tempTenths,
+    this.humidityPct = const Value.absent(),
+  })  : deviceMac = Value(deviceMac),
+        at = Value(at),
+        tempTenths = Value(tempTenths);
+  static Insertable<DeviceReading> custom({
+    Expression<int>? id,
+    Expression<String>? deviceMac,
+    Expression<DateTime>? at,
+    Expression<int>? tempTenths,
+    Expression<int>? humidityPct,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (deviceMac != null) 'device_mac': deviceMac,
+      if (at != null) 'at': at,
+      if (tempTenths != null) 'temp_tenths': tempTenths,
+      if (humidityPct != null) 'humidity_pct': humidityPct,
+    });
+  }
+
+  DeviceReadingsCompanion copyWith(
+      {Value<int>? id,
+      Value<String>? deviceMac,
+      Value<DateTime>? at,
+      Value<int>? tempTenths,
+      Value<int?>? humidityPct}) {
+    return DeviceReadingsCompanion(
+      id: id ?? this.id,
+      deviceMac: deviceMac ?? this.deviceMac,
+      at: at ?? this.at,
+      tempTenths: tempTenths ?? this.tempTenths,
+      humidityPct: humidityPct ?? this.humidityPct,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (deviceMac.present) {
+      map['device_mac'] = Variable<String>(deviceMac.value);
+    }
+    if (at.present) {
+      map['at'] = Variable<DateTime>(at.value);
+    }
+    if (tempTenths.present) {
+      map['temp_tenths'] = Variable<int>(tempTenths.value);
+    }
+    if (humidityPct.present) {
+      map['humidity_pct'] = Variable<int>(humidityPct.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DeviceReadingsCompanion(')
+          ..write('id: $id, ')
+          ..write('deviceMac: $deviceMac, ')
+          ..write('at: $at, ')
+          ..write('tempTenths: $tempTenths, ')
+          ..write('humidityPct: $humidityPct')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -4443,6 +4873,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $OtaRunUnitsTable otaRunUnits = $OtaRunUnitsTable(this);
   late final $SystemTestsTable systemTests = $SystemTestsTable(this);
   late final $DeviceLabelsTable deviceLabels = $DeviceLabelsTable(this);
+  late final $DeviceReadingsTable deviceReadings = $DeviceReadingsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -4456,7 +4887,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         otaRuns,
         otaRunUnits,
         systemTests,
-        deviceLabels
+        deviceLabels,
+        deviceReadings
       ];
 }
 
@@ -4955,6 +5387,9 @@ typedef $$MeshDevicesTableCreateCompanionBuilder = MeshDevicesCompanion
   Value<int> lastDevSeq,
   Value<int> alarmLatched,
   Value<DateTime?> alarmLatchedAt,
+  Value<int?> alarmCode,
+  Value<int?> alarmTempTenths,
+  Value<int> sensorWet,
   Value<int?> boardState,
   Value<int> boardFlags,
   Value<DateTime?> tableSyncedAt,
@@ -4987,6 +5422,9 @@ typedef $$MeshDevicesTableUpdateCompanionBuilder = MeshDevicesCompanion
   Value<int> lastDevSeq,
   Value<int> alarmLatched,
   Value<DateTime?> alarmLatchedAt,
+  Value<int?> alarmCode,
+  Value<int?> alarmTempTenths,
+  Value<int> sensorWet,
   Value<int?> boardState,
   Value<int> boardFlags,
   Value<DateTime?> tableSyncedAt,
@@ -5071,6 +5509,16 @@ class $$MeshDevicesTableFilterComposer
   ColumnFilters<DateTime> get alarmLatchedAt => $composableBuilder(
       column: $table.alarmLatchedAt,
       builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get alarmCode => $composableBuilder(
+      column: $table.alarmCode, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get alarmTempTenths => $composableBuilder(
+      column: $table.alarmTempTenths,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get sensorWet => $composableBuilder(
+      column: $table.sensorWet, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<int> get boardState => $composableBuilder(
       column: $table.boardState, builder: (column) => ColumnFilters(column));
@@ -5172,6 +5620,16 @@ class $$MeshDevicesTableOrderingComposer
       column: $table.alarmLatchedAt,
       builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<int> get alarmCode => $composableBuilder(
+      column: $table.alarmCode, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get alarmTempTenths => $composableBuilder(
+      column: $table.alarmTempTenths,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get sensorWet => $composableBuilder(
+      column: $table.sensorWet, builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<int> get boardState => $composableBuilder(
       column: $table.boardState, builder: (column) => ColumnOrderings(column));
 
@@ -5268,6 +5726,15 @@ class $$MeshDevicesTableAnnotationComposer
   GeneratedColumn<DateTime> get alarmLatchedAt => $composableBuilder(
       column: $table.alarmLatchedAt, builder: (column) => column);
 
+  GeneratedColumn<int> get alarmCode =>
+      $composableBuilder(column: $table.alarmCode, builder: (column) => column);
+
+  GeneratedColumn<int> get alarmTempTenths => $composableBuilder(
+      column: $table.alarmTempTenths, builder: (column) => column);
+
+  GeneratedColumn<int> get sensorWet =>
+      $composableBuilder(column: $table.sensorWet, builder: (column) => column);
+
   GeneratedColumn<int> get boardState => $composableBuilder(
       column: $table.boardState, builder: (column) => column);
 
@@ -5334,6 +5801,9 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             Value<int> lastDevSeq = const Value.absent(),
             Value<int> alarmLatched = const Value.absent(),
             Value<DateTime?> alarmLatchedAt = const Value.absent(),
+            Value<int?> alarmCode = const Value.absent(),
+            Value<int?> alarmTempTenths = const Value.absent(),
+            Value<int> sensorWet = const Value.absent(),
             Value<int?> boardState = const Value.absent(),
             Value<int> boardFlags = const Value.absent(),
             Value<DateTime?> tableSyncedAt = const Value.absent(),
@@ -5365,6 +5835,9 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             lastDevSeq: lastDevSeq,
             alarmLatched: alarmLatched,
             alarmLatchedAt: alarmLatchedAt,
+            alarmCode: alarmCode,
+            alarmTempTenths: alarmTempTenths,
+            sensorWet: sensorWet,
             boardState: boardState,
             boardFlags: boardFlags,
             tableSyncedAt: tableSyncedAt,
@@ -5396,6 +5869,9 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             Value<int> lastDevSeq = const Value.absent(),
             Value<int> alarmLatched = const Value.absent(),
             Value<DateTime?> alarmLatchedAt = const Value.absent(),
+            Value<int?> alarmCode = const Value.absent(),
+            Value<int?> alarmTempTenths = const Value.absent(),
+            Value<int> sensorWet = const Value.absent(),
             Value<int?> boardState = const Value.absent(),
             Value<int> boardFlags = const Value.absent(),
             Value<DateTime?> tableSyncedAt = const Value.absent(),
@@ -5427,6 +5903,9 @@ class $$MeshDevicesTableTableManager extends RootTableManager<
             lastDevSeq: lastDevSeq,
             alarmLatched: alarmLatched,
             alarmLatchedAt: alarmLatchedAt,
+            alarmCode: alarmCode,
+            alarmTempTenths: alarmTempTenths,
+            sensorWet: sensorWet,
             boardState: boardState,
             boardFlags: boardFlags,
             tableSyncedAt: tableSyncedAt,
@@ -6581,6 +7060,174 @@ typedef $$DeviceLabelsTableProcessedTableManager = ProcessedTableManager<
     ),
     DeviceLabel,
     PrefetchHooks Function()>;
+typedef $$DeviceReadingsTableCreateCompanionBuilder = DeviceReadingsCompanion
+    Function({
+  Value<int> id,
+  required String deviceMac,
+  required DateTime at,
+  required int tempTenths,
+  Value<int?> humidityPct,
+});
+typedef $$DeviceReadingsTableUpdateCompanionBuilder = DeviceReadingsCompanion
+    Function({
+  Value<int> id,
+  Value<String> deviceMac,
+  Value<DateTime> at,
+  Value<int> tempTenths,
+  Value<int?> humidityPct,
+});
+
+class $$DeviceReadingsTableFilterComposer
+    extends Composer<_$AppDatabase, $DeviceReadingsTable> {
+  $$DeviceReadingsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get deviceMac => $composableBuilder(
+      column: $table.deviceMac, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get at => $composableBuilder(
+      column: $table.at, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get tempTenths => $composableBuilder(
+      column: $table.tempTenths, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get humidityPct => $composableBuilder(
+      column: $table.humidityPct, builder: (column) => ColumnFilters(column));
+}
+
+class $$DeviceReadingsTableOrderingComposer
+    extends Composer<_$AppDatabase, $DeviceReadingsTable> {
+  $$DeviceReadingsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get deviceMac => $composableBuilder(
+      column: $table.deviceMac, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get at => $composableBuilder(
+      column: $table.at, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get tempTenths => $composableBuilder(
+      column: $table.tempTenths, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get humidityPct => $composableBuilder(
+      column: $table.humidityPct, builder: (column) => ColumnOrderings(column));
+}
+
+class $$DeviceReadingsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $DeviceReadingsTable> {
+  $$DeviceReadingsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get deviceMac =>
+      $composableBuilder(column: $table.deviceMac, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get at =>
+      $composableBuilder(column: $table.at, builder: (column) => column);
+
+  GeneratedColumn<int> get tempTenths => $composableBuilder(
+      column: $table.tempTenths, builder: (column) => column);
+
+  GeneratedColumn<int> get humidityPct => $composableBuilder(
+      column: $table.humidityPct, builder: (column) => column);
+}
+
+class $$DeviceReadingsTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $DeviceReadingsTable,
+    DeviceReading,
+    $$DeviceReadingsTableFilterComposer,
+    $$DeviceReadingsTableOrderingComposer,
+    $$DeviceReadingsTableAnnotationComposer,
+    $$DeviceReadingsTableCreateCompanionBuilder,
+    $$DeviceReadingsTableUpdateCompanionBuilder,
+    (
+      DeviceReading,
+      BaseReferences<_$AppDatabase, $DeviceReadingsTable, DeviceReading>
+    ),
+    DeviceReading,
+    PrefetchHooks Function()> {
+  $$DeviceReadingsTableTableManager(
+      _$AppDatabase db, $DeviceReadingsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DeviceReadingsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$DeviceReadingsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$DeviceReadingsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            Value<String> deviceMac = const Value.absent(),
+            Value<DateTime> at = const Value.absent(),
+            Value<int> tempTenths = const Value.absent(),
+            Value<int?> humidityPct = const Value.absent(),
+          }) =>
+              DeviceReadingsCompanion(
+            id: id,
+            deviceMac: deviceMac,
+            at: at,
+            tempTenths: tempTenths,
+            humidityPct: humidityPct,
+          ),
+          createCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            required String deviceMac,
+            required DateTime at,
+            required int tempTenths,
+            Value<int?> humidityPct = const Value.absent(),
+          }) =>
+              DeviceReadingsCompanion.insert(
+            id: id,
+            deviceMac: deviceMac,
+            at: at,
+            tempTenths: tempTenths,
+            humidityPct: humidityPct,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$DeviceReadingsTableProcessedTableManager = ProcessedTableManager<
+    _$AppDatabase,
+    $DeviceReadingsTable,
+    DeviceReading,
+    $$DeviceReadingsTableFilterComposer,
+    $$DeviceReadingsTableOrderingComposer,
+    $$DeviceReadingsTableAnnotationComposer,
+    $$DeviceReadingsTableCreateCompanionBuilder,
+    $$DeviceReadingsTableUpdateCompanionBuilder,
+    (
+      DeviceReading,
+      BaseReferences<_$AppDatabase, $DeviceReadingsTable, DeviceReading>
+    ),
+    DeviceReading,
+    PrefetchHooks Function()>;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -6603,4 +7250,6 @@ class $AppDatabaseManager {
       $$SystemTestsTableTableManager(_db, _db.systemTests);
   $$DeviceLabelsTableTableManager get deviceLabels =>
       $$DeviceLabelsTableTableManager(_db, _db.deviceLabels);
+  $$DeviceReadingsTableTableManager get deviceReadings =>
+      $$DeviceReadingsTableTableManager(_db, _db.deviceReadings);
 }

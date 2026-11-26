@@ -114,6 +114,7 @@ A schema change is not done until the reference says the same thing as the code.
 
 - `docs/sempreiot-system-reference.md` — **start here**: functionality catalogue, status, customer
   numbers, index of every doc and the order of authority.
+  - `docs/datasheets` — sensors and components datasheets
 - `docs/safr/protocol-safr-v3.md` — the wire format. Single source of truth for anything on the wire.
 - `docs/others/system-blueprint-v1.md` — rules, vocabulary, installation, network formation, operation.
   Wins over every other doc except the protocol. `docs/others/app-sempreiot-central.md` — the Flutter

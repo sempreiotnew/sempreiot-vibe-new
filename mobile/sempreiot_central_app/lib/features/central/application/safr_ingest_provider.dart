@@ -391,8 +391,14 @@ class SafrIngestService {
         _recentMsgIds[dedupeKey] = now;
       }
 
-      await _upsertDevice(frame, existing, now);
+      await _upsertDevice(frame, existing, now, duplicate: isDuplicate);
       if (isDuplicate) return (eventId: null, fresh: false);
+
+      // The reading this frame carries (protocol §7.3 / §7.1, v3.16): one
+      // point of the unit's temperature history, at the time it arrived.
+      // Only a frame handled for the first time; a journal replay is not a
+      // point (its reading is not of now).
+      await _storeReading(frame, now);
 
       if (event != null) {
         final id = await _insertEvent(
@@ -410,6 +416,45 @@ class SafrIngestService {
     });
   }
 
+  Future<void> _storeReading(SafrWireFrame frame, DateTime now) async {
+    final (int? temp, int? humidity) = switch (frame.payload) {
+      SafrHeartbeatPayload p => (p.tempTenths, p.humidityPct),
+      SafrEventPayload p => (p.tempTenths, p.humidityPct),
+      _ => (null, null),
+    };
+    if (temp == null) return;
+    await db.addReading(
+      mac: frame.srcMac,
+      at: now,
+      tempTenths: temp,
+      humidityPct: humidity,
+    );
+  }
+
+  /// What an accepted EVENT says of the unit beyond the latch: why the
+  /// alarm is held (the newest ALARM's code and reading) and whether its
+  /// sensor is wet — SENSOR_WET until the RESTORE that carries FAULT_CODE 6
+  /// (protocol §7.1.4: a TROUBLE is cleared by the matching RESTORE).
+  static ({int? alarmCode, int? alarmTemp, int sensorWet}) _eventState(
+    SafrEventPayload p, {
+    required int? alarmCode,
+    required int? alarmTemp,
+    required int sensorWet,
+  }) {
+    if (p.eventType == SafrEventType.alarm) {
+      alarmCode = p.eventCodeRaw;
+      alarmTemp = p.tempTenths;
+    }
+    if (p.eventType == SafrEventType.trouble &&
+        p.eventCode == SafrEventCode.sensorWet) {
+      sensorWet = 1;
+    } else if (p.eventType == SafrEventType.okRestore &&
+        p.faultCode == safrFaultCodeSensorWet) {
+      sensorWet = 0;
+    }
+    return (alarmCode: alarmCode, alarmTemp: alarmTemp, sensorWet: sensorWet);
+  }
+
   Future<bool> _isDuplicateEvent(String mac, int? devSeq) async {
     if (devSeq == null || devSeq == 0) return false;
     final row = await (db.select(db.deviceEvents)
@@ -422,8 +467,9 @@ class SafrIngestService {
   Future<void> _upsertDevice(
     SafrWireFrame frame,
     MeshDevice? existing,
-    DateTime now,
-  ) async {
+    DateTime now, {
+    bool duplicate = false,
+  }) async {
     final payload = frame.payload;
     var role = existing?.role ?? SafrNodeRole.unknown.wire;
     var layer = existing?.layer ?? frame.hops;
@@ -436,6 +482,9 @@ class SafrIngestService {
     var alarmLatchedAt = existing?.alarmLatchedAt;
     var parentCandidates = existing?.parentCandidates;
     var dlHeard = existing?.dlHeard;
+    var alarmCode = existing?.alarmCode;
+    var alarmTemp = existing?.alarmTempTenths;
+    var sensorWet = existing?.sensorWet ?? 0;
 
     switch (payload) {
       case SafrHeartbeatPayload p:
@@ -481,9 +530,19 @@ class SafrIngestService {
         // Alarm latch (spec §7.1.4 — UL 864/NFPA 72): set on ALARM, cleared
         // only by clearAlarmLatch() after an operator RESET. RESTORE events
         // deliberately do NOT touch it.
-        if (p.eventType == SafrEventType.alarm && alarmLatched == 0) {
+        final latches = p.eventType == SafrEventType.alarm && alarmLatched == 0;
+        if (latches) {
           alarmLatched = 1;
           alarmLatchedAt = now;
+        }
+        // A re-announcement or a retry says nothing new: it must not bring
+        // back a cause a newer alarm replaced, nor a trouble already cleared.
+        if (latches || !duplicate) {
+          final s = _eventState(p,
+              alarmCode: alarmCode, alarmTemp: alarmTemp, sensorWet: sensorWet);
+          alarmCode = s.alarmCode;
+          alarmTemp = s.alarmTemp;
+          sensorWet = s.sensorWet;
         }
       default:
         break;
@@ -550,6 +609,9 @@ class SafrIngestService {
             hwRev: Value(hwRev),
             fwVersion: Value(fwVersion),
             dlHeard: Value(dlHeard),
+            alarmCode: Value(alarmCode),
+            alarmTempTenths: Value(alarmTemp),
+            sensorWet: Value(sensorWet),
           ),
         );
   }
@@ -577,6 +639,10 @@ class SafrIngestService {
       alarmLatched = 1;
       alarmLatchedAt = now;
     }
+    final s = _eventState(p,
+        alarmCode: existing?.alarmCode,
+        alarmTemp: existing?.alarmTempTenths,
+        sensorWet: existing?.sensorWet ?? 0);
 
     await db.into(db.meshDevices).insertOnConflictUpdate(
           MeshDevicesCompanion(
@@ -600,6 +666,9 @@ class SafrIngestService {
             productCode: Value(existing?.productCode),
             hwRev: Value(existing?.hwRev),
             fwVersion: Value(existing?.fwVersion),
+            alarmCode: Value(s.alarmCode),
+            alarmTempTenths: Value(s.alarmTemp),
+            sensorWet: Value(s.sensorWet),
           ),
         );
   }

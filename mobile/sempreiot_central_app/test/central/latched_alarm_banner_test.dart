@@ -34,6 +34,7 @@ void main() {
         lastDevSeq: 0,
         alarmLatched: 1,
         boardFlags: 0,
+        sensorWet: 0,
       );
 
   const sizes = {

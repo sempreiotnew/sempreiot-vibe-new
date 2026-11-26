@@ -4,7 +4,8 @@
 cmake_minimum_required(VERSION 3.16)
 
 list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../../components/core"
-                                 "${CMAKE_CURRENT_LIST_DIR}/../../components/net")   # siot_provisioning: crypto only on linux
+                                 "${CMAKE_CURRENT_LIST_DIR}/../../components/net"   # siot_provisioning: crypto only on linux
+                                 "${CMAKE_CURRENT_LIST_DIR}/../../components/features/siot_sensing")   # the one feature with a pure-C half (the rules)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 idf_build_set_property(MINIMAL_BUILD ON)

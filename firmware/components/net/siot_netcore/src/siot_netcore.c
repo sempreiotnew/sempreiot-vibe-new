@@ -395,18 +395,42 @@ static void send_ack(uint16_t acked_msg_id, uint8_t status, const uint8_t dst[6]
 
 /* ---- EVENT (spec §7.1) ---------------------------------------------------- */
 
+/* The unit's sensing feature, when it has one (features/siot_sensing): what
+ * goes into TEMP / HUMIDITY / FAULT_FLAGS. Without it they say "n/a", as
+ * every mains unit did before protocol v3.16. */
+static siot_netcore_env_hook_t s_env_hook;
+static void                   *s_env_ctx;
+static uint8_t                 s_evt_fault_code; /* FAULT_CODE of the event being built (lock held) */
+
+void siot_netcore_set_env_hook(siot_netcore_env_hook_t hook, void *ctx)
+{
+    s_env_hook = hook;
+    s_env_ctx = ctx;
+}
+
+static void env_now(int16_t *temp_x10, uint8_t *humidity, uint8_t *fault_flags)
+{
+    *temp_x10 = (int16_t)SAFR_NA_I16;
+    *humidity = SAFR_NA_U8;
+    *fault_flags = 0;
+    if (s_env_hook) s_env_hook(temp_x10, humidity, fault_flags, s_env_ctx);
+}
+
 static void build_event_payload(uint8_t *p, int64_t t, uint8_t evt_type, uint8_t evt_code)
 {
+    int16_t temp_x10;
+    uint8_t humidity, fault_flags;
+    env_now(&temp_x10, &humidity, &fault_flags);
     p[0] = evt_type;
     p[1] = evt_code;
     siot_put_u32(&p[2], now_epoch(t));
     p[6] = SAFR_PWR_AC_OK | SAFR_PWR_CHARGING; /* AC device (brief §5.4) */
     p[7] = SAFR_NA_U8;                          /* BATTERY_PCT */
     siot_put_u16(&p[8], SAFR_NA_U16);           /* SMOKE */
-    siot_put_u16(&p[10], (uint16_t)SAFR_NA_I16);/* TEMP */
-    p[12] = SAFR_NA_U8;                         /* HUMIDITY */
-    p[13] = 0;                                  /* FAULT_FLAGS */
-    p[14] = 0;                                  /* FAULT_CODE */
+    siot_put_u16(&p[10], (uint16_t)temp_x10);   /* TEMP */
+    p[12] = humidity;                           /* HUMIDITY */
+    p[13] = fault_flags;                        /* FAULT_FLAGS */
+    p[14] = s_evt_fault_code;                   /* FAULT_CODE */
     siot_put_u16(&p[15], siot_config_dev_seq_next());
 }
 
@@ -438,16 +462,38 @@ static void emit_event(int64_t t, uint8_t evt_type, uint8_t evt_code, bool ack_r
     }
 }
 
+/* A feature raises an event of this unit's own (protocol §7.1.6: heat,
+ * humidity, sensor fault). ALARM latches and re-announces exactly like the
+ * double tap's; TROUBLE asks for the central's ACK; OK / RESTORE is a plain
+ * line. `fault_code` is the EVENT's FAULT_CODE (the condition, or the one
+ * that cleared). */
+void siot_netcore_raise_event(uint8_t evt_type, uint8_t evt_code, uint8_t fault_code)
+{
+    if (s_lock == NULL) return; /* netcore not started (no installation code yet) */
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_evt_fault_code = fault_code;
+    const bool critical = evt_type == SAFR_EVT_ALARM || evt_type == SAFR_EVT_TROUBLE;
+    /* One frame is tracked for the fast retry: an alarm takes the slot, a
+     * trouble only a free one (it still asks for its ACK). */
+    emit_event(now_ms(), evt_type, evt_code, critical, evt_type == SAFR_EVT_ALARM || !s_pending_used);
+    s_evt_fault_code = 0;
+    xSemaphoreGive(s_lock);
+}
+
 /* ---- HEARTBEAT (§7.3) / TOPOLOGY (§7.4) / NAME_ANNOUNCE (§7.11) ---------- */
 
 static void emit_heartbeat(int64_t t)
 {
-    uint8_t p[23]; /* 20 (§7.3) + DL_HEARD (v3.6) + DL_MAP (v3.7) + BOARD_RSSI (v3.11) */
+    uint8_t p[24]; /* 20 (§7.3) + DL_HEARD (v3.6) + DL_MAP (v3.7) + BOARD_RSSI (v3.11) + HUMIDITY (v3.16) */
+    int16_t temp_x10;
+    uint8_t humidity, fault_flags;
+    env_now(&temp_x10, &humidity, &fault_flags);
     siot_put_u32(&p[0], now_epoch(t));
     siot_put_u32(&p[4], (uint32_t)(t / 1000)); /* UPTIME_S */
     p[8] = SAFR_PWR_AC_OK | SAFR_PWR_CHARGING;
     p[9] = SAFR_NA_U8;
-    siot_put_u16(&p[10], (uint16_t)SAFR_NA_I16);
+    siot_put_u16(&p[10], (uint16_t)temp_x10);
+    p[23] = humidity; /* v3.16: 0xFF on a unit with no sensor */
     uint8_t parent[6];
     int8_t rssi;
     if (siot_link_mesh_parent(parent, &rssi)) { /* root: the board's AP, still a real hop */

@@ -15,7 +15,9 @@ import '../../application/safr_downlink_provider.dart';
 import '../../application/topology_provider.dart';
 import '../../domain/safr/safr_v2_payloads.dart';
 import '../widgets/device_avatar.dart';
+import '../../domain/readings/temp_reading.dart';
 import '../widgets/device_detail_widgets.dart';
+import '../widgets/device_temp_widgets.dart';
 import '../widgets/editor_gate.dart';
 import '../../../../shared/widgets/app_notice.dart';
 
@@ -249,6 +251,12 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
           const _Notice(
               'Só um pai ao alcance — instale um dispositivo AC mais perto.'),
         ],
+        // Temperature and humidity (phase 5): for every user, nothing
+        // behind a PIN; absent for a unit that never sent a reading.
+        if (node.tempTenths != null && node.readingAt != null) ...[
+          const SizedBox(height: 24),
+          DeviceTempSection(node: node),
+        ],
         const SizedBox(height: 24),
         const InfoSectionHeader('ESTADO'),
         const SizedBox(height: 10),
@@ -270,10 +278,25 @@ class _DeviceSettingsScreenState extends ConsumerState<DeviceSettingsScreen> {
             _Fact(
               icon: Icons.local_fire_department_rounded,
               label: 'Alarme retido',
-              value: node.alarmLatchedAt != null
-                  ? 'desde ${relativeTime(node.alarmLatchedAt!)}'
-                  : 'sim',
+              // A heat alarm says why, with the reading that fired it.
+              value: [
+                if (node.alarmCode != null)
+                  heatAlarmWords(node.alarmCode!, node.alarmTempTenths),
+                node.alarmLatchedAt != null
+                    ? 'desde ${relativeTime(node.alarmLatchedAt!)}'
+                    : 'sim',
+              ].whereType<String>().join(' · '),
               valueColor: AppColors.error,
+            ),
+          ],
+          if (node.sensorWet) ...[
+            const InfoRowDivider(),
+            const _Fact(
+              icon: Icons.water_drop_outlined,
+              label: 'Sensor',
+              value: '$sensorWetWords — as leituras desta unidade não são '
+                  'confiáveis até secar',
+              valueColor: AppColors.warning,
             ),
           ],
           if (node.boardState != null) ...[
