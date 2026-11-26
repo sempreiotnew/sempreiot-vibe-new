@@ -842,6 +842,11 @@ class SafrIngestService {
             if (p.moveFrom != null) 'move_from': p.moveFrom,
             if (p.pathBefore != null) 'path_before': p.pathBefore,
             if (p.pathAfter != null) 'path_after': p.pathAfter,
+            // Provisional (VERSION 3, before-production item 13).
+            if (p.parentBefore != null) 'parent_before': p.parentBefore,
+            if (p.asks != null) 'asks': p.asks,
+            if (p.answers != null) 'answers': p.answers,
+            if (p.answersNew != null) 'answers_new': p.answersNew,
           }),
         ));
   }

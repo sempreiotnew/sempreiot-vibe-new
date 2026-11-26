@@ -113,6 +113,8 @@ grep -q '^#define SIOT_PATH_BENCH_TIMES 1' "$FW_DIR/components/net/siot_link/inc
 { grep -qs '^CONFIG_SIOT_BENCH_BOARD_DEAF=y' "$FW_DIR/apps/node/sdkconfig" "$FW_DIR/apps/node/sdkconfig.defaults" \
     || [[ -d "$FW_DIR/apps/node/build-deaf" ]]; } \
     && RELAXED+=("item 12 node: a build that is deaf to the central exists (CONFIG_SIOT_BENCH_BOARD_DEAF; delete apps/node/build-deaf)")
+grep -q '^#define SIOT_OUTAGE_DIAG 1' "$FW_DIR/components/net/siot_netcore/src/siot_netcore.c" \
+    && RELAXED+=("item 13 node: every OUTAGE_REPORT carries the provisional diagnosis, VERSION 3 (SIOT_OUTAGE_DIAG)")
 grep -q 'CHANNEL=bench ' "$FW_DIR/tools/ota_release.sh" \
     && RELAXED+=("item 9  Internet releases: one channel, 'bench' — no 'stable' channel for customers yet (ota_release.sh default)")
 

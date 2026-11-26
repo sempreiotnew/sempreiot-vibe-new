@@ -1612,7 +1612,25 @@ class SafrOutageReportPayload extends SafrV2Payload {
     this.moveFrom,
     this.pathBefore,
     this.pathAfter,
+    this.parentBefore,
+    this.asks,
+    this.answers,
+    this.answersNew,
   });
+
+  /// VERSION 3, **provisional** (2026-11-26, `SIOT_OUTAGE_DIAG` in
+  /// siot_netcore.c, docs/ota/before-production.md item 13): the unit it was
+  /// attached to when it began (null when it did not know), how many times
+  /// it asked that unit whether it still had a path (protocol §7.16.1), how
+  /// many answers it heard and how many of them brought a newer proof. All
+  /// null in a report of an earlier version.
+  final String? parentBefore;
+  final int? asks;
+  final int? answers;
+  final int? answersNew;
+
+  static const diagVersion = 3;
+  static const diagWireLength = 35;
 
   /// VERSION 2 (v3.15), a unit that left its parent for a better path: the
   /// unit it went for and the one it left (their MACs; [moveFrom] null when
@@ -1671,8 +1689,13 @@ class SafrOutageReportPayload extends SafrV2Payload {
       return b.length == 6 && b.every((x) => x >= 0) ? b : List.filled(6, 0);
     }
 
+    final diag = asks != null;
     return Uint8List.fromList([
-      moveTo == null ? version : moveVersion,
+      diag
+          ? diagVersion
+          : moveTo == null
+              ? version
+              : moveVersion,
       (s >> 24) & 0xFF,
       (s >> 16) & 0xFF,
       (s >> 8) & 0xFF,
@@ -1684,11 +1707,17 @@ class SafrOutageReportPayload extends SafrV2Payload {
       anyRounds & 0xFF,
       restarts & 0xFF,
       end.wire,
-      if (moveTo != null) ...[
+      if (moveTo != null || diag) ...[
         ...mac(moveTo),
         ...mac(moveFrom),
         (pathBefore ?? 0x7F) & 0xFF,
         (pathAfter ?? 0x7F) & 0xFF,
+      ],
+      if (diag) ...[
+        ...mac(parentBefore),
+        asks! & 0xFF,
+        (answers ?? 0) & 0xFF,
+        (answersNew ?? 0) & 0xFF,
       ],
     ]);
   }
@@ -1698,6 +1727,7 @@ class SafrOutageReportPayload extends SafrV2Payload {
   static SafrOutageReportPayload? parse(Uint8List p) {
     if (p.length < wireLength || p[0] < version) return null;
     final move = p[0] >= moveVersion && p.length >= moveWireLength;
+    final diag = p[0] >= diagVersion && p.length >= diagWireLength;
     String? mac(int at) {
       final b = p.sublist(at, at + 6);
       return b.every((x) => x == 0) ? null : safrMacToString(b);
@@ -1709,6 +1739,10 @@ class SafrOutageReportPayload extends SafrV2Payload {
       moveFrom: move ? mac(18) : null,
       pathBefore: move ? dbm(24) : null,
       pathAfter: move ? dbm(25) : null,
+      parentBefore: diag ? mac(26) : null,
+      asks: diag ? p[32] : null,
+      answers: diag ? p[33] : null,
+      answersNew: diag ? p[34] : null,
       duration:
           Duration(seconds: (p[1] << 24) | (p[2] << 16) | (p[3] << 8) | p[4]),
       cause: SafrOutageCause.fromWire(p[5]),
@@ -1791,6 +1825,26 @@ class SafrOutageReportPayload extends SafrV2Payload {
         backWords,
       ];
 
+  /// **Provisional** (VERSION 3): what the bench needs to tell why the unit
+  /// left — the unit it was on, whether it asked it for its path and what
+  /// came back, and that it did not restart. Null in an earlier report.
+  String? diagWords([String Function(String mac)? nameOf]) {
+    final n = asks;
+    if (n == null) return null;
+    final got = answers ?? 0, fresh = answersNew ?? 0;
+    final parent = parentBefore;
+    return 'diagnóstico: ${[
+      if (parent != null) 'estava ligado a ${nameOf?.call(parent) ?? parent}',
+      if (n == 0)
+        'não chegou a perguntar pelo caminho'
+      else
+        'perguntou pelo caminho $n ${n == 1 ? 'vez' : 'vezes'}, '
+            '${got == 0 ? 'sem resposta' : '$got ${got == 1 ? 'resposta' : 'respostas'}, '
+                '$fresh com caminho'}',
+      if (restarts == 0) 'não reiniciou',
+    ].join(', ')}';
+  }
+
   /// The line of the event history, in the operator's words (after the
   /// unit's name): how long, why, what it took, how it came back. A move
   /// that worked is said as what it is: "mudou de A para B, por um sinal
@@ -1800,6 +1854,7 @@ class SafrOutageReportPayload extends SafrV2Payload {
       : [
           'ficou ${_span(duration)} sem caminho até a central',
           ...detailWords(nameOf),
+          if (diagWords(nameOf) != null) diagWords(nameOf)!,
         ].join(' · ');
 }
 

@@ -1095,6 +1095,16 @@ tried and whether it had to restart itself.
 | 18 | 6 | FROM *(VERSION 2)* — the unit it left; all zero = not known |
 | 24 | 1 | PATH_BEFORE *(VERSION 2)* — int8 dBm, the path it had; `0x7F` = not known |
 | 25 | 1 | PATH_AFTER *(VERSION 2)* — int8 dBm, the path the other unit offered |
+| 26 | 6 | PARENT *(VERSION 3, provisional)* — the unit it was attached to when the outage began (its SAFR address); all zero = not known |
+| 32 | 1 | ASKS *(VERSION 3, provisional)* — times it asked that unit whether it still had a path (§7.16.1) |
+| 33 | 1 | ANSWERS *(VERSION 3, provisional)* — answers it heard |
+| 34 | 1 | ANSWERS_NEW *(VERSION 3, provisional)* — answers that brought a newer proof of a path |
+
+**`VERSION 3` is provisional (2026-11-26)** — a bench diagnosis, not a protocol version: with
+`SIOT_OUTAGE_DIAG` on (`siot_netcore.c`; `docs/ota/before-production.md` item 13) **every** report
+is 35 bytes, with TO / FROM zero and the two paths `0x7F` when it was not a move. A central that
+knows only `VERSION 2` reads the first 26 bytes as before (all-zero TO = no move). The counters are
+of the whole outage, restarts included; a move that never became an outage carries them as zero.
 
 **When.** An outage begins when nothing has proven a path for 20 s and ends at the next proof. It
 is reported when the link did something about it (CAUSE, FLAGS or a counter is not zero), and a

@@ -5,6 +5,7 @@
 
 #include "esp_attr.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -125,6 +126,16 @@ static uint8_t  s_rejoins;           /* rejoins since the central last confirmed
  * — VERSION 2. Every other report is VERSION 1, byte for byte as before. */
 #define OUTAGE_REPORT_VER_MOVE   2
 #define OUTAGE_REPORT_MOVE_LEN  26 /* + TO(6) + FROM(6) + PATH_BEFORE + PATH_AFTER */
+/* PROVISIONAL (2026-11-26, docs/ota/before-production.md item 13): every
+ * report is VERSION 3 — the twenty-six bytes (TO / FROM zero and the paths
+ * 0x7F when it was not a move) and then PARENT(6) ‖ ASKS ‖ ANSWERS ‖
+ * ANSWERS_NEW: the unit it was attached to when the outage began, how many
+ * times it asked it for its path (§7.16.1) and what came back. For finding
+ * why units on a table with good signal still lose their path; 0 = the
+ * reports of v3.15, byte for byte. */
+#define SIOT_OUTAGE_DIAG 1
+#define OUTAGE_REPORT_VER_DIAG   3
+#define OUTAGE_REPORT_DIAG_LEN  35
 #define OUTAGE_REPORT_TRIES      8 /* 3 x 2 s, then once a minute */
 #define OUTAGE_END_RESCUE        1 /* moved to a neighbour that said it had a path */
 #define OUTAGE_END_ROOT          2 /* as the root, on the board */
@@ -141,11 +152,17 @@ typedef struct {
     uint8_t  rescues;
     uint8_t  rescue_fails;
     uint8_t  any_rounds;
+    uint8_t  parent[6];   /* provisional (SIOT_OUTAGE_DIAG): siot_link_recovery_t's */
+    uint8_t  asks;
+    uint8_t  answers;
+    uint8_t  answers_new;
     uint8_t  alarm;       /* 1 = alarm_payload is the alarm this unit is in */
     uint8_t  alarm_payload[SAFR_EVENT_LEN];
     uint32_t sum;
 } keep_t;
 static RTC_NOINIT_ATTR keep_t s_keep; /* survives esp_restart, not a power cut */
+
+#define KEEP_DIAG_CLEAR() do { memset(s_keep.parent, 0, 6); s_keep.asks = s_keep.answers = s_keep.answers_new = 0; } while (0)
 
 static uint32_t keep_sum(void)
 {
@@ -165,6 +182,7 @@ static void keep_load(void)
     if (!s_keep.carry) {
         s_keep.acc_s = 0;
         s_keep.restarts = s_keep.cause = s_keep.flags = s_keep.rescues = s_keep.rescue_fails = s_keep.any_rounds = 0;
+        KEEP_DIAG_CLEAR();
     }
     s_keep.carry = 0; /* only the restart below sets it */
     keep_store();
@@ -175,6 +193,7 @@ static void keep_outage_clear(void)
     s_keep.acc_s = 0;
     s_keep.carry = 0;
     s_keep.restarts = s_keep.cause = s_keep.flags = s_keep.rescues = s_keep.rescue_fails = s_keep.any_rounds = 0;
+    KEEP_DIAG_CLEAR();
     keep_store();
 }
 
@@ -190,10 +209,15 @@ static void keep_merge_link(void)
     s_keep.rescues = sat_add(s_keep.rescues, r.rescues);
     s_keep.rescue_fails = sat_add(s_keep.rescue_fails, r.rescue_fails);
     s_keep.any_rounds = sat_add(s_keep.any_rounds, r.any_rounds);
+    static const uint8_t none[6];
+    if (memcmp(s_keep.parent, none, 6) == 0) memcpy(s_keep.parent, r.parent, 6);
+    s_keep.asks = sat_add(s_keep.asks, r.asks);
+    s_keep.answers = sat_add(s_keep.answers, r.answers);
+    s_keep.answers_new = sat_add(s_keep.answers_new, r.answers_new);
 }
 
 static bool     s_report_used;
-static uint8_t  s_report_payload[OUTAGE_REPORT_MOVE_LEN];
+static uint8_t  s_report_payload[OUTAGE_REPORT_DIAG_LEN];
 static uint8_t  s_report_len;
 static uint16_t s_report_msg_id;
 static uint8_t  s_report_tries;
@@ -222,6 +246,18 @@ static void report_start(int64_t t, uint32_t total_s, uint8_t end, const siot_li
         p[25] = (uint8_t)mv->path_after;
         s_report_len = OUTAGE_REPORT_MOVE_LEN;
     }
+#if SIOT_OUTAGE_DIAG
+    if (!mv) {
+        memset(&p[12], 0, 12);
+        p[24] = p[25] = 0x7F;
+    }
+    p[0] = OUTAGE_REPORT_VER_DIAG;
+    memcpy(&p[26], s_keep.parent, 6);
+    p[32] = s_keep.asks;
+    p[33] = s_keep.answers;
+    p[34] = s_keep.answers_new;
+    s_report_len = OUTAGE_REPORT_DIAG_LEN;
+#endif
     s_report_used = true;
     s_report_msg_id = siot_safr_next_msg_id(); /* one MSG_ID for every copy: the central lists it once */
     s_report_tries = 0;
@@ -1049,6 +1085,10 @@ static void netcore_task(void *arg)
                               "%u rescue(s) of which %u missed, %u any-parent round(s), %u restart(s)): telling the central",
                          (unsigned)total_s, s_keep.cause, s_keep.flags, s_keep.rescues, s_keep.rescue_fails,
                          s_keep.any_rounds, s_keep.restarts);
+#if SIOT_OUTAGE_DIAG
+                ESP_LOGW(TAG, "  it was attached to " MACSTR ": asked it %u time(s) for its path, %u answer(s), %u with a "
+                              "newer proof", MAC2STR(s_keep.parent), s_keep.asks, s_keep.answers, s_keep.answers_new);
+#endif
             }
             keep_outage_clear();
             if (s_alarm_active) s_alarm_next_retx_ms = t; /* the alarm first: it waited for this path */

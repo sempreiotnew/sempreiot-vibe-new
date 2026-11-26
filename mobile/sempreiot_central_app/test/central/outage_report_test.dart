@@ -210,6 +210,55 @@ void main() {
       expect(panelEventOf(r.single, nameOf)!.kind, PanelEventKind.info);
     });
 
+    // Provisional (VERSION 3, before-production item 13).
+    test('the diagnosis: the unit it was on, what it asked, no restart',
+        () async {
+      const p = SafrOutageReportPayload(
+        duration: Duration(seconds: 75),
+        cause: SafrOutageCause.parentSilent,
+        flags: 0x02,
+        rescues: 1,
+        end: SafrOutageEnd.rescued,
+        parentBefore: parent,
+        asks: 3,
+        answers: 0,
+        answersNew: 0,
+      );
+      final bytes = p.build();
+      expect(bytes, hasLength(35));
+      expect(bytes[0], 3);
+      final back = SafrOutageReportPayload.parse(bytes)!;
+      expect(back.moveTo, isNull);
+      expect(back.pathBefore, isNull);
+      expect(back.parentBefore, parent);
+      expect(back.asks, 3);
+      expect(back.build(), bytes);
+
+      await send(p);
+      final r = await rows();
+      expect(r.single.severity, 1);
+      expect(
+          panelEventOf(r.single, nameOf)!.text,
+          'Sirene 2º andar — ficou 1 min 15 s sem caminho até a central · '
+          'o dispositivo ao qual estava ligado ficou sem caminho · '
+          '1 tentativa de religar por outro dispositivo · '
+          'voltou por outro dispositivo · '
+          'diagnóstico: estava ligado a Hall, '
+          'perguntou pelo caminho 3 vezes, sem resposta, não reiniciou');
+
+      const answered = SafrOutageReportPayload(
+        duration: Duration(seconds: 40),
+        cause: SafrOutageCause.parentLost,
+        asks: 2,
+        answers: 2,
+        answersNew: 1,
+      );
+      expect(
+          answered.diagWords(),
+          'diagnóstico: perguntou pelo caminho 2 vezes, 2 respostas, '
+          '1 com caminho, não reiniciou');
+    });
+
     test('a move that went wrong is a trouble that says it left by itself',
         () async {
       await send(const SafrOutageReportPayload(

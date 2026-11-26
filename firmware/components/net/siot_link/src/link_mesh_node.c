@@ -485,6 +485,19 @@ static void rec_count(uint8_t *n)
     if (*n < 0xFF) (*n)++;
 }
 
+/* For the outage record, provisional (SIOT_OUTAGE_DIAG): the unit this one
+ * hangs from — the first one counts, by the address its adverts carry.
+ * Never with s_path_lock held. */
+static void rec_parent(void)
+{
+    static const uint8_t none[6];
+    if (memcmp(s_rec.parent, none, 6) != 0 || memcmp(s_parent_last, none, 6) == 0) return;
+    xSemaphoreTake(s_path_lock, portMAX_DELAY);
+    const siot_path_neighbour_t *p = siot_path_find_ap(&s_path, s_parent_last);
+    if (p) memcpy(s_rec.parent, p->id, 6);
+    xSemaphoreGive(s_path_lock);
+}
+
 void siot_link_mesh_recovery(siot_link_recovery_t *out, bool reset)
 {
     if (out) *out = s_rec;
@@ -894,6 +907,7 @@ static void path_move_start(int64_t now, const siot_path_choice_t *c, const char
          * Whatever follows — attached to nothing meanwhile, the new parent
          * missed — began here, not with a parent that went off the air. */
         rec_cause(SIOT_LINK_OUT_MOVE);
+        rec_parent();
         siot_link_move_t mv = {.state = SIOT_LINK_MOVE_GOING, .path_before = c->path_now,
                                .path_after = c->path_new, .started_ms = now};
         memcpy(mv.to, c->id, 6);
@@ -1025,6 +1039,7 @@ static bool path_poll(int64_t now, uint8_t level, sta_where_t where, const char 
     /* The parent of the last look is gone: the units that hang from it are no
      * way out until they have the news (siot_path_parent_lost). */
     if (!on_unit && s_parent_seen) {
+        rec_parent();
         xSemaphoreTake(s_path_lock, portMAX_DELAY);
         siot_path_parent_lost(&s_path, now, s_parent_last);
         xSemaphoreGive(s_path_lock);
@@ -1367,6 +1382,8 @@ static void mesh_guard_poll(void)
         s_ask_next_ms = now + (s_ask_tries < NO_PATH_ASK_TRIES ? NO_PATH_ASK_EVERY_MS : NO_PATH_ASK_IDLE_MS);
         const uint8_t ask[1] = {PATH_ASK_VER};
         const esp_err_t err = mesh_send_raw(MESH_PATH_ASK_MSG_ID, ask, sizeof(ask), esp_mesh_lite_send_raw_msg_to_parent);
+        rec_parent();
+        rec_count(&s_rec.asks);
         if (first) {
             ESP_LOGI(TAG, "nothing from the central for %d s through %s: asking it whether it still has a path (%s)",
                      (int)((now - proof) / 1000), parent, esp_err_to_name(err));
@@ -1620,11 +1637,13 @@ static esp_err_t on_path_ans_raw_msg(uint8_t *data, uint32_t size, uint8_t **out
     const uint32_t age = ((uint32_t)data[1] << 8) | data[2];
     const uint32_t now_s = (uint32_t)(now_ms() / 1000) + 1;
     s_parent_ans_s = now_s;
+    rec_count(&s_rec.answers);
     if (age == PATH_AGE_NONE) return ESP_OK;
     const uint32_t made_s = now_s > age ? now_s - age : 1;
     const uint32_t heard = s_last_downlink_s, told = s_parent_proof_s;
     const uint32_t had = heard > told ? heard : told;
     if (made_s > told) s_parent_proof_s = made_s;
+    if (made_s > had) rec_count(&s_rec.answers_new);
     if (made_s > had + 3) path_answer_children(); /* 3 s: the same proof told twice is not news */
     return ESP_OK;
 }

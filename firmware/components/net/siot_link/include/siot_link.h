@@ -255,6 +255,12 @@ typedef struct {
     uint8_t rescue_fails; /* ...that did not get there in time */
     uint8_t any_rounds;   /* rounds of "any parent the library finds" */
     bool    rescued;      /* one of those moves got there */
+    /* PROVISIONAL (2026-11-26, SIOT_OUTAGE_DIAG, docs/ota/before-production.md
+     * item 13): what the bench needs to tell why a unit left its parent. */
+    uint8_t parent[6];    /* the unit it was attached to when it began (its SAFR address); all zero = not known */
+    uint8_t asks;         /* times it asked that unit whether it still had a path (protocol §7.16.1) */
+    uint8_t answers;      /* answers it heard */
+    uint8_t answers_new;  /* ...of which brought a newer proof of a path */
 } siot_link_recovery_t;
 void siot_link_mesh_recovery(siot_link_recovery_t *out, bool reset);
 

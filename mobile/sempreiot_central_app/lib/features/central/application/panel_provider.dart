@@ -115,8 +115,10 @@ MirrorPanelEvent? panelEventOf(
     text = '$who — sem comunicação';
   } else if (detail['kind'] == 'device_restored') {
     text = '$who — voltou a comunicar';
-  } else if (detail['kind'] == 'outage' && detail['move_to'] is String) {
-    // A move to a better path names two other units: by their names now.
+  } else if (detail['kind'] == 'outage' &&
+      (detail['move_to'] is String || detail['parent_before'] is String)) {
+    // A move to a better path names two other units, and the provisional
+    // diagnosis (VERSION 3) the one it was on: by their names now.
     text = '$who — ${_reportOf(detail).describe(nameOf)}';
   } else if (description is String && description.isNotEmpty) {
     text = central ? _capitalized(description) : '$who — $description';
@@ -189,6 +191,10 @@ SafrOutageReportPayload _reportOf(Map<String, dynamic> detail) {
     moveFrom: detail['move_from'] as String?,
     pathBefore: (detail['path_before'] as num?)?.toInt(),
     pathAfter: (detail['path_after'] as num?)?.toInt(),
+    parentBefore: detail['parent_before'] as String?,
+    asks: (detail['asks'] as num?)?.toInt(),
+    answers: (detail['answers'] as num?)?.toInt(),
+    answersNew: (detail['answers_new'] as num?)?.toInt(),
   );
 }
 
