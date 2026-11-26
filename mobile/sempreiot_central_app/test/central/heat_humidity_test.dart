@@ -591,6 +591,114 @@ void main() {
       expect(cold.yOf(-55), inInclusiveRange(0, 1));
     });
 
+    test('humidity: its own scale, a line only where both ends carry one', () {
+      TempPoint h(int secondsAgo, int? pct) => TempPoint(
+          at: now.subtract(Duration(seconds: secondsAgo)),
+          tenths: 250,
+          humidityPct: pct);
+      final g = TempChartGeometry(
+          points: [h(180, 52), h(120, 59), h(60, null), h(0, 61)], now: now);
+      expect(g.hasHumidity, isTrue);
+      expect(g.segments, [(0, 1), (1, 2), (2, 3)]);
+      expect(g.humiditySegments, [(0, 1)]);
+      expect(g.minHumidity, 50);
+      expect(g.maxHumidity, 70);
+      expect(g.yOfHumidity(52), inInclusiveRange(0, 1));
+      expect(g.yOfHumidity(61), inInclusiveRange(0, 1));
+      final wet = TempChartGeometry(points: [h(0, 100)], now: now);
+      expect(wet.maxHumidity, 100); // saturated air stays inside 0…100 %
+      expect(wet.minHumidity, 80);
+      expect(TempChartGeometry(points: [p(0, 250)], now: now).hasHumidity,
+          isFalse);
+    });
+
+    test('the pinch: apart = less time, together = more, inside the limits',
+        () {
+      const hour = Duration(hours: 1);
+      expect(pinchedChartWindow(hour, 1), hour);
+      expect(pinchedChartWindow(hour, 2), const Duration(minutes: 30));
+      expect(pinchedChartWindow(hour, 0.5), const Duration(hours: 2));
+      expect(pinchedChartWindow(hour, 1000), tempChartZoomMin);
+      expect(pinchedChartWindow(hour, 0.001), tempChartZoomMax);
+      expect(pinchedChartWindow(hour, 0), hour);
+    });
+
+    test('closer in: less time and narrower scales; every point stays inside',
+        () {
+      TempPoint h(int secondsAgo, int tenths, int pct) => TempPoint(
+          at: now.subtract(Duration(seconds: secondsAgo)),
+          tenths: tenths,
+          humidityPct: pct);
+      final pts = [
+        h(7200, 230, 50),
+        h(240, 252, 58),
+        h(60, 254, 59),
+        h(0, 255, 59)
+      ];
+      TempChartGeometry at(Duration w) =>
+          TempChartGeometry(points: pts, now: now, window: w, fit: true);
+      final close = at(tempChartZoomMin);
+      expect(close.points.map((e) => e.tenths), [252, 254, 255]);
+      expect(close.tempStepTenths, lessThan(10)); // tenths of a degree
+      expect(close.maxTenths - close.minTenths, lessThanOrEqualTo(20));
+      expect(close.maxHumidity - close.minHumidity, lessThanOrEqualTo(6));
+      expect(close.showsLimit, isFalse); // 57 °C is not in what is shown
+      expect(close.xOf(now.subtract(const Duration(seconds: 150))), 0.5);
+      final far = at(tempChartZoomMax);
+      expect(far.points, hasLength(4));
+      expect(far.xOf(now.subtract(const Duration(hours: 12))), 0.5);
+      final hot = TempChartGeometry(
+          points: [h(60, 480, 30), h(0, 590, 28)],
+          now: now,
+          window: const Duration(minutes: 30),
+          fit: true);
+      expect(hot.showsLimit, isTrue);
+      for (final g in [close, far, hot]) {
+        for (final e in g.points) {
+          expect(g.yOf(e.tenths), inInclusiveRange(0, 1));
+          expect(g.yOfHumidity(e.humidityPct!), inInclusiveRange(0, 1));
+        }
+      }
+    });
+
+    test('the words of the span and of the time axis', () {
+      expect(chartWindowText(const Duration(hours: 1)), 'última hora');
+      expect(chartWindowText(const Duration(minutes: 15)), 'últimos 15 min');
+      expect(chartWindowText(const Duration(hours: 6)), 'últimas 6 h');
+      expect(chartWindowText(const Duration(minutes: 150)), 'últimas 2,5 h');
+    });
+
+    test('the time axis: the tablet\'s clock on round times, and the day', () {
+      // on the tablet's own clock, whatever its zone
+      final end = DateTime(2026, 11, 26, 14, 7, 30).toUtc();
+      List<DateTime> ticks(Duration w, int most) =>
+          chartTimeTicks(end.subtract(w), end, most);
+
+      final hour = ticks(const Duration(hours: 1), 6);
+      expect(hour.map(chartClockText),
+          ['13:10', '13:20', '13:30', '13:40', '13:50', '14:00']);
+      final close = ticks(const Duration(minutes: 5), 6);
+      expect(close.map(chartClockText),
+          ['14:03', '14:04', '14:05', '14:06', '14:07']);
+      // a narrow chart: fewer marks, never more than fit
+      expect(ticks(const Duration(hours: 1), 3).map(chartClockText),
+          ['13:30', '14:00']);
+      // a day: every 6 h, and the midnight says which day begins
+      final day = ticks(const Duration(hours: 24), 6);
+      expect(day.map(chartClockText), ['18:00', '00:00', '06:00', '12:00']);
+      expect(chartDayText(day[1]), '26/11');
+      for (final w in [5, 37, 240, 1440]) {
+        final t = ticks(Duration(minutes: w), 5);
+        expect(t.length, inInclusiveRange(1, 6));
+        expect(t.every((e) => !e.isAfter(end)), isTrue);
+      }
+
+      expect(chartDateText(end.subtract(const Duration(hours: 1)), end),
+          '26/11/2026');
+      expect(chartDateText(end.subtract(const Duration(hours: 24)), end),
+          '25/11 – 26/11/2026');
+    });
+
     test('nothing in the last hour', () {
       final g = TempChartGeometry(points: const [], now: now);
       expect(g.points, isEmpty);
@@ -631,6 +739,8 @@ void main() {
           otaPushViewProvider.overrideWithValue(const OtaPushState()),
           labelIndexProvider.overrideWithValue(const LabelIndex.empty()),
           deviceChartProvider.overrideWith((ref, mac) => Stream.value(chart)),
+          deviceChartAllProvider
+              .overrideWith((ref, mac) => Stream.value(chart)),
           if (viewedCentral != null)
             mirrorViewOnlyProvider.overrideWithValue(true),
         ],
@@ -794,6 +904,56 @@ void main() {
           find.descendant(of: drop, matching: find.byType(Icon)));
       expect(icons.map((i) => i.color).toSet(), {AppColors.info});
       expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the readings screen: two fingers zoom the chart',
+        (tester) async {
+      for (final size in sizes.values) {
+        await pump(
+            tester,
+            size,
+            [node(unit, temp: 245, humidity: 56, readingAt: at, name: 'Hall')],
+            // a fresh screen per size: the zoom is the screen's own state
+            DeviceReadingsScreen(key: ValueKey(size), mac: unit));
+        TempChart chart() =>
+            tester.widget<TempChart>(find.byKey(DeviceTempSection.keyChart));
+        Text span() =>
+            tester.widget<Text>(find.byKey(DeviceTempSection.keySpan));
+        await tester.scrollUntilVisible(
+            find.byKey(DeviceTempSection.keyChart), 80,
+            scrollable: find.byType(Scrollable).first);
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(chart().window, const Duration(hours: 1));
+        expect(span().data, startsWith('Última hora · '));
+
+        // fingers apart: closer
+        final c = tester.getCenter(find.byKey(DeviceTempSection.keyChart));
+        var a = await tester.startGesture(c - const Offset(30, 0), pointer: 1);
+        var b = await tester.startGesture(c + const Offset(30, 0), pointer: 2);
+        await tester.pump();
+        await a.moveBy(const Offset(-60, 0));
+        await b.moveBy(const Offset(60, 0));
+        await tester.pump();
+        await a.up();
+        await b.up();
+        await tester.pump(const Duration(milliseconds: 50));
+        final closer = chart().window!;
+        expect(closer, lessThan(const Duration(hours: 1)));
+        expect(span().data, startsWith('Últimos'));
+
+        // fingers together: further
+        a = await tester.startGesture(c - const Offset(120, 0), pointer: 3);
+        b = await tester.startGesture(c + const Offset(120, 0), pointer: 4);
+        await tester.pump();
+        await a.moveBy(const Offset(100, 0));
+        await b.moveBy(const Offset(-100, 0));
+        await tester.pump();
+        await a.up();
+        await b.up();
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(chart().window!, greaterThan(closer));
+        expect(tester.takeException(), isNull);
+      }
     });
 
     testWidgets('a unit that sent no reading has no such tile', (tester) async {

@@ -72,3 +72,19 @@ final deviceChartProvider =
           ),
       ]);
 });
+
+/// Everything the tablet keeps of one unit (24 h), oldest first: the
+/// readings screen, whose pinch chooses how much of it is drawn.
+final deviceChartAllProvider =
+    StreamProvider.autoDispose.family<List<TempPoint>, String>((ref, mac) {
+  final db = ref.watch(appDatabaseProvider);
+  final since = DateTime.now().toUtc().subtract(tempChartZoomMax);
+  return db.watchReadings(mac, since).map((rows) => [
+        for (final r in rows)
+          TempPoint(
+            at: r.at.toUtc(),
+            tenths: r.tempTenths,
+            humidityPct: r.humidityPct,
+          ),
+      ]);
+});

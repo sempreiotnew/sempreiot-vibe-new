@@ -64,7 +64,7 @@ class DeviceReadingsScreen extends ConsumerWidget {
               padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
               children: [
                 if (hasReading)
-                  DeviceTempSection(node: node!)
+                  DeviceTempSection(node: node!, zoomable: true)
                 else
                   Padding(
                     padding: const EdgeInsets.only(top: 32),

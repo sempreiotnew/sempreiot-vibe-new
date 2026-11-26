@@ -30,6 +30,91 @@ const tempRisingWindow = Duration(seconds: 60);
 const tempChartWindow = Duration(hours: 1);
 const tempChartGap = Duration(seconds: 150);
 
+/// The readings screen's pinch: the least and the most time the chart shows
+/// (the most = what the tablet keeps, the `DeviceReadings` retention).
+const tempChartZoomMin = Duration(minutes: 5);
+const tempChartZoomMax = Duration(hours: 24);
+
+/// The span after a pinch that began at [from]: fingers apart ([scale] > 1)
+/// = less time, together = more, inside the two limits.
+Duration pinchedChartWindow(Duration from, double scale) {
+  if (scale <= 0) return from;
+  final ms = (from.inMilliseconds / scale).round();
+  return Duration(
+      milliseconds: ms.clamp(
+          tempChartZoomMin.inMilliseconds, tempChartZoomMax.inMilliseconds));
+}
+
+/// The least the two scales span at a zoom of [window]: closer in, a
+/// narrower scale, so a change of a few tenths can be read. Temperature in
+/// °C × 10 (1 °C at 5 min … 10 °C from one hour on), humidity in % (4 … 20).
+int chartMinTempSpanTenths(Duration window) =>
+    (100 * window.inSeconds / 3600).round().clamp(10, 100);
+int chartMinHumiditySpan(Duration window) =>
+    (20 * window.inSeconds / 3600).round().clamp(4, 20);
+
+String _two(int v) => v.toString().padLeft(2, '0');
+
+/// "14:05" of [utc] on the tablet's clock: a mark of the chart's time axis.
+String chartClockText(DateTime utc) {
+  final t = utc.toLocal();
+  return '${_two(t.hour)}:${_two(t.minute)}';
+}
+
+/// "26/11" of [utc] on the tablet's clock: the mark of a midnight.
+String chartDayText(DateTime utc) {
+  final t = utc.toLocal();
+  return '${_two(t.day)}/${_two(t.month)}';
+}
+
+/// The day(s) a chart from [start] to [end] covers, on the tablet's clock:
+/// "26/11/2026", or "25/11 – 26/11/2026" when it crosses a midnight.
+String chartDateText(DateTime start, DateTime end) {
+  final a = start.toLocal(), b = end.toLocal();
+  final last = '${_two(b.day)}/${_two(b.month)}/${b.year}';
+  if (a.year == b.year && a.month == b.month && a.day == b.day) return last;
+  return '${_two(a.day)}/${_two(a.month)} – $last';
+}
+
+/// The steps between two marks of the time axis, in minutes.
+const _chartTickMinutes = [1, 2, 5, 10, 15, 30, 60, 120, 180, 360, 720];
+
+/// The marks of the time axis between [start] and [end]: round times of
+/// the tablet's clock (every minute, every 5, every hour… — the finest step
+/// that gives at most [maxTicks] marks), oldest first.
+List<DateTime> chartTimeTicks(DateTime start, DateTime end, int maxTicks) {
+  final span = end.difference(start);
+  if (span <= Duration.zero) return const [];
+  final most = maxTicks < 2 ? 2 : maxTicks;
+  var step = _chartTickMinutes.last;
+  for (final m in _chartTickMinutes) {
+    if (span.inSeconds / (m * 60) <= most) {
+      step = m;
+      break;
+    }
+  }
+  // From the tablet's midnight, so the marks fall on 14:00, 14:15…
+  final local = start.toLocal();
+  final midnight = DateTime(local.year, local.month, local.day);
+  final sinceMidnight = local.difference(midnight).inSeconds;
+  final first = (sinceMidnight / (step * 60)).ceil() * step;
+  return [
+    for (var t = midnight.add(Duration(minutes: first)).toUtc();
+        !t.isAfter(end);
+        t = t.add(Duration(minutes: step)))
+      t,
+  ];
+}
+
+/// "últimos 15 min", "última hora", "últimas 6 h": how much the chart shows.
+String chartWindowText(Duration window) {
+  final minutes = (window.inSeconds / 60).round();
+  if (minutes == 60) return 'última hora';
+  if (minutes < 120) return 'últimos $minutes min';
+  final h = (window.inMinutes / 6).round() / 10;
+  return 'últimas ${h == h.roundToDouble() ? h.round() : h.toStringAsFixed(1).replaceAll('.', ',')} h';
+}
+
 /// True while the newest of [points] is at least [tempRisingTenths] above
 /// the lowest point received in the [tempRisingWindow] before it — and that
 /// newest point is itself no older than the window at [now]. [points] in
